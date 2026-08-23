@@ -1,8 +1,8 @@
-# Emet — Design Specification
+# Emet: Design Specification
 
 **Emet** (Hebrew אמת, "truth") is a companion-robot engine. It installs onto a
 Raspberry Pi, discovers whatever body it finds itself in, and runs a portable
-personality — a *soul* — on top of it.
+personality: a *soul*: on top of it.
 
 In the Golem tradition the word *emet* inscribed on the clay is what brings it
 to life; erasing the first letter leaves *met* ("death") and it returns to
@@ -10,7 +10,7 @@ stillness. The name is the product: an animating word that turns inert matter
 into something alive, and a promise that the thing you are talking to is honest
 about what it is.
 
-This document specifies how Emet works — the manifest format, the intent
+This document specifies how Emet works: the manifest format, the intent
 vocabulary, the fallback mechanism, the memory model, and the plugin contract.
 It is the reference for anyone writing a driver, authoring a soul, or trying to
 understand why a design decision went the way it did.
@@ -24,13 +24,13 @@ sparse at the start; internal cross-references depend on it.
 ## 0. How to read this document
 
 Every schema field and subsystem carries a tag describing **how finished it
-is** — not when it will arrive:
+is**, not when it will arrive:
 
 | Tag | Meaning |
 |---|---|
 | **`P0`** | Implemented. The engine reads this field and acts on it. |
 | **`RSV`** | Reserved. The field exists in the schema and validators accept it, but the engine ignores it. |
-| **`V1`** | End-goal. Not in the schema yet — listed so that today's design does not foreclose it. |
+| **`V1`** | End-goal. Not in the schema yet. Listed so that today's design does not foreclose it. |
 
 **`RSV` is the important one, and the reason this document exists at all.**
 Schema changes are expensive once other people's robots depend on them, while
@@ -54,7 +54,7 @@ this is what they mean.
 
 ### 1.2 The soul line (default personality presets)
 
-Emet ships blank-slate, but the project publishes a small family of **reference souls** — complete `soul.yaml` + starter memory, same engine, different default character. These are the recognizable faces of the platform, the thing a newcomer installs before writing their own. Each is named for a word meaning "spirit" or "animating principle," reinforcing that they are *variations on a soul*.
+Emet ships blank-slate, but the project publishes a small family of **reference souls**: complete `soul.yaml` + starter memory, same engine, different default character. These are the recognizable faces of the platform, the thing a newcomer installs before writing their own. Each is named for a word meaning "spirit" or "animating principle," reinforcing that they are *variations on a soul*.
 
 | Soul | Root | Default character sketch |
 |---|---|---|
@@ -62,7 +62,7 @@ Emet ships blank-slate, but the project publishes a small family of **reference 
 | **Hugr** | Old Norse, "mind, will" | The willful one. Opinionated, a bit stubborn, initiates more. Higher `curiosity` and lower `formality`. |
 | **Neuma** | from Greek *pneuma*, "breath, spirit" | The airy one. Gentle, reflective, sparing with words. Higher `warmth`, low `verbosity`, long `patience_ms`. |
 
-`RSV`: the soul line is data, not code — new reference souls are just published bundles. Nothing in the engine hardcodes them.
+`RSV`: the soul line is data, not code: new reference souls are just published bundles. Nothing in the engine hardcodes them.
 
 
 ---
@@ -74,9 +74,9 @@ The invariants. If an implementation decision violates one of these, the decisio
 1. **The soul never names hardware.** No component of the soul layer may reference a servo channel, a GPIO pin, an I2C address, or a driver. It emits intents. Violating this makes souls non-portable, which is the entire product.
 2. **Every intent is always satisfiable.** Because the hardware floor is a microphone and a speaker, every expressive fallback chain terminates in a voice rung. No intent may fail for lack of hardware; it degrades.
 3. **The body is part of the character.** The manifest is compiled into the soul's self-description and injected into its context. A robot without wheels knows it cannot come to you, and says so, unprompted.
-4. **Reflexes are local, forever.** Anything on a sub-200ms loop — wake word, VAD, speaker ID, gaze tracking, servo control, safety limits — never leaves the Pi, regardless of connectivity or cost.
+4. **Reflexes are local, forever.** Anything on a sub-200ms loop: wake word, VAD, speaker ID, gaze tracking, servo control, safety limits, never leaves the Pi, regardless of connectivity or cost.
 5. **Degradation is declared, not improvised.** Fallbacks are data in the manifest and intent library, resolved once at boot, not `if hasattr(...)` scattered through the engine.
-6. **Truth is the brand.** Per the name: the memory file is readable, the self-model is honest about the body's limits, and the robot does not claim capabilities it lacks. This is a design constraint, not just marketing.
+6. **Truth is the brand.** Per the name: the memory file is readable, the self-model is honest about the body's limits, and the robot does not claim capabilities it lacks. This is a design constraint rather than marketing.
 
 ---
 
@@ -109,17 +109,17 @@ emet/                         one repository, Apache 2.0 throughout
                     choreography, prompting, safety, consolidation.
 ```
 
-**HAL** is *hardware abstraction layer* — the standard embedded and OS term for the layer separating generic upper software from specific silicon. Emet uses it in Android's sense: the abstraction itself is `emet_sdk.plugin` (the ABCs and capability descriptors), and `emet-hal` is the collection of per-device *implementations* that satisfy it. Spell the acronym out on first use in any document a newcomer might read first; not every contributor arrives from embedded work.
+**HAL** is *hardware abstraction layer*: the standard embedded and OS term for the layer separating generic upper software from specific silicon. Emet uses it in Android's sense: the abstraction itself is `emet_sdk.plugin` (the ABCs and capability descriptors), and `emet-hal` is the collection of per-device *implementations* that satisfy it. Spell the acronym out on first use in any document a newcomer might read first; not every contributor arrives from embedded work.
 
-The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic — target under ~2,000 lines. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
+The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic, targeting under ~2,000 lines. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
 
-**Where the line falls when something is arguably logic:** deterministic pure functions over contract data belong in the SDK; anything stateful, scheduled, or personality-bearing belongs in the engine. Chain resolution (§6) is the former — `(chains, descriptors) → binding table`, no state, no I/O — and lives in the SDK so that a HAL contributor can check where their driver binds without running an engine. The choreographer, at 50Hz and holding motion state, is the latter.
+**Where the line falls when something is arguably logic:** deterministic pure functions over contract data belong in the SDK; anything stateful, scheduled, or personality-bearing belongs in the engine. Chain resolution (§6) is the former, `(chains, descriptors) → binding table` with no state and no I/O, and it lives in the SDK so that a HAL contributor can check where their driver binds without running an engine. The choreographer, at 50Hz and holding motion state, is the latter.
 
-**One license, permissive, everywhere — settled August 2026.** Apache 2.0 for the SDK, the HAL, and the engine alike. There is no licence boundary inside the repository and nothing about it to explain to a contributor. A hobbyist may do anything with it, and so may a company.
+**One license, permissive, everywhere, settled August 2026.** Apache 2.0 for the SDK, the HAL, and the engine alike. There is no licence boundary inside the repository and nothing about it to explain to a contributor. A hobbyist may do anything with it, and so may a company.
 
 The consequence to hold onto: **anyone may fork Emet, close their fork, and ship it.** That is permitted, not accidental. The only thing that stops such a fork calling itself *Emet* is the trademark. See `TRADEMARK.md`.
 
-**`P0`** — everything public from the first commit, under its final license. Open is a one-way door: once published, it is published, and a permissive release can never be walked back for code already out.
+**`P0`**: everything public from the first commit, under its final license. Open is a one-way door: once published, it is published, and a permissive release can never be walked back for code already out.
 
 **Layering is enforced by CI, not by a license wall.** An import linter asserts that `emet-sdk` imports nothing internal, `emet-hal` imports only `emet-sdk`, and `emet-engine` imports only `emet-sdk`. Previously this invariant was maintained by the engine being a separate closed artifact; that structural guarantee is now a test, and it must actually run in CI or it will rot.
 
@@ -173,11 +173,11 @@ safety:                          # P0
   thermal_throttle_c: 75
 ```
 
-**If `capabilities` is empty, the robot is still valid.** A Pi with a USB speakerphone and nothing else runs the identical soul. Every intent resolves to its voice rung. This case must work on day one — it is the proof that the abstraction is real, and it is the first thing the project builds.
+**If `capabilities` is empty, the robot is still valid.** A Pi with a USB speakerphone and nothing else runs the identical soul. Every intent resolves to its voice rung. This case must work on day one: it is the proof that the abstraction is real, and it is the first thing the project builds.
 
 #### What `body.id` is and is not
 
-**`body.id` never appears in `memory.db`.** Memories, people, and episodes belong to the *soul* and travel with the bundle. If retrieval were scoped by body, moving a bundle to a new chassis would silently return zero rows and the robot would greet its owner of six months as a stranger — destroying the flagship demo (§8) in the most disheartening way available, with no error to diagnose.
+**`body.id` never appears in `memory.db`.** Memories, people, and episodes belong to the *soul* and travel with the bundle. If retrieval were scoped by body, moving a bundle to a new chassis would silently return zero rows and the robot would greet its owner of six months as a stranger, destroying the flagship demo (§8) in the most disheartening way available, with no error to diagnose.
 
 `body.id` keys **body-local state**: the things that are meaningless or actively wrong on a different body.
 
@@ -191,7 +191,7 @@ safety:                          # P0
 | Driver health and fault history | About specific hardware |
 | Resolved binding table cache | Derived from this manifest |
 
-**Location:** `/etc/emet/state/<body.id>.json`, beside `body.yaml`. Never inside the bundle. This is what makes one Pi swappable between two chassis without their calibrations colliding — the actual and only job of `body.id`.
+**Location:** `/etc/emet/state/<body.id>.json`, beside `body.yaml`. Never inside the bundle. This is what makes one Pi swappable between two chassis without their calibrations colliding: the actual and only job of `body.id`.
 
 #### Experiences travel; conditions do not
 
@@ -264,10 +264,10 @@ They ship as the two built-in locomotion plugins.
 **`kinematics` is an open enum.** It is a string naming a locomotion plugin, not a value
 from a frozen list. The engine does not contain wheels-and-treads logic; it asks a
 locomotion plugin "how do I move?" and the plugin answers. `legged` is therefore already
-expressible — it is simply a plugin nobody has written yet. See §7.1 for the reasoning and
+expressible: it is simply a plugin nobody has written yet. See §7.1 for the reasoning and
 §12.1 for the plugin category.
 
-#### `drive` — legged bodies (`RSV`)
+#### `drive`: legged bodies (`RSV`)
 
 Reserved now, ignored by the P0 engine, so that no manifest anywhere needs to change when
 a legged plugin arrives:
@@ -348,15 +348,15 @@ Enforced by `emet_sdk.validate`, run at boot and by the CLI:
 - Capability `id` values are unique and match `[a-z][a-z0-9_]*`.
 - Every joint's `home_deg` lies within `range_deg`.
 - At most one `drive` block (`P0`). **`V1`:** multiple drives for hybrid locomotion.
-- `memory.db` contains **no body-identifying column**. Enforced by schema inspection, not convention — see §4.1, "What `body.id` is and is not". A bundle whose memory database carries a body reference is invalid.
-- `drive.kinematics` must be a **string that resolves to an installed locomotion plugin** — not a member of a frozen list. An unrecognized value fails boot with "no locomotion plugin provides `legged`; install one or change `kinematics`", which is a *missing plugin* error, not a *schema* error. This is what keeps the enum open.
-- Every referenced `driver.plugin` resolves to an installed plugin, or boot fails loudly with the missing package name. Never silently degrade because of a typo — that is a *different* failure from missing hardware, and conflating them costs support hours.
+- `memory.db` contains **no body-identifying column**. Enforced by schema inspection rather than convention. See §4.1, "What `body.id` is and is not". A bundle whose memory database carries a body reference is invalid.
+- `drive.kinematics` must be a **string that resolves to an installed locomotion plugin**, not a member of a frozen list. An unrecognized value fails boot with "no locomotion plugin provides `legged`; install one or change `kinematics`", which is a *missing plugin* error, not a *schema* error. This is what keeps the enum open.
+- Every referenced `driver.plugin` resolves to an installed plugin, or boot fails loudly with the missing package name. Never silently degrade because of a typo: that is a *different* failure from missing hardware, and conflating them costs support hours.
 
 ---
 
 ## 5. Intent vocabulary
 
-Defined in `emet_sdk.intents`. A **closed set** — the soul may only emit these. Adding one is a minor version bump of the SDK.
+Defined in `emet_sdk.intents`. A **closed set**: the soul may only emit these. Adding one is a minor version bump of the SDK.
 
 ```python
 @dataclass(frozen=True)
@@ -375,20 +375,20 @@ class Intent:
 | Kind | Arguments | Notes |
 |---|---|---|
 | `speak` | text | Carries prosody hints. Always available. |
-| `acknowledge` | — | Backchannel. Must fire within 300ms of user endpoint. |
+| `acknowledge` | none | Backchannel. Must fire within 300ms of user endpoint. |
 | `attend` | `speaker`, `bearing`, `person:<id>`, `none` | Consumes DoA or vision. Head yaw, or body rotation, or nothing. |
 | `express` | `curiosity`, `delight`, `confusion`, `concern`, `amusement`, `boredom`, `surprise`, `affection`, `thinking` | The core expressive set. Deliberately small. |
 | `signal` | `booting`, `listening`, `thinking`, `speaking`, `muted`, `offline`, `error` | System state, not emotion. Distinct so a soul can't suppress it. |
 | `idle` | `settle`, `look_around`, `fidget`, `doze` | Emitted by the idle loop, lowest priority. |
 | `move` | `approach`, `retreat`, `turn_to`, `wander`, `stop` | Only bound if a `drive` exists. |
 
-### 5.2 Reserved intents — `RSV`
+### 5.2 Reserved intents (`RSV`)
 
-`manipulate` (grasp/release/offer), `navigate` (goto a named place, requires mapping), `gesture` (arbitrary named clip from a motion pack), `attend_joint` (look at your own hand — needed for anything resembling embodied reasoning).
+`manipulate` (grasp/release/offer), `navigate` (goto a named place, requires mapping), `gesture` (arbitrary named clip from a motion pack), `attend_joint` (look at your own hand, needed for anything resembling embodied reasoning).
 
 **These names are reserved in the vocabulary from `P0`, not added later.** They are legal for a soul to emit; the engine logs them at debug level and drops them. This costs four entries in an enum today.
 
-The reason is the same as every other `RSV` field, but sharper: the intent set is *closed*, so an unrecognized intent is a **validation failure**, not a no-op. If `manipulate` were added to the vocabulary only when it was implemented, a soul bundle authored years earlier that reached for it would fail to load rather than degrade — and bundles are exactly the artifact strangers publish, copy, and keep for years. Reserving the names makes forward-written souls merely ineffective rather than invalid.
+The reason is the same as every other `RSV` field, but sharper: the intent set is *closed*, so an unrecognized intent is a **validation failure**, not a no-op. If `manipulate` were added to the vocabulary only when it was implemented, a soul bundle authored years earlier that reached for it would fail to load rather than degrade, and bundles are exactly the artifact strangers publish, copy, and keep for years. Reserving the names makes forward-written souls merely ineffective rather than invalid.
 
 `V1` is the *behavior* behind these names, not the names themselves.
 
@@ -399,7 +399,7 @@ Multiple intents will be live at once. Fixed priority, highest wins, ties broken
 | Priority | Value | Examples |
 |---|---|---|
 | `SAFETY` | 100 | thermal, estop, joint limit, brownout recovery |
-| `SIGNAL` | 90 | `signal` — system state is never suppressed |
+| `SIGNAL` | 90 | `signal`: system state is never suppressed |
 | `SPEECH` | 80 | `speak`, `acknowledge` |
 | `ATTENTION` | 60 | `attend` |
 | `EXPRESSIVE` | 40 | `express` |
@@ -407,7 +407,7 @@ Multiple intents will be live at once. Fixed priority, highest wins, ties broken
 | `IDLE` | 10 | `idle` |
 
 **`P0`:** one intent per actuator at a time; a higher-priority intent preempts and the lower one is dropped, not queued.
-**`V1`:** blending — express curiosity with the eyes *while* attending with the head, per-actuator rather than global.
+**`V1`:** blending: express curiosity with the eyes *while* attending with the head, per-actuator rather than global.
 
 ---
 
@@ -434,11 +434,11 @@ express.curiosity:
       params: {preset: rising, filler: ["hm?", "hmm."]}
 ```
 
-**Resolution:** at boot, walk each chain top to bottom, bind the first rung whose actuator selector matches something in the manifest. Log the resolved binding table — your single most useful debugging artifact, printable with `emet explain`.
+**Resolution:** at boot, walk each chain top to bottom, bind the first rung whose actuator selector matches something in the manifest. Log the resolved binding table. It is the single most useful debugging artifact, printable with `emet explain`.
 
 **Validation:** the SDK **rejects** any chain whose final rung is not a voice rung. This is the mechanical enforcement of principle 2.
 
-### 6.1 Voice actions — what the terminal rung actually does
+### 6.1 Voice actions: what the terminal rung actually does
 
 The terminal-rung rule creates a question the rest of the spec does not answer: if
 *every* chain ends in voice, what does `idle.doze` sound like on a bodiless robot?
@@ -449,7 +449,7 @@ sound. Three voice actions, all `P0`:
 
 | Action | What it does | Used by |
 |---|---|---|
-| `utter` / `inflect` / `backchannel` / `tone` | Produces sound — speech, a prosodic gesture, a filler, a system tone. | `speak`, `acknowledge`, `express.*`, most `signal.*` |
+| `utter` / `inflect` / `backchannel` / `tone` | Produces sound: speech, a prosodic gesture, a filler, a system tone. | `speak`, `acknowledge`, `express.*`, most `signal.*` |
 | `silence` | Binds and produces nothing. | all `idle.*`, `attend.*`, `move.stop` |
 | `explain` | Says *why the body cannot comply*. | `move.approach` and `move.retreat` on a body with no drive, `signal.offline`, `signal.error` |
 
@@ -459,7 +459,7 @@ silent voice action that would have to be a special case in the engine. With one
 is a data property of the chain, and the engine needs no idle-specific code at all.
 
 **`explain` is principle 6 at the motor level.** Asked to come closer, a robot with no
-wheels reaches the bottom of `move.approach` and says so — *"I can't come to you, I
+wheels reaches the bottom of `move.approach` and says so: *"I can't come to you, I
 don't have wheels."* The self-model (§7) already told the soul this in context; the
 chain layer tells the same truth at the moment it becomes relevant. The two must never
 disagree, which is why both are generated from the same manifest.
@@ -469,9 +469,9 @@ intent.** The intent resolved, bound, and executed. Producing no sound is the co
 output, not a failure, and nothing downstream should treat it as one.
 
 
-**`RSV` — `mode: all`:** bind every matching rung so a well-equipped body tilts its head *and* squints *and* pulses. Needs per-actuator arbitration (5.3), so it waits.
+**`RSV`, `mode: all`:** bind every matching rung so a well-equipped body tilts its head *and* squints *and* pulses. Needs per-actuator arbitration (5.3), so it waits.
 
-**`V1` — learned chains:** the engine observes which expressions a body renders legibly (via camera self-view or user feedback) and reweights. Listed only to keep the chain format data-driven rather than code.
+**`V1`, learned chains:** the engine observes which expressions a body renders legibly (via camera self-view or user feedback) and reweights. Listed only to keep the chain format data-driven rather than code.
 
 ---
 
@@ -496,15 +496,15 @@ You hear through a four-microphone array and can tell roughly which direction
   a voice came from.
 ```
 
-Rules: state capabilities *and* their absence. Absences do more work than presences — they stop the robot from offering to do things it cannot do. Plain physical language, never component names. `scale` and `body.description` feed the phrasing.
+Rules: state capabilities *and* their absence. Absences do more work than presences: they stop the robot from offering to do things it cannot do. Plain physical language, never component names. `scale` and `body.description` feed the phrasing.
 
 **`RSV`:** a `self_model_overrides` block in the soul bundle so a character describes its own body in its own voice.
-**`V1`:** proprioceptive updates mid-session — "my left wheel isn't responding" enters context when a driver faults, and the character can *mention* it.
+**`V1`:** proprioceptive updates mid-session. "My left wheel isn't responding" enters context when a driver faults, and the character can *mention* it.
 
-### 7.1 Biped classification — decided
+### 7.1 Biped classification, decided
 
 Wheels and treads resolve to motion from declared axes. A biped does not: it is a
-balance-control problem — gait generator, state estimator, IMU feedback — that no manifest
+balance-control problem: gait generator, state estimator, IMU feedback: that no manifest
 resolves. The open question was whether that forces `kinematics` to be a closed enum.
 
 **Decision: `kinematics` is an open enum, and locomotion is a plugin category.** Build the
@@ -514,7 +514,7 @@ Three consequences, all cheap today and all already reflected above:
 
 1. **`kinematics` accepts unknown values.** The validator asks "is this a string that
    resolves to an installed locomotion plugin?", not "is this on the list?" (§4.3).
-2. **The `drive` block carries an `RSV` `legs` sub-structure** (§4.2) — count, DoF per leg,
+2. **The `drive` block carries an `RSV` `legs` sub-structure** (§4.2): count, DoF per leg,
    gait, balance strategy. Present in the schema, ignored by the engine, exactly like the
    drift and consolidation fields. When a legged plugin arrives, no existing manifest changes.
 3. **Locomotion is a plugin category** (§12.1). `differential` and `tracked` are the first
@@ -524,7 +524,7 @@ Three consequences, all cheap today and all already reflected above:
 The schema work is near-free. The biped itself is not, and the cheap schema decision must
 not disguise that.
 
-#### The assumption that makes it tractable — static walking
+#### The assumption that makes it tractable: static walking
 
 A tall biped is an inverted pendulum: falling over at all times, catching itself
 continuously, requiring fast sensing and control on a hard real-time loop. That is the
@@ -535,7 +535,7 @@ of mass, and large feet.** What actually buys the simplification is precise, and
 stating correctly rather than by slogan:
 
 - **Large feet enlarge the support polygon**, so the centre of mass can stay above it
-  throughout the gait. This is the condition for **static walking** — shift weight fully
+  throughout the gait. This is the condition for **static walking**: shift weight fully
   onto one foot, move the other, never enter a falling phase.
 - **A low centre of mass makes disturbances forgiving.** Height is not itself
   disqualifying, but a tall body converts a small perturbation into a large moment and
@@ -545,7 +545,7 @@ stating correctly rather than by slogan:
 
 Together these remove the dynamic balance controller and the high-rate state estimation.
 They do not remove leg inverse kinematics, foot trajectory planning, servo coordination,
-or a chassis stiff enough not to sag — so this is **weeks of work, not a weekend**. The
+or a chassis stiff enough not to sag, so this is **weeks of work, not a weekend**. The
 honest contrast is weeks against a multi-year control problem, and it is decided by the
 *body*, not the software.
 
@@ -645,24 +645,24 @@ models:                          # P0  BYOK
 
 #### 8.1.1 Why `name` and `wake_word` are separate fields
 
-P0 ships a fixed set of pretrained wake words (§14) — custom wake words are `RSV`, pending licensing. If a single field served as both the robot's name and its wake word, then naming a soul "Barnaby" would silently produce a robot that cannot be woken, and the only fix once souls exist in the wild would be a schema migration.
+P0 ships a fixed set of pretrained wake words (§14): custom wake words are `RSV`, pending licensing. If a single field served as both the robot's name and its wake word, then naming a soul "Barnaby" would silently produce a robot that cannot be woken, and the only fix once souls exist in the wild would be a schema migration.
 
 Two fields, decided now, cost one line:
 
 - **`name`** is free text. Call your robot anything. It appears in the persona, the greeting, and the docs.
 - **`wake_word`** must be a member of the shipped set. The validator rejects anything else, naming the available options.
 
-So a soul may be called Barnaby and answer to "Emet", and the persona can be told as much: *"Your name is Barnaby, but you only hear people when they say 'Emet' — you find this a little undignified."* Turning a P0 limitation into character is exactly the move principle 6 asks for: the constraint is real, so say so rather than hiding it.
+So a soul may be called Barnaby and answer to "Emet", and the persona can be told as much: *"Your name is Barnaby, but you only hear people when they say 'Emet', and you find this a little undignified."* Turning a P0 limitation into character is exactly the move principle 6 asks for: the constraint is real, so say so rather than hiding it.
 
 When custom wake words arrive, `wake_word` simply accepts more values. No migration, and every existing soul keeps working.
 
 ### 8.2 The soul line field
 
-`identity.line` names which reference personality a bundle derives from (§1.2). It is metadata only — the engine does not branch on it — but it lets the community registry group and filter souls, and it lets docs say "based on Hugr" meaningfully. Custom souls set `line: custom`.
+`identity.line` names which reference personality a bundle derives from (§1.2). It is metadata only: the engine does not branch on it, but it lets the community registry group and filter souls, and it lets docs say "based on Hugr" meaningfully. Custom souls set `line: custom`.
 
 ### 8.3 Portability contract
 
-A bundle is valid on any body. The engine **must not** write body-specific state into the bundle — no joint trims, no calibration, no device paths. Those live in `body.yaml`. If you ever want to store a servo offset in the soul, the abstraction has sprung a leak.
+A bundle is valid on any body. The engine **must not** write body-specific state into the bundle: no joint trims, no calibration, no device paths. Those live in `body.yaml`. If you ever want to store a servo offset in the soul, the abstraction has sprung a leak.
 
 `bundle.lock` records the engine version that last wrote it. Loading a bundle written by a newer engine is a hard error; older is migrated forward on load, with a backup left beside it.
 
@@ -670,11 +670,11 @@ A bundle is valid on any body. The engine **must not** write body-specific state
 
 ## 9. Memory schema
 
-SQLite, one file, plainly readable. **Transparency is the actual privacy defense** — and it is principle 6: a soul named "truth" must keep readable records. The toggle is paperwork; a parent opening the file and reading it is real.
+SQLite, one file, plainly readable. **Transparency is the actual privacy defense**, and it is principle 6: a soul named "truth" must keep readable records. The toggle is paperwork; a parent opening the file and reading it is real.
 
 **Do not let this stand in for the whole privacy story.** A readable `memory.db` describes what Emet *retained*; it says nothing about what *left the house*. In P0 every utterance goes to a third-party STT provider and a third-party LLM provider (§14), and for most owners that is the larger fact. The cloud split is declared honestly here in the spec; the obligation is to declare it just as plainly at setup, where a non-technical owner will actually encounter it.
 
-### 9.1 Tables — `P0`
+### 9.1 Tables (`P0`)
 
 ```sql
 CREATE TABLE people (
@@ -721,7 +721,7 @@ CREATE INDEX idx_mem_subject ON memories(subject_person_id, salience DESC);
 CREATE INDEX idx_mem_source  ON memories(source_person_id);
 ```
 
-**Never `UPDATE` a memory.** Supersede it. You want the history of what the robot believed — for consolidation quality, and because "why does it think that?" is a question users will ask, and a truth-named product should be able to answer.
+**Never `UPDATE` a memory.** Supersede it. You want the history of what the robot believed, for consolidation quality and because "why does it think that?" is a question users will ask, and a truth-named product should be able to answer.
 
 ### 9.2 Sensitivity levels
 
@@ -732,13 +732,13 @@ CREATE INDEX idx_mem_source  ON memories(source_person_id);
 | 2 | `private` | Recalled **only** when the source person is the sole participant. Mechanically enforced. |
 | 3 | `sealed` | Never enters a prompt. Retained solely for user inspection and export. |
 
-**The split that makes "alive, not a servant" workable:** levels 2 and 3 are enforced in the retrieval query — the soul never sees them, so it cannot leak them regardless of what it is talked into. Levels 0 and 1 are left to the character's judgment. Hard floor on the catastrophic cases; personality everywhere above it.
+**The split that makes "alive, not a servant" workable:** levels 2 and 3 are enforced in the retrieval query: the soul never sees them, so it cannot leak them regardless of what it is talked into. Levels 0 and 1 are left to the character's judgment. Hard floor on the catastrophic cases; personality everywhere above it.
 
 `P0`: the soul assigns sensitivity at write time via a tool call, defaulting to 1. `RSV`: consolidation re-scores overnight with a larger model.
 
 ### 9.3 The disclosure toggle
 
-`cross_person_disclosure: true` — the robot may tell one person something it learned about another (level-0 and level-1 memories). This is the default because it is what a companion who *cared* would do, and it is the line between a companion and an appliance. Set `false` and level-1 becomes source-locked, matching personal-assistant expectations.
+`cross_person_disclosure: true`: the robot may tell one person something it learned about another (level-0 and level-1 memories). This is the default because it is what a companion who *cared* would do, and it is the line between a companion and an appliance. Set `false` and level-1 becomes source-locked, matching personal-assistant expectations.
 
 **`P0` requirements:** surfaced during setup in plain language, not buried; `emet memory export` produces readable JSON; `emet memory forget <id>` is honored immediately.
 
@@ -766,7 +766,7 @@ clips:
 
 `requires` is matched against the manifest; a pack whose requirements are unmet is skipped and the chain falls through to the next rung. Recording is `emet teach curious_tilt`: relax the servos, let the builder pose the robot, capture keyframes on a keypress. No code, no math, works on bodies you have never seen.
 
-**`V1` — cloud motion generation:** POST the manifest plus `body.description` to a large model, receive a full pack keyed by intent, cache locally forever. How a builder with a tentacle gets expressive motion without writing a line. Depends on nothing in the schema changing — which is why the pack format is declarative data.
+**`V1`, cloud motion generation:** POST the manifest plus `body.description` to a large model, receive a full pack keyed by intent, cache locally forever. How a builder with a tentacle gets expressive motion without writing a line. Depends on nothing in the schema changing, which is why the pack format is declarative data.
 
 ---
 
@@ -776,13 +776,13 @@ clips:
 
 The subsystem that decides whether this is a character or a smart speaker in a costume. Architecturally a **separate loop** from conversation, at low priority.
 
-**`P0` — idle only.** A timer fires on `idle.interval_s`, samples `idle.weights`, emits an `idle` intent. Preempted by anything. On a body with no actuators it is a silent no-op (verify it is silently correct, not crashing).
+**`P0`, idle only.** A timer fires on `idle.interval_s`, samples `idle.weights`, emits an `idle` intent. Preempted by anything. On a body with no actuators it is a silent no-op (verify it is silently correct, not crashing).
 
-**`P0` — reactive attention.** Not proactivity, but reads as aliveness cheaply: a voice detected in the room with no wake word still triggers `attend`. The robot looks over when you speak near it. Local, cheap, large effect.
+**`P0`, reactive attention.** This falls short of proactivity while reading as aliveness cheaply: a voice detected in the room with no wake word still triggers `attend`. The robot looks over when you speak near it. Local, cheap, large effect.
 
-**`RSV` — `proactivity` scalar.** Reserved in `soul.yaml`, ignored in P0.
+**`RSV`, `proactivity` scalar.** Reserved in `soul.yaml`, ignored in P0.
 
-**`V1` — genuine initiation.** The robot starts conversations: a person recognized after an absence, an unresolved thread from a prior episode, a `promise`-kind memory coming due. Needs a salience pass over memory, a social-appropriateness model, and a *very* conservative rate limiter. Highest-risk feature in the product — a companion that talks unprompted is either magical or intolerable, and the difference is mostly frequency. Do not attempt before the conversation loop is boring and solid.
+**`V1`, genuine initiation.** The robot starts conversations: a person recognized after an absence, an unresolved thread from a prior episode, a `promise`-kind memory coming due. Needs a salience pass over memory, a social-appropriateness model, and a *very* conservative rate limiter. Highest-risk feature in the product: a companion that talks unprompted is either magical or intolerable, and the difference is mostly frequency. Do not attempt before the conversation loop is boring and solid.
 
 ### 11.2 Drift
 
@@ -846,7 +846,7 @@ Treads solve it with the same arithmetic and different slip assumptions. A legge
 solves it with a gait generator, and the engine above it does not know or care.
 
 **`P0`:** `emet_hal.differential` and `emet_hal.tracked` ship built in.
-**Later:** `omni`, `ackermann`, `legged` — new packages, no schema change, no engine change.
+**Later:** `omni`, `ackermann`, `legged`: new packages, no schema change, no engine change.
 
 `describe()` matters more here than for actuators: a body that cannot turn in place needs a
 different `move.turn_to` realization than one that can, and the self-model (§7) needs to say
@@ -856,15 +856,15 @@ so honestly.
 **`V1`:** a curated registry, signing, then sandboxing. With an open engine the primary defense is provenance and review rather than isolation. Necessary before accepting third-party plugins from strangers at volume; unnecessary while users are people who already trust you.
 
 **Capability tiers (from earlier decision):**
-- **Tier 1 — declarative** (`P0`): wheels, treads, pan/tilt joints. No user code.
-- **Tier 3 — recorded** (`P0`): `emet teach`. No user code.
-- **Tier 2 — user Python** (`V1`): custom intent handlers for exotic bodies, behind the sandbox.
+- **Tier 1, declarative** (`P0`): wheels, treads, pan/tilt joints. No user code.
+- **Tier 3, recorded** (`P0`): `emet teach`. No user code.
+- **Tier 2, user Python** (`V1`): custom intent handlers for exotic bodies, behind the sandbox.
 
 ---
 
 ## 13. Turn-taking
 
-Four decisions, defaults chosen. All `P0` — turn-taking is what separates charming from infuriating, and no personality prompting fixes it.
+Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charming from infuriating, and no personality prompting fixes it.
 
 1. **Endpoint:** silence threshold, default `patience_ms: 900`, exposed as a persona trait so a thoughtful soul (Neuma) waits longer than an eager one (Hugr).
 2. **Barge-in:** on. Speech during playback stops audio *mid-word* and starts listening. Requires mic-array AEC.

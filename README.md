@@ -3,7 +3,7 @@
 **A companion-robot engine that discovers whatever body it finds itself in.**
 
 Write a personality once. Run it on a robot with a head, wheels, and glowing
-eyes — or on a Raspberry Pi with nothing but a speaker. The same personality,
+eyes, or on a Raspberry Pi with nothing but a speaker. The same personality,
 the same memories, and a robot that *knows the difference* and will tell you
 about it.
 
@@ -13,12 +13,13 @@ is a promise: the thing you are talking to is honest about what it is.
 
 ---
 
-## Status: 0.2 — early
+## Status: 0.2 (early)
 
 Emet does not yet listen, speak, remember, or move. Nothing here drives a servo.
 
-What it does today is answer one question — **given a robot, what would each
-intent mean on it?** — which turns out to be the whole product in miniature.
+What it does today is answer one question: **given a robot, what would each
+intent mean on it?** That question turns out to be the whole product in
+miniature.
 
 ```sh
 $ emet explain examples/bodiless.yaml
@@ -39,7 +40,7 @@ statement.
 
 ## How it works
 
-A personality emits **intents** — about thirty things it might want, like
+A personality emits **intents**: about thirty things it might want, like
 `express.curiosity` or `attend.speaker`. It never names hardware; that is what
 makes it portable.
 
@@ -63,7 +64,7 @@ binds the first rung that fits.
 
 **Every chain must end in a voice rung, and the validator refuses to load one
 that does not.** Since every Emet robot is required to have a speaker, the last
-rung can never fail — which turns "no intent can fail for lack of hardware"
+rung can never fail, which turns "no intent can fail for lack of hardware"
 from a promise someone has to remember into something the software enforces.
 
 ## Try it
@@ -95,18 +96,18 @@ tells you which rungs were skipped and what was wrong with each:
 
 ## Documentation
 
-- **[DESIGN.md](DESIGN.md)** — the specification. Manifest format, intent
+- **[DESIGN.md](DESIGN.md)**: the specification. Manifest format, intent
   vocabulary, memory model, plugin contract, and why each decision went the way
   it did.
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — what is open to contribution, the
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: what is open to contribution, the
   design rules that are not negotiable, and how to run what CI runs.
-- **[TRADEMARK.md](TRADEMARK.md)** — the code is yours to fork; the name is not.
+- **[TRADEMARK.md](TRADEMARK.md)**: the code is yours to fork; the name is not.
 
 ## Licence
 
-Apache 2.0, throughout — SDK, HAL, and engine alike. Fork it, ship it, sell it.
+Apache 2.0 throughout: SDK, HAL, and engine alike. Fork it, ship it, sell it.
 
-The name is the exception, and deliberately so: a permissive licence means
-anyone may fork Emet and close their fork, so the mark is the only thing that
-keeps "I run Emet" meaning something specific. See
+The name is the deliberate exception. A permissive licence means anyone may
+fork Emet and close their fork, so the mark is the only thing keeping "I run
+Emet" meaningful. See
 [TRADEMARK.md](TRADEMARK.md).

@@ -9,7 +9,7 @@ names or marks.
 
 **This is deliberate, and it is the project's only point of control.** Because
 the licence is permissive, anyone may take Emet, close their fork, and sell it
-— and that is a permitted outcome. What the name preserves is that "I run Emet"
+and that is a permitted outcome. What the name preserves is that "I run Emet"
 keeps meaning something specific: this engine, these guarantees, this
 behaviour. Without it, the sentence decays into "I run something derived from
 something."
@@ -37,7 +37,7 @@ The usual answer is yes. Ask, so that the name keeps pointing at one thing.
 ## The rest of the word
 
 *Emet* (אמת) is an ordinary Hebrew word meaning "truth", and one with real
-weight in Jewish tradition — it is the word written on the golem's forehead in
+weight in Jewish tradition: it is the word written on the golem's forehead in
 the legend this project is named after. Nothing here claims any interest in the
 word itself, in any language, in any religious or cultural context, or in any
 field other than robotics and companion software. A trademark is narrow by
@@ -56,4 +56,4 @@ relying on this document, the following still need doing:
 - [ ] Search of existing organisations using EMET as a name, and a judgement
       about whether coexistence is comfortable.
 - [ ] Domain and social handle availability.
-- [x] ~~Confirm the copyright holder of record~~ — `NOTICE` reads "The Emet Authors". No legal entity required, and no brand name to regret.
+- [x] ~~Confirm the copyright holder of record~~: `NOTICE` reads "The Emet Authors". No legal entity required, and no brand name to regret.
