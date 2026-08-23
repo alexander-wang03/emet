@@ -1,0 +1,25 @@
+# INVALID: a chain that does not end in a voice rung.
+#
+# This is the fixture that guards principle 2 — every intent is always
+# satisfiable. The chain below is entirely reasonable on a robot with a head
+# and eyes, and completely unbindable on the bodiless manifest that must keep
+# working forever.
+#
+# Because the hardware floor is a microphone and a speaker, a chain ending in
+# voice can never fail to bind. Rejecting anything else is what makes the
+# guarantee mechanical instead of aspirational: no engine code has to check,
+# because an unterminated chain cannot get past the validator.
+#
+# Expected: unterminated_chain
+
+express.curiosity:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: tilt
+      params: {angle_deg: 12, speed: 0.4, hold_ms: 700}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: squint, hold_ms: 700}
+    # ...and nothing after this. On a body with no head and no eyes, the
+    # robot's curiosity has nowhere to go.

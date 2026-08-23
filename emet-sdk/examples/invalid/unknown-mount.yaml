@@ -1,0 +1,36 @@
+# INVALID: the camera is mounted on a capability that does not exist.
+#
+# `mounted_on` is what lets the engine implement "look at what you're talking
+# about" by driving the head rather than cropping the frame. A dangling
+# reference means that resolution silently does nothing.
+#
+# Expected: unknown_reference, /capabilities/1/mounted_on
+
+manifest_version: "0.1"
+
+body:
+  id: dangling
+  name: "a robot with a camera mounted on nothing"
+  scale: desk
+  power: plugged_in
+
+audio:
+  input:  {device: "plughw:1,0", sample_rate: 16000, channels: 1, aec: hardware, doa: false}
+  output: {device: "plughw:1,0", gain_db: -6.0}
+
+capabilities:
+  - id: head
+    type: joint_group
+    role: head
+    driver: {plugin: emet_hal.pca9685, params: {bus: 1, address: 0x40}}
+    joints:
+      - {id: pan, axis: yaw, channel: 0, range_deg: [-90, 90], home_deg: 0}
+
+  - id: front_cam
+    type: camera
+    role: front
+    driver: {plugin: emet_hal.libcamera, params: {index: 0}}
+    resolution: [1280, 720]
+    fov_deg: 66
+    mounted_on: torso              # there is no `torso` capability
+    local_pipeline: [face_detect]

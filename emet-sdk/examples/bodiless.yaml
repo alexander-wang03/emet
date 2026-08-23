@@ -1,0 +1,44 @@
+# Milestone one: the bodiless soul.
+#
+# A Pi, a USB speakerphone, a soul bundle. No capabilities at all. Every
+# fallback chain resolves to its terminal voice rung, the self-model says
+# "you have no body yet", and the identical soul that runs here runs on a
+# treaded scout without modification.
+#
+# This manifest must stay valid forever. It is the proof that the
+# abstraction is real — if a plain box that remembers you and tells you the
+# truth about itself is charming, everything else is addition.
+
+manifest_version: "0.1"
+
+body:
+  id: bodiless
+  name: "a speakerphone on a desk"
+  scale: desk
+  power: plugged_in
+  description: >
+    A small grey speakerphone. No moving parts, no lights, no screen —
+    just a microphone, a speaker, and whatever is listening through them.
+
+compute:
+  platform: raspberrypi5
+  ram_gb: 8
+  accelerator: none
+
+audio:
+  input:
+    device: "plughw:1,0"
+    sample_rate: 16000
+    channels: 1
+    aec: hardware
+    doa: false
+  output:
+    device: "plughw:1,0"
+    gain_db: -6.0
+
+capabilities: []
+
+safety:
+  estop_gpio: null
+  max_continuous_motion_s: 30
+  thermal_throttle_c: 75

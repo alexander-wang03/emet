@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emet.sh/schemas/0.1/soul-bundle.schema.json",
+  "title": "Emet soul.yaml",
+  "description": "The portable personality. Valid on any body. The engine MUST NOT write body-specific state here — no joint trims, no calibration, no device paths.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bundle_version", "identity"],
+
+  "properties": {
+    "bundle_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "wake_word", "line"],
+      "properties": {
+        "name": {
+          "description": "P0. What the robot is called. Free text — any name at all. Deliberately NOT the wake word.",
+          "type": "string",
+          "minLength": 1
+        },
+        "wake_word": {
+          "description": "P0. Which pretrained wake word wakes this soul. Must be a member of the shipped set — membership is a semantic rule so that the set can grow without a schema change. A soul may be named Barnaby and answer to 'emet'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "description": "P0. Which reference soul this derives from. Metadata only — the engine does not branch on it.",
+          "enum": ["emet", "hugr", "neuma", "custom"]
+        },
+        "pronouns": { "type": "string" },
+        "author": { "type": "string" },
+        "created": { "type": "string", "format": "date" },
+        "license": {
+          "description": "RSV. An SPDX licence identifier for souls published to the community registry — a soul is configuration but also prose, and a registry nobody can rely on legally is a registry nobody builds on. null is legal for a private soul.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+
+    "voice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "enum": ["piper", "cloud"] },
+        "model": { "type": "string" },
+        "rate": { "type": "number", "exclusiveMinimum": 0 },
+        "pitch_shift_semitones": { "type": "number" }
+      }
+    },
+
+    "persona": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "description": "P0. The seed a human writes.",
+          "type": "string"
+        },
+        "system_prompt": {
+          "description": "P0. Compiled from summary, or hand-written.",
+          "type": "string"
+        },
+        "traits": {
+          "description": "P0. Numeric knobs the engine actually reads.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "warmth": { "$ref": "#/$defs/unit" },
+            "humor": { "$ref": "#/$defs/unit" },
+            "verbosity": { "$ref": "#/$defs/unit" },
+            "curiosity": { "$ref": "#/$defs/unit" },
+            "formality": { "$ref": "#/$defs/unit" }
+          }
+        },
+        "drift": {
+          "description": "RSV. Behaviour arrives in release Afflatus. Fields exist now so nothing migrates later. Constraint fixed today: drift must be auditable and reversible — deltas live in an append-only table keyed to the episode that caused them, and soul.yaml is never mutated.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "rate": { "$ref": "#/$defs/unit" },
+            "locked_traits": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "interaction": {
+      "description": "P0. Turn-taking is what separates charming from infuriating, and no personality prompting fixes it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patience_ms": {
+          "description": "Silence threshold before responding. Exposed as a persona knob so a thoughtful soul waits longer than an eager one.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "extend_on_incomplete": { "type": "boolean" },
+        "barge_in": {
+          "description": "Requires audio.input.aec != none. Cross-document rule, checked when a bundle is paired with a manifest.",
+          "type": "boolean"
+        },
+        "backchannel": { "type": "boolean" },
+        "greeting": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "on_recognized": { "type": "boolean" },
+            "on_unknown": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "idle": {
+      "description": "P0 minimal, V1 full. A separate loop from conversation, at the lowest priority. On a body with no actuators it is a silent no-op.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "interval_s": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number", "exclusiveMinimum": 0 }
+        },
+        "weights": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/unit" },
+          "propertyNames": { "enum": ["settle", "look_around", "fidget", "doze"] }
+        },
+        "proactivity": {
+          "description": "RSV. 0.0 = never initiates. Ignored in P0. The highest-risk feature in the product: a companion that talks unprompted is either magical or intolerable, and the difference is mostly frequency.",
+          "$ref": "#/$defs/unit"
+        }
+      }
+    },
+
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "personalization": {
+          "description": "P0. Master toggle.",
+          "type": "boolean"
+        },
+        "cross_person_disclosure": {
+          "description": "P0. Whether the robot may tell one person something it learned about another (levels 0 and 1). Default true, because it is what a companion who cared would do. Must be surfaced during setup in plain language, not buried.",
+          "type": "boolean"
+        },
+        "consolidation": {
+          "description": "RSV. Nightly batch rewriting of profiles and episode summaries.",
+          "enum": ["nightly", "off"]
+        },
+        "retention_days": {
+          "description": "P0. 0 = forever.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+
+    "models": {
+      "description": "P0. BYOK — bring your own keys. Online-first: in P0 the robot fails loudly and in character when a key or the network is missing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": { "$ref": "#/$defs/model_ref" },
+        "stt": { "$ref": "#/$defs/model_ref" },
+        "tts": { "$ref": "#/$defs/model_ref" },
+        "micro": { "$ref": "#/$defs/model_ref" }
+      }
+    },
+
+    "self_model_overrides": {
+      "description": "RSV. Lets a character describe its own body in its own voice, rather than in the engine's deterministic template phrasing.",
+      "type": "object"
+    }
+  },
+
+  "$defs": {
+    "unit": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+
+    "model_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string" },
+        "key_env": {
+          "description": "Name of the environment variable holding the key. The key itself is never written into the bundle.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,214 @@
+"""Core types shared by the engine, the HAL, and every plugin.
+
+This module is contract, not logic. Anything here is something both sides of
+the boundary must agree on, so additions are a minor version bump of the SDK
+and changes are a major one.
+
+The soul never names hardware (principle 1). Nothing in this module references
+a servo channel, a GPIO pin, an I2C address, or a driver: intents and actions
+describe *what should happen*, and plugins decide what that means for a body.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import IntEnum, StrEnum
+from typing import Any, Mapping
+
+__all__ = [
+    "Priority",
+    "TargetKind",
+    "Target",
+    "Intent",
+    "Action",
+    "Pose",
+    "Twist",
+    "CapabilityDescriptor",
+    "LocomotionDescriptor",
+    "Health",
+    "Sensitivity",
+    "MemoryKind",
+]
+
+
+class Priority(IntEnum):
+    """Arbitration order. Highest wins; ties break by recency.
+
+    P0 is one intent per actuator: a higher-priority intent preempts, and the
+    lower one is dropped rather than queued. Per-actuator blending — expressing
+    curiosity with the eyes *while* attending with the head — is V1.
+    """
+
+    SAFETY = 100      # thermal, estop, joint limit, brownout recovery
+    SIGNAL = 90       # system state is never suppressed by a personality
+    SPEECH = 80       # speak, acknowledge
+    ATTENTION = 60    # attend
+    EXPRESSIVE = 40   # express
+    LOCOMOTION = 30   # move
+    IDLE = 10         # the idle loop
+
+
+class TargetKind(StrEnum):
+    NONE = "none"
+    BEARING = "bearing"        # a direction, from DoA or vision
+    PERSON = "person"          # a known person id
+    CAPABILITY = "capability"  # one of the robot's own parts (V1: attend_joint)
+
+
+@dataclass(frozen=True, slots=True)
+class Target:
+    """What an intent is directed at, if anything."""
+
+    kind: TargetKind = TargetKind.NONE
+    bearing_deg: float | None = None
+    person_id: str | None = None
+    capability_id: str | None = None
+
+    def __post_init__(self) -> None:
+        required = {
+            TargetKind.BEARING: ("bearing_deg", self.bearing_deg),
+            TargetKind.PERSON: ("person_id", self.person_id),
+            TargetKind.CAPABILITY: ("capability_id", self.capability_id),
+        }.get(self.kind)
+        if required is not None and required[1] is None:
+            raise ValueError(f"Target of kind {self.kind!r} requires {required[0]!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class Intent:
+    """What the soul wants to happen. The soul emits only these.
+
+    `kind` and `argument` must come from the closed vocabulary in
+    `emet_sdk.intents`; construct via `emet_sdk.intents.make` to have that
+    checked.
+    """
+
+    kind: str
+    argument: str | None = None
+    intensity: float = 0.5
+    target: Target | None = None
+    duration_ms: int | None = None
+    priority: Priority = Priority.EXPRESSIVE
+    interruptible: bool = True
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.intensity <= 1.0:
+            raise ValueError(f"intensity must be in [0.0, 1.0], got {self.intensity}")
+        if self.duration_ms is not None and self.duration_ms < 0:
+            raise ValueError("duration_ms must not be negative")
+
+    @property
+    def name(self) -> str:
+        """Dotted form, e.g. 'express.curiosity'. Keys motion pack clips."""
+        return f"{self.kind}.{self.argument}" if self.argument else self.kind
+
+
+@dataclass(frozen=True, slots=True)
+class Action:
+    """A concrete instruction to one capability, produced by resolving an
+    intent against a bound fallback rung.
+
+    Plugins receive these and nothing else. `apply()` must return promptly;
+    long moves are driven by repeated calls from the choreographer.
+    """
+
+    capability_id: str
+    name: str                                    # tilt, expression, pulse, inflect, ...
+    params: Mapping[str, Any] = field(default_factory=dict)
+    intensity: float = 0.5
+    duration_ms: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Pose:
+    """Joint id to angle in degrees. Body-relative, never raw servo counts."""
+
+    joints: Mapping[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Twist:
+    """A desired velocity, handed to a locomotion plugin.
+
+    The engine says how fast to go and how fast to turn. Everything below this
+    line — wheel arithmetic, gait phase, balance — belongs to the plugin.
+    """
+
+    linear_mps: float = 0.0
+    angular_rps: float = 0.0
+
+    @property
+    def is_stop(self) -> bool:
+        return self.linear_mps == 0.0 and self.angular_rps == 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityDescriptor:
+    """What a plugin instance can *actually* do, reported after init.
+
+    Fallback chains bind against this rather than against the YAML, because
+    the manifest states intent and the hardware states reality. A servo that
+    failed to initialise reports a narrower descriptor, and the chain falls
+    through to the next rung instead of binding to something dead.
+    """
+
+    capability_id: str
+    capability_type: str
+    role: str | None = None
+    form: str | None = None
+    actions: frozenset[str] = frozenset()
+    axes: frozenset[str] = frozenset()
+    joints: tuple[str, ...] = ()
+    healthy: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class LocomotionDescriptor:
+    """What a locomotion plugin reports about how this body moves.
+
+    `can_turn_in_place` matters to the self-model: a body that cannot must
+    describe turning honestly, and `move.turn_to` realises differently.
+    """
+
+    kinematics: str
+    max_linear_mps: float
+    max_angular_rps: float
+    can_turn_in_place: bool
+    can_translate_and_rotate: bool
+    holonomic: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Health:
+    """RSV. Polled by the engine; feeds proprioceptive self-model updates so
+    that "my left wheel isn't responding" can enter context and the character
+    can mention it.
+    """
+
+    ok: bool = True
+    detail: str | None = None
+    faults: tuple[str, ...] = ()
+
+
+class Sensitivity(IntEnum):
+    """Memory disclosure levels.
+
+    OPEN and PERSONAL are left to the character's judgement. PRIVATE and
+    SEALED are enforced in the retrieval query — the soul never receives them,
+    so it cannot disclose them regardless of what it is talked into. A hard
+    floor on the catastrophic cases, personality everywhere above it.
+    """
+
+    OPEN = 0      # freely recalled with anyone present
+    PERSONAL = 1  # recalled with the subject; otherwise gated on disclosure setting
+    PRIVATE = 2   # only when the source person is the sole participant
+    SEALED = 3    # never enters a prompt; retained for inspection and export only
+
+
+class MemoryKind(StrEnum):
+    FACT = "fact"
+    EVENT = "event"
+    PREFERENCE = "preference"
+    PROMISE = "promise"
+    FEELING = "feeling"
+    SELF = "self"

@@ -1,0 +1,17 @@
+# INVALID: no audio block.
+#
+# Audio is the hardware floor. Every fallback chain terminates in a voice
+# rung, so a body without a microphone and a speaker cannot satisfy its own
+# intents. There is no valid manifest without it.
+#
+# Expected: schema error, /audio
+
+manifest_version: "0.1"
+
+body:
+  id: mute
+  name: "a robot that cannot hear or speak"
+  scale: desk
+  power: plugged_in
+
+capabilities: []

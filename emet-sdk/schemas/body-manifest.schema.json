@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emet.sh/schemas/0.1/body-manifest.schema.json",
+  "title": "Emet Body Manifest",
+  "description": "The hardware description at /etc/emet/body.yaml. Read by the engine at boot and never again until restart. Contains every P0 field, every RSV field reserved for later releases, and the reserved V1 capability types.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "body", "audio"],
+
+  "properties": {
+    "manifest_version": {
+      "description": "Schema version this manifest was written against.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scale", "power"],
+      "properties": {
+        "id": {
+          "description": "P0. Stable identifier for this physical body. Keys body-local state at /etc/emet/state/<id>.json. NEVER a memory namespace.",
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "description": "P0. Human label for the body. Not the robot's name — that lives in the soul bundle.",
+          "type": "string"
+        },
+        "scale": {
+          "description": "P0. Feeds self-model phrasing.",
+          "enum": ["desk", "floor", "large"]
+        },
+        "power": {
+          "description": "P0. Whether the robot is tethered to a wall outlet or carries its own power. A plugged-in robot knows it cannot come to you, and says so.",
+          "enum": ["plugged_in", "battery"]
+        },
+        "battery_capacity_wh": {
+          "description": "RSV. Reserved for battery-aware behaviour.",
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "description": {
+          "description": "P0. Free text. Feeds the self-model and, later, cloud motion generation.",
+          "type": "string"
+        }
+      }
+    },
+
+    "compute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "platform": { "type": "string" },
+        "ram_gb": { "type": "number", "exclusiveMinimum": 0 },
+        "accelerator": {
+          "description": "RSV. Ignored by the P0 engine.",
+          "enum": ["none", "hailo8l", "coral"]
+        }
+      }
+    },
+
+    "audio": {
+      "description": "P0, REQUIRED. This is the hardware floor: a microphone and a speaker. There is no valid manifest without it, because every fallback chain terminates in a voice rung.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output"],
+      "properties": {
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["device"],
+          "properties": {
+            "device": { "type": "string", "minLength": 1 },
+            "sample_rate": { "type": "integer", "exclusiveMinimum": 0 },
+            "channels": { "type": "integer", "minimum": 1 },
+            "aec": {
+              "description": "P0. Acoustic echo cancellation. barge_in requires this to be other than 'none'.",
+              "enum": ["hardware", "software", "none"]
+            },
+            "doa": {
+              "description": "P0. Direction of arrival available. Consumed by attend intents.",
+              "type": "boolean"
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["device"],
+          "properties": {
+            "device": { "type": "string", "minLength": 1 },
+            "gain_db": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "capabilities": {
+      "description": "P0. May be empty — a Pi with a USB speakerphone and nothing else is a valid body, and is milestone one.",
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/capability" }
+    },
+
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "estop_gpio": { "type": ["integer", "null"], "minimum": 0 },
+        "max_continuous_motion_s": { "type": "number", "exclusiveMinimum": 0 },
+        "thermal_throttle_c": { "type": "number" }
+      }
+    }
+  },
+
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Lowercase, starts with a letter, underscores allowed. Uniqueness across capabilities is a semantic rule, not a schema rule."
+    },
+
+    "driver": {
+      "description": "Which plugin owns this hardware, and its instantiation parameters. Resolution to an installed package is a semantic rule — a missing plugin is a MissingPluginError, never a schema error.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plugin"],
+      "properties": {
+        "plugin": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
+    },
+
+    "capability": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "type": {
+          "description": "P0 types are implemented. V1 types are reserved: accepted by the validator, ignored by the P0 engine.",
+          "enum": [
+            "joint_group",
+            "drive",
+            "display",
+            "light",
+            "camera",
+            "sensor",
+            "manipulator",
+            "audio_extra",
+            "projector",
+            "thermal"
+          ]
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "joint_group" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/joint_group" } },
+        { "if": { "properties": { "type": { "const": "drive" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/drive" } },
+        { "if": { "properties": { "type": { "const": "display" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/display" } },
+        { "if": { "properties": { "type": { "const": "light" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/light" } },
+        { "if": { "properties": { "type": { "const": "camera" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/camera" } },
+        { "if": { "properties": { "type": { "const": "sensor" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/sensor" } }
+      ]
+    },
+
+    "joint_group": {
+      "additionalProperties": false,
+      "required": ["driver", "joints"],
+      "properties": {
+        "id": true,
+        "type": true,
+        "role": { "enum": ["head", "arm", "torso", "custom"] },
+        "driver": { "$ref": "#/$defs/driver" },
+        "joints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/joint" }
+        },
+        "parent": {
+          "description": "RSV. Kinematic chain parent. Ignored by the P0 engine.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+
+    "joint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "axis", "range_deg"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "axis": {
+          "description": "P0. Declared axes are what let the choreographer generate motion without user code.",
+          "enum": ["yaw", "pitch", "roll", "linear"]
+        },
+        "channel": { "type": "integer", "minimum": 0 },
+        "range_deg": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number" }
+        },
+        "home_deg": {
+          "description": "Must lie within range_deg. Cross-field comparison is a semantic rule.",
+          "type": "number"
+        },
+        "max_speed_dps": { "type": "number", "exclusiveMinimum": 0 },
+        "invert": { "type": "boolean" },
+        "trim_deg": {
+          "description": "Set by calibration. Body-local state: belongs to the body, never to the soul bundle.",
+          "type": "number"
+        }
+      }
+    },
+
+    "drive": {
+      "additionalProperties": false,
+      "required": ["kinematics", "driver"],
+      "properties": {
+        "id": true,
+        "type": true,
+        "kinematics": {
+          "description": "P0. OPEN ENUM — any string naming a locomotion plugin. Built in: differential, tracked. An unknown value is a MissingPluginError, not a schema error, which is what keeps this open.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "driver": { "$ref": "#/$defs/driver" },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wheel_radius_m": { "type": "number", "exclusiveMinimum": 0 },
+            "track_width_m": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_linear_mps": { "type": "number", "exclusiveMinimum": 0 },
+            "max_angular_rps": { "type": "number", "exclusiveMinimum": 0 },
+            "accel_limit_mps2": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "odometry": {
+          "description": "P0: none, encoders. RSV: imu_fused, slam.",
+          "enum": ["none", "encoders", "imu_fused", "slam"]
+        },
+        "legs": {
+          "description": "RSV. Reserved for legged bodies, ignored by the P0 engine. Present so that no manifest anywhere needs to change when a legged locomotion plugin arrives.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "count": { "type": "integer", "minimum": 1 },
+            "dof_per_leg": { "type": "integer", "minimum": 1 },
+            "gait": {
+              "description": "RSV. static is the first-party target: the centre of mass stays over the support polygon and the body never enters a falling phase.",
+              "enum": ["static", "dynamic"]
+            },
+            "balance": { "enum": ["none", "imu_feedback"] }
+          }
+        }
+      }
+    },
+
+    "display": {
+      "additionalProperties": false,
+      "required": ["driver"],
+      "properties": {
+        "id": true,
+        "type": true,
+        "role": { "enum": ["eyes", "face", "status", "screen"] },
+        "form": { "enum": ["dual_round", "single_round", "rect", "matrix"] },
+        "driver": { "$ref": "#/$defs/driver" },
+        "resolution": { "$ref": "#/$defs/resolution" },
+        "refresh_hz": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+
+    "light": {
+      "additionalProperties": false,
+      "required": ["driver"],
+      "properties": {
+        "id": true,
+        "type": true,
+        "role": { "enum": ["ambient", "status", "eyes"] },
+        "form": { "enum": ["ring", "strip", "single"] },
+        "count": { "type": "integer", "minimum": 1 },
+        "driver": { "$ref": "#/$defs/driver" }
+      }
+    },
+
+    "camera": {
+      "additionalProperties": false,
+      "required": ["driver"],
+      "properties": {
+        "id": true,
+        "type": true,
+        "role": { "type": "string" },
+        "driver": { "$ref": "#/$defs/driver" },
+        "resolution": { "$ref": "#/$defs/resolution" },
+        "fov_deg": { "type": "number", "exclusiveMinimum": 0, "maximum": 360 },
+        "mounted_on": {
+          "description": "P0. A capability id, or the literal 'body'. Lets the engine look at what it is talking about by driving the head rather than cropping the frame. Referential integrity is a semantic rule.",
+          "type": "string"
+        },
+        "local_pipeline": {
+          "description": "P0: face_detect, motion. RSV: pose, hand, object. Everything here runs on the Pi; cloud vision is event-triggered and never streamed.",
+          "type": "array",
+          "items": { "enum": ["face_detect", "motion", "pose", "hand", "object"] }
+        }
+      }
+    },
+
+    "sensor": {
+      "additionalProperties": false,
+      "required": ["sensor_kind", "driver"],
+      "properties": {
+        "id": true,
+        "type": true,
+        "sensor_kind": { "enum": ["imu", "range", "touch", "light", "temp"] },
+        "driver": { "$ref": "#/$defs/driver" },
+        "role": { "type": "string" }
+      }
+    },
+
+    "resolution": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "integer", "exclusiveMinimum": 0 }
+    }
+  }
+}
