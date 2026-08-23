@@ -15,10 +15,17 @@ never reported as a schema error, and an open enum like `drive.kinematics`
 stays open precisely because an unrecognised value raises
 `MissingPluginError` rather than failing schema validation.
 
-Plugin *discovery* arrives in 0.2. Until then the registry below knows the
-built-in locomotion plugins by name and reports driver plugins as
-unverifiable warnings. The error types and messages do not change when
-discovery lands — only how the registry answers.
+Plugin discovery is real as of 0.2: the registry reads the entry points of
+every installed distribution, so what counts as a known plugin is decided by
+what is installed rather than by a list compiled into the engine.
+
+**Validating and booting are deliberately not the same strictness.** Linting a
+manifest for hardware you have not wired yet is a normal thing to do, so an
+unrecognised driver name is a warning here by default. Booting an engine
+against that manifest is not, so `verify_drivers=True` — what `emet validate
+--verify-drivers` passes, and what the engine will use — makes it an error.
+`kinematics` is always strict: a body that cannot move the way it claims is a
+different class of problem from one missing an LED driver.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ import json
 
 from emet_sdk import chains as _chains
 from emet_sdk import intents as _intents
+from emet_sdk.discovery import PluginRegistry
 
 __all__ = [
     "Severity",
@@ -56,9 +64,10 @@ __all__ = [
 Severity = Literal["error", "warning"]
 
 
-#: Locomotion plugins shipped with the SDK. `drive.kinematics` is an OPEN
-#: enum — any string naming an installed locomotion plugin is legal — so this
-#: set is what is *built in*, not what is permitted.
+#: What `emet-hal` ships. Kept for documentation and for tests that must not
+#: depend on what happens to be installed — it is NOT what the validator checks
+#: against. `drive.kinematics` is an open enum resolved against real entry
+#: points, so a third-party `legged` package is as valid as anything here.
 BUILTIN_LOCOMOTION: frozenset[str] = frozenset({"differential", "tracked"})
 
 
@@ -148,34 +157,14 @@ class MissingPluginError(ValidationError):
 # --------------------------------------------------------------------------
 
 
-class PluginRegistry:
-    """What is installed. Replaced by entry-point discovery in 0.2.
+# `PluginRegistry` lives in `discovery` now that it reads real entry points.
+# Re-exported here because every caller already imports it from `validate`, and
+# a rename would be churn for no gain.
 
-    `verify_drivers=False` is the honest 0.1 default: with no HAL published
-    yet there is nothing to discover, so driver names are reported as
-    unverifiable warnings rather than pretended-valid or falsely rejected.
-    """
 
-    def __init__(
-        self,
-        locomotion: Iterable[str] = BUILTIN_LOCOMOTION,
-        drivers: Iterable[str] | None = None,
-        *,
-        verify_drivers: bool = False,
-    ) -> None:
-        self._locomotion = frozenset(locomotion)
-        self._drivers = frozenset(drivers or ())
-        self.verify_drivers = verify_drivers
-
-    def has_locomotion(self, kinematics: str) -> bool:
-        return kinematics in self._locomotion
-
-    def has_driver(self, plugin: str) -> bool:
-        return plugin in self._drivers
-
-    @property
-    def locomotion_names(self) -> list[str]:
-        return sorted(self._locomotion)
+def default_registry() -> PluginRegistry:
+    """The plugins actually installed in this environment."""
+    return PluginRegistry.discover()
 
 
 # --------------------------------------------------------------------------
@@ -235,7 +224,7 @@ def validate_manifest(
 ) -> ValidationReport:
     """Validate a body manifest, shape then meaning."""
     report = ValidationReport()
-    registry = registry or PluginRegistry()
+    registry = registry if registry is not None else default_registry()
 
     if not _check_schema(doc, "body-manifest", report):
         # Semantic rules assume a well-shaped document; running them on a
@@ -349,7 +338,7 @@ def _check_plugins(
                         f"here is a different failure from missing hardware.",
                         f"/capabilities/{i}/driver/plugin",
                     )
-            elif plugin not in unverified:
+            elif not registry.has_driver(plugin) and plugin not in unverified:
                 unverified.append(plugin)
 
         if cap.get("type") == "drive":
@@ -358,7 +347,7 @@ def _check_plugins(
                 report.error(
                     "missing_plugin",
                     f"no locomotion plugin provides {kinematics!r}. "
-                    f"Built in: {', '.join(registry.locomotion_names)}. "
+                    f"Installed: {', '.join(registry.locomotion_names) or '(none)'}. "
                     f"`kinematics` is an open enum — this value is legal, the "
                     f"plugin simply is not installed.",
                     f"/capabilities/{i}/kinematics",
@@ -368,9 +357,11 @@ def _check_plugins(
     # not bury its real errors under six identical notices.
     if unverified:
         report.warn(
-            "unverified_plugin",
-            f"cannot confirm {len(unverified)} driver plugin(s) are installed "
-            f"({', '.join(unverified)}); plugin discovery arrives in 0.2",
+            "driver_not_installed",
+            f"{len(unverified)} driver plugin(s) named here are not installed "
+            f"({', '.join(unverified)}). Legal in a manifest — describing hardware "
+            f"you have not wired yet is normal — but the engine will refuse to "
+            f"boot against it. Run with --verify-drivers to treat this as an error.",
             "/capabilities",
         )
 

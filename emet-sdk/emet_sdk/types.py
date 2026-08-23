@@ -26,6 +26,7 @@ __all__ = [
     "CapabilityDescriptor",
     "LocomotionDescriptor",
     "Health",
+    "Reading",
     "Sensitivity",
     "MemoryKind",
 ]
@@ -188,6 +189,22 @@ class Health:
     ok: bool = True
     detail: str | None = None
     faults: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Reading:
+    """One typed observation from a sensor.
+
+    Sensors invert the flow of the rest of the system: the engine polls them
+    and consumes what comes back. A sensor never emits an intent — deciding
+    what an observation *means* is the engine's job, and letting hardware
+    push intents would put a driver author in charge of the personality.
+    """
+
+    capability_id: str
+    kind: str                                    # imu, range, touch, light, temp
+    values: Mapping[str, float] = field(default_factory=dict)
+    stale: bool = False
 
 
 class Sensitivity(IntEnum):

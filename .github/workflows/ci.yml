@@ -61,6 +61,80 @@ jobs:
           fi
           echo "all commits signed off"
 
+  wheel:
+    name: wheel install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Data files live in two different places depending on how you install.
+      # In a source checkout `schemas/` sits BESIDE the package; in a built
+      # wheel `force-include` moves it INSIDE. An editable install keeps the
+      # source layout, so every other job in this file exercises only one of
+      # those two paths — and it is the path no user of the project ever takes.
+      #
+      # A typo in the force-include would leave the whole suite green and break
+      # the first person to run `pip install emet-sdk`. So: build a real wheel,
+      # install it properly, and run from somewhere the source tree cannot be
+      # found by accident.
+      - name: Build wheels
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel emet-sdk
+          python -m build --wheel emet-hal
+
+      - name: Data files are actually inside the wheel
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          wheel = sorted(glob.glob("emet-sdk/dist/*.whl"))[-1]
+          names = set(zipfile.ZipFile(wheel).namelist())
+          required = [
+              "emet_sdk/schemas/body-manifest.schema.json",
+              "emet_sdk/schemas/soul-bundle.schema.json",
+              "emet_sdk/schemas/motion-pack.schema.json",
+              "emet_sdk/chains/core.yaml",
+              "emet_sdk/chains/express.yaml",
+          ]
+          missing = [r for r in required if r not in names]
+          if missing:
+              print(f"{wheel} is missing packaged data files:")
+              for m in missing:
+                  print(f"  - {m}")
+              sys.exit(1)
+          print(f"all {len(required)} data files present in {wheel}")
+          PY
+
+      - name: Install the wheels, not the source
+        run: |
+          python -m pip install emet-sdk/dist/*.whl emet-hal/dist/*.whl
+
+      # `cd /tmp` is the point of this step: from here the source checkout is
+      # not on the path, so anything that resolves must be coming out of the
+      # installed package.
+      - name: CLI works from outside the source tree
+        run: |
+          cd /tmp
+          emet --version
+          emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/bodiless.yaml"
+          emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --verify-drivers
+          emet explain  "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --why
+
+      - name: Plugin discovery works from an installed wheel
+        run: |
+          cd /tmp
+          python - <<'PY'
+          from emet_sdk.discovery import PluginRegistry
+          r = PluginRegistry.discover()
+          assert r.has_locomotion("differential"), "entry points did not survive packaging"
+          assert r.has_locomotion("tracked")
+          assert r.has_driver("emet_hal.mock")
+          print("discovered:", [f"{g}:{n}" for g, n in r])
+          PY
+
   test:
     name: test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -75,21 +149,39 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install emet-sdk
-        working-directory: emet-sdk
-        run: python -m pip install -e ".[dev]"
+      # emet-hal is installed too, and not only so its own tests run: plugin
+      # discovery reads entry points, so several SDK tests are meaningless
+      # unless something is actually registered to discover.
+      - name: Install packages
+        run: |
+          python -m pip install -e "emet-sdk[dev]"
+          python -m pip install -e "emet-hal[dev]"
 
-      - name: Run tests
+      - name: Test emet-sdk
         working-directory: emet-sdk
         run: python -m pytest -q
 
-      # Installed-package smoke test. The suite runs from a source checkout,
-      # where the schemas sit beside the package; installed, they are inside
-      # it. Only running the CLI catches a packaging regression that would
-      # otherwise ship as "cannot locate the schemas directory".
+      - name: Test emet-hal
+        working-directory: emet-hal
+        run: python -m pytest -q
+
+      # Exercises the CLI against the editable install. This does NOT prove the
+      # packaged layout works — see the `wheel` job for that.
       - name: CLI accepts the valid examples
         working-directory: emet-sdk
         run: emet validate examples/bodiless.yaml examples/scout-01.yaml examples/emet-soul.yaml
+
+      # A manifest wired entirely to installed plugins must pass the strict
+      # check the engine will apply at boot.
+      - name: Fully-mocked manifest passes the boot-strictness check
+        working-directory: emet-sdk
+        run: emet validate examples/mock-scout.yaml --verify-drivers
+
+      - name: Binding tables resolve
+        working-directory: emet-sdk
+        run: |
+          emet explain examples/bodiless.yaml
+          emet explain examples/mock-scout.yaml --why
 
       - name: CLI rejects the invalid examples
         working-directory: emet-sdk

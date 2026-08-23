@@ -95,12 +95,15 @@ emet/                         one repository, Apache 2.0 throughout
       plugin.py       ActuatorPlugin, SensorPlugin, LocomotionPlugin ABCs
       intents.py      the canonical intent vocabulary
       chains.py       fallback chain format + the voice-rung rule
+      discovery.py    entry-point plugin discovery
       resolve.py      chain resolution → the binding table (§6)
       validate.py     manifest + bundle validators
 
   emet-hal/         community-contributed
-    drivers/          pca9685, tb6612, gc9a01, ws2812, sg90, mg996r, ...
-    locomotion/       differential, tracked  (§12.1)
+    mock.py           an actuator and a sensor that pretend
+    differential.py   two independently driven wheels  (§12.1)
+    tracked.py        the same arithmetic, plus tread scrub
+    ...               pca9685, tb6612, gc9a01, ws2812 — not yet written
 
   emet-engine/      personality synthesis, memory, arbitration,
                     choreography, prompting, safety, consolidation.

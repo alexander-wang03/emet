@@ -1,0 +1,111 @@
+# The same robot as scout-01, wired entirely to mock plugins.
+#
+# scout-01.yaml names real chips — pca9685, gc9a01, ws2812 — none of which
+# have drivers yet. It is the aspirational example, and it validates with a
+# warning saying so.
+#
+# This one resolves completely, today, on a laptop with nothing plugged in:
+#
+#     emet validate examples/mock-scout.yaml --verify-drivers   # passes
+#     emet explain  examples/mock-scout.yaml
+#
+# That is the point of the mock. The whole stack above the metal — chain
+# resolution, arbitration, the choreographer, eventually a conversation — can
+# be exercised without owning a servo. It is also how a driver author checks
+# what the choreographer actually sends before wiring anything up.
+#
+# Note the `ring` here declares `role: status` rather than scout-01's
+# `role: ambient`, so the signal.* chains bind to it instead of falling
+# through to the eyes. Compare the two binding tables — it is the clearest
+# demonstration in the repository that a role, not a part, is what a chain
+# asks for.
+
+manifest_version: "0.1"
+
+body:
+  id: mock_scout
+  name: "scout-01, simulated"
+  scale: desk
+  power: plugged_in
+  description: >
+    A small treaded robot about the size of a coffee mug, with a head that
+    turns and two round display eyes. None of it is real.
+
+compute:
+  platform: raspberrypi5
+  ram_gb: 8
+  accelerator: none
+
+audio:
+  input:
+    device: "plughw:1,0"
+    sample_rate: 16000
+    channels: 4
+    aec: hardware
+    doa: true
+  output:
+    device: "plughw:1,0"
+    gain_db: -6.0
+
+capabilities:
+  - id: head
+    type: joint_group
+    role: head
+    driver:
+      plugin: emet_hal.mock
+      params: {}
+    joints:
+      - {id: pan,  axis: yaw,   channel: 0, range_deg: [-90, 90], home_deg: 0, max_speed_dps: 180}
+      - {id: tilt, axis: pitch, channel: 1, range_deg: [-30, 45], home_deg: 0, max_speed_dps: 120}
+      # A roll axis scout-01 does not have. Several chains ask for one —
+      # express.affection, express.confusion, idle.fidget — so this body
+      # binds them to the head where scout-01 falls through to the eyes.
+      - {id: roll, axis: roll,  channel: 2, range_deg: [-20, 20], home_deg: 0, max_speed_dps: 90}
+
+  - id: base
+    type: drive
+    kinematics: tracked
+    driver:
+      plugin: emet_hal.mock
+      params: {}
+    geometry:
+      wheel_radius_m: 0.032
+      track_width_m: 0.14
+    limits:
+      max_linear_mps: 0.35
+      max_angular_rps: 2.0
+      accel_limit_mps2: 0.5
+    odometry: none
+
+  - id: eyes
+    type: display
+    role: eyes
+    form: dual_round
+    driver:
+      plugin: emet_hal.mock
+      params: {}
+    resolution: [240, 240]
+    refresh_hz: 30
+
+  - id: ring
+    type: light
+    role: status          # scout-01 says `ambient`; compare the binding tables
+    form: ring
+    count: 16
+    driver:
+      plugin: emet_hal.mock
+      params: {}
+
+  - id: imu
+    type: sensor
+    sensor_kind: imu
+    driver:
+      plugin: emet_hal.mock_sensor
+      params:
+        values: {pitch_deg: 0.0, roll_deg: 0.0, yaw_deg: 0.0}
+    role: orientation
+
+safety:
+  estop_gpio: null
+  max_continuous_motion_s: 30
+  thermal_throttle_c: 75

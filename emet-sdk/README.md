@@ -11,10 +11,11 @@ term in Android's sense: the abstraction itself lives here in
 `emet_sdk.plugin`, and `emet-hal` is the collection of per-device
 implementations that satisfy it.
 
-## What is in 0.1
+## What is in 0.2
 
-Prima Materia's first minor release is schema and validation only. There is no
-runtime, no plugin discovery, no audio, and no engine.
+Schema, validation, the plugin contract, and chain resolution. There is still
+no audio and no engine — nothing here runs a robot. What it can now do is
+answer, for any body you describe, what each intent would mean on it.
 
 | | |
 |---|---|
@@ -22,8 +23,11 @@ runtime, no plugin discovery, no audio, and no engine.
 | `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `Health`, `Priority`, `Sensitivity`. |
 | `emet_sdk/intents.py` | The closed intent vocabulary, plus the four names reserved from P0. |
 | `emet_sdk/chains.py` | Fallback chain format, and the rule that every chain terminates in a voice rung. |
+| `emet_sdk/plugin.py` | `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin` — the public contract. |
+| `emet_sdk/discovery.py` | Entry-point discovery. Installing a package is what makes a driver exist. |
+| `emet_sdk/resolve.py` | Chain resolution: `(chains, descriptors) → binding table`. |
 | `emet_sdk/validate.py` | Semantic rules and the error taxonomy. |
-| `emet_sdk/cli.py` | `emet validate`. |
+| `emet_sdk/cli.py` | `emet validate`, `emet explain`. |
 
 ## Install
 
@@ -38,7 +42,24 @@ python -m venv .venv
 emet validate examples/bodiless.yaml
 emet validate examples/scout-01.yaml examples/emet-soul.yaml --pair
 emet validate examples/invalid/legged-no-plugin.yaml
+
+emet explain examples/bodiless.yaml          # everything falls to voice
+emet explain examples/mock-scout.yaml --why  # and why anything degraded
 ```
+
+`explain` is the one to reach for when a robot is not doing what you expected.
+It prints, for every intent, which part of *this* body performs it — and for
+anything that fell short of its best option, which rungs were skipped and why:
+
+```
+  ~ express.affection  eyes   expression   hold_ms=1500 preset=soft
+      skipped rung 0 {role: head, axis: roll}: 'head' has no 'roll' axis; it has pitch, yaw
+```
+
+**Validating and booting are deliberately different strictnesses.** Naming a
+driver you have not installed is a warning, because describing hardware you
+have not wired yet is a normal thing to do. `--verify-drivers` applies the rule
+the engine will apply at boot, where it is an error.
 
 Exit codes: `0` clean, `1` validation errors, `2` usage or IO failure.
 Add `--strict` to fail on warnings, `--json` for machine-readable output.
