@@ -1,0 +1,103 @@
+# Emet CI.
+#
+# Two things are checked, and the second matters more than it looks.
+#
+#   tests     — the 0.1 acceptance criteria, executable.
+#   layering  — emet_sdk imports nothing internal; emet_hal and emet_engine
+#               import emet_sdk only.
+#
+# The layering check exists because the closed-engine plan used to enforce that
+# boundary structurally, and an open monorepo does not. See DISTRIBUTION.md §2.
+
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  layering:
+    name: layering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check package layering
+        run: python tools/check_layering.py .
+
+  dco:
+    name: dco sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every commit carries Signed-off-by
+        run: |
+          missing=0
+          for sha in $(git rev-list ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}); do
+            if ! git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
+              echo "missing sign-off: $sha  $(git log -1 --format=%s "$sha")"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo
+            echo "Emet uses a DCO. Sign your commits with 'git commit -s',"
+            echo "or add sign-off to existing work with 'git rebase --signoff <base>'."
+            echo "See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "all commits signed off"
+
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install emet-sdk
+        working-directory: emet-sdk
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        working-directory: emet-sdk
+        run: python -m pytest -q
+
+      # Installed-package smoke test. The suite runs from a source checkout,
+      # where the schemas sit beside the package; installed, they are inside
+      # it. Only running the CLI catches a packaging regression that would
+      # otherwise ship as "cannot locate the schemas directory".
+      - name: CLI accepts the valid examples
+        working-directory: emet-sdk
+        run: emet validate examples/bodiless.yaml examples/scout-01.yaml examples/emet-soul.yaml
+
+      - name: CLI rejects the invalid examples
+        working-directory: emet-sdk
+        run: |
+          for f in examples/invalid/*.yaml; do
+            if emet validate "$f" > /dev/null 2>&1; then
+              echo "FAIL: $f validated clean but should not have"
+              exit 1
+            fi
+          done
+          echo "all invalid fixtures rejected"

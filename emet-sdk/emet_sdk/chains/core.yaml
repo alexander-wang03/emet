@@ -1,0 +1,313 @@
+# Fallback chains for speech, attention, system signals, idle, and movement.
+#
+# Two voice actions carry weight here:
+#
+#   `silence` — a voice rung that produces no sound. It still *binds*, which
+#   is what the terminal-rung rule requires. An idle timer on a bodiless robot
+#   must be a silent no-op, not a robot that mutters every twenty seconds.
+#
+#   `explain` — a voice rung that says why the body cannot do the thing. This
+#   is principle 6 at the chain level: asked to come closer, a robot with no
+#   wheels says so rather than failing quietly.
+
+# ---------------------------------------------------------------- speech
+
+speak:
+  mode: first
+  rungs:
+    - actuator: {voice: true}
+      action: utter
+      params: {}
+
+acknowledge:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: nod
+      params: {angle_deg: 6, cycles: 1, speed: 0.9}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: blink, hold_ms: 180}
+    - actuator: {voice: true}
+      action: backchannel
+      params: {filler: ["mm.", "mhm.", "yeah."], max_ms: 300}
+
+# ------------------------------------------------------------- attention
+
+attend.speaker:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: yaw}
+      action: look_to
+      params: {source: doa, speed: 0.6, settle_ms: 250}
+    - actuator: {type: drive}
+      action: turn_to
+      params: {source: doa, max_angular_rps: 0.8}
+    - actuator: {role: eyes}
+      action: gaze
+      params: {source: doa}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+attend.bearing:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: yaw}
+      action: look_to
+      params: {source: target, speed: 0.6, settle_ms: 250}
+    - actuator: {type: drive}
+      action: turn_to
+      params: {source: target, max_angular_rps: 0.8}
+    - actuator: {role: eyes}
+      action: gaze
+      params: {source: target}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+attend.person:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: yaw}
+      action: look_to
+      params: {source: person, speed: 0.5, settle_ms: 300}
+    - actuator: {role: eyes}
+      action: gaze
+      params: {source: person}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+attend.none:
+  mode: first
+  rungs:
+    - actuator: {role: head}
+      action: home
+      params: {speed: 0.3}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: neutral}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+# ---------------------------------------------------------------- signals
+#
+# System state, never suppressed by a personality. Every signal has an
+# audible terminal rung because a muted or offline robot must be able to
+# say so on a body with no lights.
+
+signal.booting:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: pulse
+      params: {hue: 210, period_ms: 900}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: waking}
+    - actuator: {voice: true}
+      action: tone
+      params: {preset: rising_pair}
+
+signal.listening:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: solid
+      params: {hue: 140, brightness: 0.7}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: attentive}
+    - actuator: {voice: true}
+      action: tone
+      params: {preset: soft_click}
+
+signal.thinking:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: rotate
+      params: {hue: 190, period_ms: 1200}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: look_up}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+signal.speaking:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: modulate
+      params: {hue: 210, source: audio_envelope}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: speaking}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+signal.muted:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: solid
+      params: {hue: 0, brightness: 0.5}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: closed}
+    - actuator: {voice: true}
+      action: tone
+      params: {preset: falling_pair}
+
+signal.offline:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: pulse
+      params: {hue: 30, period_ms: 2000}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: dim}
+    - actuator: {voice: true}
+      action: explain
+      params: {topic: offline}
+
+signal.error:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: flash
+      params: {hue: 0, brightness: 1.0, cycles: 3}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: error}
+    - actuator: {voice: true}
+      action: explain
+      params: {topic: error}
+
+# ------------------------------------------------------------------- idle
+#
+# Lowest priority, preempted by anything. Every chain terminates in
+# `silence`: on a body with no actuators the idle loop must be a silent
+# no-op rather than a robot that talks to itself.
+
+idle.settle:
+  mode: first
+  rungs:
+    - actuator: {role: head}
+      action: home
+      params: {speed: 0.15}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: neutral}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+idle.look_around:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: yaw}
+      action: sweep
+      params: {angle_deg: 25, speed: 0.2, dwell_ms: 900}
+    - actuator: {role: eyes}
+      action: saccade
+      params: {amplitude: 0.4}
+    - actuator: {role: ambient, type: light}
+      action: fade
+      params: {hue: 200, brightness: 0.3, period_ms: 4000}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+idle.fidget:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: roll}
+      action: jitter
+      params: {angle_deg: 3, period_ms: 600}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: blink}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+idle.doze:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: droop
+      params: {angle_deg: -18, speed: 0.08}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: closed}
+    - actuator: {role: ambient, type: light}
+      action: fade
+      params: {hue: 220, brightness: 0.08, period_ms: 6000}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+# --------------------------------------------------------------- movement
+#
+# Only the drive rungs bind on a wheeled body. On a body without one, these
+# fall through to `explain`, and the robot says why it cannot come to you.
+# The self-model already told it so; this is the same truth at the motor level.
+
+move.approach:
+  mode: first
+  rungs:
+    - actuator: {type: drive}
+      action: drive_to
+      params: {direction: toward_target, stop_distance_m: 0.4}
+    - actuator: {voice: true}
+      action: explain
+      params: {topic: cannot_move}
+
+move.retreat:
+  mode: first
+  rungs:
+    - actuator: {type: drive}
+      action: drive_to
+      params: {direction: away_from_target, distance_m: 0.3}
+    - actuator: {voice: true}
+      action: explain
+      params: {topic: cannot_move}
+
+move.turn_to:
+  mode: first
+  rungs:
+    - actuator: {type: drive}
+      action: turn_to
+      params: {source: target}
+    - actuator: {role: head, axis: yaw}
+      action: look_to
+      params: {source: target, speed: 0.6}
+    - actuator: {voice: true}
+      action: explain
+      params: {topic: cannot_turn}
+
+move.wander:
+  mode: first
+  rungs:
+    - actuator: {type: drive}
+      action: wander
+      params: {max_linear_mps: 0.15, duration_ms: 4000}
+    - actuator: {voice: true}
+      action: silence
+      params: {}
+
+move.stop:
+  mode: first
+  rungs:
+    - actuator: {type: drive}
+      action: stop
+      params: {hard: false}
+    - actuator: {voice: true}
+      action: silence
+      params: {}

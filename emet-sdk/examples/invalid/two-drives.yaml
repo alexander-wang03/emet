@@ -1,0 +1,32 @@
+# INVALID: two drive capabilities.
+#
+# P0 permits at most one. Hybrid locomotion — wheels that retract into legs,
+# a tracked base with an omni turret — is V1, and needs arbitration between
+# drives that does not exist yet.
+#
+# Expected: multiple_drives, /capabilities/1
+
+manifest_version: "0.1"
+
+body:
+  id: hybrid
+  name: "a robot with two drivetrains"
+  scale: floor
+  power: battery
+
+audio:
+  input:  {device: "plughw:1,0", sample_rate: 16000, channels: 1, aec: hardware, doa: false}
+  output: {device: "plughw:1,0", gain_db: -6.0}
+
+capabilities:
+  - id: treads
+    type: drive
+    kinematics: tracked
+    driver: {plugin: emet_hal.tb6612, params: {pwm_left: 12, pwm_right: 13}}
+    limits: {max_linear_mps: 0.4, max_angular_rps: 1.5}
+
+  - id: wheels
+    type: drive
+    kinematics: differential
+    driver: {plugin: emet_hal.tb6612, params: {pwm_left: 18, pwm_right: 19}}
+    limits: {max_linear_mps: 0.9, max_angular_rps: 2.5}

@@ -1,0 +1,52 @@
+# INVALID *only* because no legged locomotion plugin is installed.
+#
+# This is the most important fixture in the set. It proves two things at once:
+#
+#   1. `kinematics` is an OPEN enum. `legged` is not rejected as a schema
+#      violation — it is a perfectly legal value naming a plugin that has not
+#      been written yet. If this file produced a schema error, the enum would
+#      be closed and bipeds would be unexpressible.
+#
+#   2. The RSV `legs` block validates cleanly. Every field below is accepted
+#      today and ignored by the P0 engine, so when a legged plugin arrives no
+#      manifest anywhere needs to change.
+#
+# The body described is the deliberate easy case: short
+# legs, low centre of mass, large feet, static gait. It walks by shifting its
+# weight fully onto one foot at a time and never enters a falling phase.
+#
+# Expected: exactly one error — missing_plugin, /capabilities/0/kinematics
+
+manifest_version: "0.1"
+
+body:
+  id: stumper
+  name: "short-legged walker"
+  scale: desk
+  power: battery
+  battery_capacity_wh: 37.0
+  description: >
+    A squat two-legged robot with very large flat feet and a low, heavy
+    body. It walks slowly and deliberately, one foot at a time.
+
+audio:
+  input:  {device: "plughw:1,0", sample_rate: 16000, channels: 4, aec: hardware, doa: true}
+  output: {device: "plughw:1,0", gain_db: -6.0}
+
+capabilities:
+  - id: base
+    type: drive
+    kinematics: legged
+    driver:
+      plugin: emet_hal.pca9685
+      params: {bus: 1, address: 0x40, pwm_freq: 50}
+    limits:
+      max_linear_mps: 0.08
+      max_angular_rps: 0.5
+      accel_limit_mps2: 0.2
+    odometry: none
+    legs:                          # RSV — reserved, ignored by the P0 engine
+      count: 2
+      dof_per_leg: 3
+      gait: static
+      balance: none

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emet.sh/schemas/0.1/motion-pack.schema.json",
+  "title": "Emet Motion Pack",
+  "description": "Recorded clips keyed to intents. Tier 3 of the capability model: produced by `emet teach` — relax the servos, pose the robot by hand, capture keyframes on a keypress. No code, no math, works on bodies nobody has seen. Deliberately declarative data so that cloud motion generation (V1) needs no schema change.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pack_version", "name", "clips"],
+
+  "properties": {
+    "pack_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "name": { "type": "string", "minLength": 1 },
+
+    "requires": {
+      "description": "Matched against the manifest. A pack whose requirements are unmet is skipped, and the fallback chain falls through to its next rung — it is not an error.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "role": { "type": "string" },
+          "type": { "type": "string" },
+          "joints": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "clips": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/clip" }
+    }
+  },
+
+  "$defs": {
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "keyframes"],
+      "properties": {
+        "intent": {
+          "description": "The intent this clip renders, as 'kind.argument' — e.g. express.curiosity. Membership in the closed vocabulary is a semantic rule.",
+          "type": "string",
+          "pattern": "^[a-z_]+(\\.[a-z_]+)?$"
+        },
+        "easing": {
+          "enum": ["linear", "ease_in", "ease_out", "ease_in_out"]
+        },
+        "keyframes": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["t_ms", "joints"],
+            "properties": {
+              "t_ms": { "type": "integer", "minimum": 0 },
+              "joints": {
+                "description": "Joint id to angle in degrees. Joint ids are resolved against the manifest at bind time, not here.",
+                "type": "object",
+                "additionalProperties": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

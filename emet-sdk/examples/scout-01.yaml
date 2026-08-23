@@ -1,0 +1,117 @@
+# A worked example: a treaded desk robot with a
+# pan/tilt head, two round display eyes, an LED ring, a head-mounted camera,
+# and an IMU.
+#
+# Exercises every P0 capability type and several RSV fields, so that a clean
+# run here means the reserved-now-free-later claim is demonstrated rather
+# than merely intended.
+
+manifest_version: "0.1"
+
+body:
+  id: scout_01
+  name: "wheeled desk scout"
+  scale: desk
+  power: plugged_in
+  battery_capacity_wh: null        # RSV
+  description: >
+    A small treaded robot about the size of a coffee mug, with a
+    head that turns and two round display eyes.
+
+compute:
+  platform: raspberrypi5
+  ram_gb: 8
+  accelerator: none                # RSV
+
+audio:
+  input:
+    device: "plughw:1,0"
+    sample_rate: 16000
+    channels: 4
+    aec: hardware
+    doa: true
+  output:
+    device: "plughw:1,0"
+    gain_db: -6.0
+
+capabilities:
+  - id: head
+    type: joint_group
+    role: head
+    driver:
+      plugin: emet_hal.pca9685
+      params: {bus: 1, address: 0x40, pwm_freq: 50}
+    joints:
+      - id: pan
+        axis: yaw
+        channel: 0
+        range_deg: [-90, 90]
+        home_deg: 0
+        max_speed_dps: 180
+        invert: false
+        trim_deg: 0                # set by calibration; body-local, never in the bundle
+      - id: tilt
+        axis: pitch
+        channel: 1
+        range_deg: [-30, 45]
+        home_deg: 0
+        max_speed_dps: 120
+    parent: null                   # RSV
+
+  - id: base
+    type: drive
+    kinematics: differential
+    driver:
+      plugin: emet_hal.tb6612
+      params: {pwm_left: 12, pwm_right: 13, dir_left: [5, 6], dir_right: [16, 20]}
+    geometry:
+      wheel_radius_m: 0.032
+      track_width_m: 0.14
+    limits:
+      max_linear_mps: 0.35
+      max_angular_rps: 2.0
+      accel_limit_mps2: 0.5
+    odometry: none
+
+  - id: eyes
+    type: display
+    role: eyes
+    form: dual_round
+    driver:
+      plugin: emet_hal.gc9a01
+      params: {bus: spi0, cs: [8, 7], dc: 25, rst: 24}
+    resolution: [240, 240]
+    refresh_hz: 30
+
+  - id: ring
+    type: light
+    role: ambient
+    form: ring
+    count: 16
+    driver:
+      plugin: emet_hal.ws2812
+      params: {gpio: 18}
+
+  - id: front_cam
+    type: camera
+    role: front
+    driver:
+      plugin: emet_hal.libcamera
+      params: {index: 0}
+    resolution: [1280, 720]
+    fov_deg: 66
+    mounted_on: head               # lets the engine look by turning, not cropping
+    local_pipeline: [face_detect, motion]
+
+  - id: imu
+    type: sensor
+    sensor_kind: imu
+    driver:
+      plugin: emet_hal.mpu6050
+      params: {bus: 1, address: 0x68}
+    role: orientation
+
+safety:
+  estop_gpio: null
+  max_continuous_motion_s: 30
+  thermal_throttle_c: 75

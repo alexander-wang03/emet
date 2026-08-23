@@ -1,0 +1,154 @@
+# Fallback chains for `express` — the core expressive set.
+#
+# Ordered most expressive first. The engine binds the first rung whose
+# selector matches the manifest; the final voice rung always binds, so a
+# body with no actuators still expresses itself, just audibly.
+#
+# Overridable per-soul.
+
+express.curiosity:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: tilt
+      params: {angle_deg: 12, speed: 0.4, hold_ms: 700}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: squint, hold_ms: 700}
+    - actuator: {role: ambient, type: light}
+      action: pulse
+      params: {hue: 190, period_ms: 1200}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: rising, filler: ["hm?", "hmm."]}
+
+express.delight:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: bob
+      params: {angle_deg: 8, cycles: 2, speed: 0.8}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: happy, hold_ms: 900}
+    - actuator: {role: ambient, type: light}
+      action: pulse
+      params: {hue: 45, period_ms: 400, cycles: 2}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: bright, filler: ["oh!", "ha!"]}
+
+express.confusion:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: roll}
+      action: tilt
+      params: {angle_deg: 15, speed: 0.3, hold_ms: 900}
+    - actuator: {role: head, axis: yaw}
+      action: tilt
+      params: {angle_deg: -10, speed: 0.3, hold_ms: 900}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: narrow, hold_ms: 900}
+    - actuator: {role: ambient, type: light}
+      action: pulse
+      params: {hue: 35, period_ms: 1600}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: rising, filler: ["hm?", "wait —"]}
+
+express.concern:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: tilt
+      params: {angle_deg: -10, speed: 0.25, hold_ms: 1200}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: concerned, hold_ms: 1200}
+    - actuator: {role: ambient, type: light}
+      action: fade
+      params: {hue: 210, brightness: 0.35, period_ms: 1800}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: soft, filler: ["oh.", "hm."]}
+
+express.amusement:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: yaw}
+      action: shake
+      params: {angle_deg: 6, cycles: 2, speed: 0.9}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: crescent, hold_ms: 800}
+    - actuator: {role: ambient, type: light}
+      action: pulse
+      params: {hue: 60, period_ms: 300, cycles: 3}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: bright, filler: ["heh.", "ha."]}
+
+express.boredom:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: droop
+      params: {angle_deg: -14, speed: 0.15, hold_ms: 2000}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: half_lidded, hold_ms: 2000}
+    - actuator: {role: ambient, type: light}
+      action: fade
+      params: {hue: 220, brightness: 0.2, period_ms: 3000}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: flat, filler: ["mm.", "hm."]}
+
+express.surprise:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: pitch}
+      action: tilt
+      params: {angle_deg: 18, speed: 1.0, hold_ms: 500}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: wide, hold_ms: 600}
+    - actuator: {role: ambient, type: light}
+      action: flash
+      params: {hue: 0, brightness: 1.0, duration_ms: 180}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: sharp, filler: ["oh!", "huh!"]}
+
+express.affection:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: roll}
+      action: tilt
+      params: {angle_deg: 10, speed: 0.2, hold_ms: 1500}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: soft, hold_ms: 1500}
+    - actuator: {role: ambient, type: light}
+      action: fade
+      params: {hue: 20, brightness: 0.6, period_ms: 2400}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: warm, filler: ["mm.", "hey."]}
+
+express.thinking:
+  mode: first
+  rungs:
+    - actuator: {role: head, axis: yaw}
+      action: drift
+      params: {angle_deg: 20, speed: 0.2, hold_ms: 1400}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: look_up, hold_ms: 1400}
+    - actuator: {role: ambient, type: light}
+      action: rotate
+      params: {hue: 190, period_ms: 2000}
+    - actuator: {voice: true}
+      action: inflect
+      params: {preset: level, filler: ["hmm.", "let me think."]}

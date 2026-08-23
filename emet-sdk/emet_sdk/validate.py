@@ -1,0 +1,563 @@
+"""Manifest, bundle, pack, and chain validation.
+
+Two layers, deliberately kept apart:
+
+*Schema* validation answers "is this the right shape?" and is expressed in
+JSON Schema. *Semantic* validation answers "does this mean anything?" and
+lives here, because cross-field and cross-document rules — a home angle
+inside its range, a capability id referenced by a camera mount, a chain that
+terminates in voice — cannot be said in JSON Schema.
+
+**The error taxonomy is the point of this module.** A typo in a plugin name
+and a robot that genuinely lacks a servo are different failures, and
+conflating them costs support hours. So a missing plugin is
+never reported as a schema error, and an open enum like `drive.kinematics`
+stays open precisely because an unrecognised value raises
+`MissingPluginError` rather than failing schema validation.
+
+Plugin *discovery* arrives in 0.2. Until then the registry below knows the
+built-in locomotion plugins by name and reports driver plugins as
+unverifiable warnings. The error types and messages do not change when
+discovery lands — only how the registry answers.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Iterable, Literal, Mapping, Sequence
+
+import json
+
+from emet_sdk import chains as _chains
+from emet_sdk import intents as _intents
+
+__all__ = [
+    "Severity",
+    "Finding",
+    "ValidationReport",
+    "ValidationError",
+    "MissingPluginError",
+    "PluginRegistry",
+    "SHIPPED_WAKE_WORDS",
+    "BUILTIN_LOCOMOTION",
+    "load_yaml",
+    "validate_manifest",
+    "validate_soul",
+    "validate_motion_pack",
+    "validate_chain_document",
+    "validate_pairing",
+    "validate_memory_db",
+]
+
+
+Severity = Literal["error", "warning"]
+
+
+#: Locomotion plugins shipped with the SDK. `drive.kinematics` is an OPEN
+#: enum — any string naming an installed locomotion plugin is legal — so this
+#: set is what is *built in*, not what is permitted.
+BUILTIN_LOCOMOTION: frozenset[str] = frozenset({"differential", "tracked"})
+
+
+#: Provisional. Which pretrained wake words ship is not settled yet. What is
+#: settled is that `identity.wake_word` is a separate field from
+#: `identity.name`, so that the set can grow without a schema change.
+SHIPPED_WAKE_WORDS: frozenset[str] = frozenset({"emet", "hugr", "neuma"})
+
+
+# --------------------------------------------------------------------------
+# Findings
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Finding:
+    severity: Severity
+    code: str
+    message: str
+    path: str = ""
+
+    def __str__(self) -> str:
+        where = f" at {self.path}" if self.path else ""
+        return f"[{self.severity}] {self.code}{where}: {self.message}"
+
+
+@dataclass(slots=True)
+class ValidationReport:
+    """Every problem found, rather than only the first.
+
+    A builder fixing a hand-written manifest should learn about all four
+    mistakes in one run, not discover them one restart at a time.
+    """
+
+    findings: list[Finding] = field(default_factory=list)
+
+    def add(self, severity: Severity, code: str, message: str, path: str = "") -> None:
+        self.findings.append(Finding(severity, code, message, path))
+
+    def error(self, code: str, message: str, path: str = "") -> None:
+        self.add("error", code, message, path)
+
+    def warn(self, code: str, message: str, path: str = "") -> None:
+        self.add("warning", code, message, path)
+
+    def extend(self, other: ValidationReport) -> None:
+        self.findings.extend(other.findings)
+
+    @property
+    def errors(self) -> list[Finding]:
+        return [f for f in self.findings if f.severity == "error"]
+
+    @property
+    def warnings(self) -> list[Finding]:
+        return [f for f in self.findings if f.severity == "warning"]
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+    def raise_for_status(self) -> None:
+        if self.ok:
+            return
+        if any(f.code == "missing_plugin" for f in self.errors):
+            raise MissingPluginError(self)
+        raise ValidationError(self)
+
+
+class ValidationError(Exception):
+    def __init__(self, report: ValidationReport) -> None:
+        self.report = report
+        super().__init__("\n".join(str(f) for f in report.errors))
+
+
+class MissingPluginError(ValidationError):
+    """A referenced plugin is not installed.
+
+    Its own type because it is emphatically *not* a schema error: the document
+    is well-formed and the value is legal, the software just is not present.
+    Never silently degrade because of this — that is a different failure from
+    missing hardware.
+    """
+
+
+# --------------------------------------------------------------------------
+# Plugin registry
+# --------------------------------------------------------------------------
+
+
+class PluginRegistry:
+    """What is installed. Replaced by entry-point discovery in 0.2.
+
+    `verify_drivers=False` is the honest 0.1 default: with no HAL published
+    yet there is nothing to discover, so driver names are reported as
+    unverifiable warnings rather than pretended-valid or falsely rejected.
+    """
+
+    def __init__(
+        self,
+        locomotion: Iterable[str] = BUILTIN_LOCOMOTION,
+        drivers: Iterable[str] | None = None,
+        *,
+        verify_drivers: bool = False,
+    ) -> None:
+        self._locomotion = frozenset(locomotion)
+        self._drivers = frozenset(drivers or ())
+        self.verify_drivers = verify_drivers
+
+    def has_locomotion(self, kinematics: str) -> bool:
+        return kinematics in self._locomotion
+
+    def has_driver(self, plugin: str) -> bool:
+        return plugin in self._drivers
+
+    @property
+    def locomotion_names(self) -> list[str]:
+        return sorted(self._locomotion)
+
+
+# --------------------------------------------------------------------------
+# Loading
+# --------------------------------------------------------------------------
+
+
+def _schema_dir() -> Path:
+    """Locate the schema directory, installed or in a source checkout."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "schemas", here.parent / "schemas"):
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(
+        "cannot locate the emet-sdk schemas directory; expected it beside "
+        f"{here} or at {here.parent / 'schemas'}"
+    )
+
+
+@lru_cache(maxsize=None)
+def load_schema(name: str) -> dict[str, Any]:
+    path = _schema_dir() / f"{name}.schema.json"
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def load_yaml(path: str | Path) -> Any:
+    """Load a YAML document. Separated so callers can report IO errors well."""
+    import yaml
+
+    with Path(path).open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def _check_schema(doc: Any, schema_name: str, report: ValidationReport) -> bool:
+    """Run JSON Schema validation, recording every violation. Returns True if clean."""
+    from jsonschema import Draft202012Validator
+
+    validator = Draft202012Validator(load_schema(schema_name))
+    clean = True
+    for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
+        clean = False
+        pointer = "/" + "/".join(str(p) for p in err.absolute_path)
+        report.error("schema", err.message, pointer)
+    return clean
+
+
+# --------------------------------------------------------------------------
+# Body manifest
+# --------------------------------------------------------------------------
+
+
+def validate_manifest(
+    doc: Any,
+    *,
+    registry: PluginRegistry | None = None,
+) -> ValidationReport:
+    """Validate a body manifest, shape then meaning."""
+    report = ValidationReport()
+    registry = registry or PluginRegistry()
+
+    if not _check_schema(doc, "body-manifest", report):
+        # Semantic rules assume a well-shaped document; running them on a
+        # broken one produces noise that buries the real error.
+        return report
+
+    capabilities: Sequence[Mapping[str, Any]] = doc.get("capabilities") or []
+
+    _check_unique_ids(capabilities, report)
+    _check_joints(capabilities, report)
+    _check_single_drive(capabilities, report)
+    _check_mount_references(capabilities, doc, report)
+    _check_plugins(capabilities, registry, report)
+
+    return report
+
+
+def _check_unique_ids(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:
+    seen: dict[str, int] = {}
+    for i, cap in enumerate(caps):
+        cid = cap.get("id")
+        if not isinstance(cid, str):
+            continue
+        if cid in seen:
+            report.error(
+                "duplicate_id",
+                f"capability id {cid!r} is used by both capability {seen[cid]} and {i}; "
+                f"ids must be unique across the manifest",
+                f"/capabilities/{i}/id",
+            )
+        else:
+            seen[cid] = i
+
+
+def _check_joints(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:
+    for i, cap in enumerate(caps):
+        if cap.get("type") != "joint_group":
+            continue
+        for j, joint in enumerate(cap.get("joints") or []):
+            path = f"/capabilities/{i}/joints/{j}"
+            rng = joint.get("range_deg")
+            if not (isinstance(rng, Sequence) and len(rng) == 2):
+                continue
+            low, high = rng
+            if low >= high:
+                report.error(
+                    "invalid_range",
+                    f"joint {joint.get('id')!r}: range_deg is [{low}, {high}]; "
+                    f"the first value must be less than the second",
+                    f"{path}/range_deg",
+                )
+                continue
+            home = joint.get("home_deg")
+            if home is not None and not (low <= home <= high):
+                report.error(
+                    "home_out_of_range",
+                    f"joint {joint.get('id')!r}: home_deg {home} lies outside "
+                    f"range_deg [{low}, {high}]. Homing would drive the joint "
+                    f"into its own limit.",
+                    f"{path}/home_deg",
+                )
+
+
+def _check_single_drive(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:
+    drives = [i for i, cap in enumerate(caps) if cap.get("type") == "drive"]
+    if len(drives) > 1:
+        report.error(
+            "multiple_drives",
+            f"found {len(drives)} drive capabilities (at indices {drives}); "
+            f"P0 permits at most one. Hybrid locomotion is V1.",
+            f"/capabilities/{drives[1]}",
+        )
+
+
+def _check_mount_references(
+    caps: Sequence[Mapping[str, Any]],
+    doc: Mapping[str, Any],
+    report: ValidationReport,
+) -> None:
+    ids = {cap.get("id") for cap in caps if isinstance(cap.get("id"), str)}
+    for i, cap in enumerate(caps):
+        mount = cap.get("mounted_on")
+        if mount is None or mount == "body":
+            continue
+        if mount not in ids:
+            report.error(
+                "unknown_reference",
+                f"{cap.get('id')!r} is mounted_on {mount!r}, which is not a "
+                f"capability in this manifest. Known ids: {', '.join(sorted(ids)) or '(none)'}",
+                f"/capabilities/{i}/mounted_on",
+            )
+
+
+def _check_plugins(
+    caps: Sequence[Mapping[str, Any]],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    unverified: list[str] = []
+
+    for i, cap in enumerate(caps):
+        driver = cap.get("driver") or {}
+        plugin = driver.get("plugin")
+        if isinstance(plugin, str):
+            if registry.verify_drivers:
+                if not registry.has_driver(plugin):
+                    report.error(
+                        "missing_plugin",
+                        f"driver plugin {plugin!r} is not installed. Install the "
+                        f"package that provides it, or correct the name — a typo "
+                        f"here is a different failure from missing hardware.",
+                        f"/capabilities/{i}/driver/plugin",
+                    )
+            elif plugin not in unverified:
+                unverified.append(plugin)
+
+        if cap.get("type") == "drive":
+            kinematics = cap.get("kinematics")
+            if isinstance(kinematics, str) and not registry.has_locomotion(kinematics):
+                report.error(
+                    "missing_plugin",
+                    f"no locomotion plugin provides {kinematics!r}. "
+                    f"Built in: {', '.join(registry.locomotion_names)}. "
+                    f"`kinematics` is an open enum — this value is legal, the "
+                    f"plugin simply is not installed.",
+                    f"/capabilities/{i}/kinematics",
+                )
+
+    # One line, not one per capability. A manifest naming six drivers should
+    # not bury its real errors under six identical notices.
+    if unverified:
+        report.warn(
+            "unverified_plugin",
+            f"cannot confirm {len(unverified)} driver plugin(s) are installed "
+            f"({', '.join(unverified)}); plugin discovery arrives in 0.2",
+            "/capabilities",
+        )
+
+
+# --------------------------------------------------------------------------
+# Soul bundle
+# --------------------------------------------------------------------------
+
+
+def validate_soul(
+    doc: Any,
+    *,
+    wake_words: Iterable[str] | None = None,
+) -> ValidationReport:
+    report = ValidationReport()
+    if not _check_schema(doc, "soul-bundle", report):
+        return report
+
+    allowed = frozenset(wake_words) if wake_words is not None else SHIPPED_WAKE_WORDS
+    identity = doc.get("identity") or {}
+    wake = identity.get("wake_word")
+    if isinstance(wake, str) and wake not in allowed:
+        report.error(
+            "unknown_wake_word",
+            f"wake_word {wake!r} is not in the shipped set: "
+            f"{', '.join(sorted(allowed))}. Custom wake words are RSV, pending "
+            f"licensing. `identity.name` is unconstrained — a soul may be called "
+            f"anything and still answer to one of these.",
+            "/identity/wake_word",
+        )
+
+    weights = ((doc.get("idle") or {}).get("weights")) or {}
+    if weights:
+        total = sum(v for v in weights.values() if isinstance(v, (int, float)))
+        if abs(total - 1.0) > 0.01:
+            report.warn(
+                "idle_weights_unnormalised",
+                f"idle.weights sum to {total:.3f}; they are sampled as relative "
+                f"weights, so this works, but 1.0 is easier to reason about",
+                "/idle/weights",
+            )
+
+    return report
+
+
+def validate_pairing(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> ValidationReport:
+    """Cross-document rules that need a body and a soul together."""
+    report = ValidationReport()
+
+    interaction = soul.get("interaction") or {}
+    aec = ((manifest.get("audio") or {}).get("input") or {}).get("aec")
+    if interaction.get("barge_in") and aec == "none":
+        report.error(
+            "barge_in_without_aec",
+            "interaction.barge_in is enabled but this body reports "
+            "audio.input.aec: none. Without echo cancellation the robot hears "
+            "its own speech and interrupts itself. Set barge_in: false, or "
+            "declare the AEC this body actually has.",
+            "/interaction/barge_in",
+        )
+
+    return report
+
+
+# --------------------------------------------------------------------------
+# Motion packs and chains
+# --------------------------------------------------------------------------
+
+
+def validate_motion_pack(doc: Any) -> ValidationReport:
+    report = ValidationReport()
+    if not _check_schema(doc, "motion-pack", report):
+        return report
+
+    for name, clip in (doc.get("clips") or {}).items():
+        intent_name = clip.get("intent")
+        if not isinstance(intent_name, str):
+            continue
+        kind, argument = _intents.parse(intent_name)
+        try:
+            _intents.validate_intent_name(kind, argument)
+        except _intents.UnknownIntentError as exc:
+            report.error("unknown_intent", str(exc), f"/clips/{name}/intent")
+            continue
+        if _intents.is_reserved(kind):
+            report.warn(
+                "reserved_intent",
+                f"clip {name!r} targets {intent_name!r}, which is reserved: the "
+                f"P0 engine logs and drops it. The clip is valid and will simply "
+                f"not play yet.",
+                f"/clips/{name}/intent",
+            )
+
+        times = [kf.get("t_ms") for kf in clip.get("keyframes") or []]
+        if times != sorted(times):
+            report.error(
+                "keyframes_unordered",
+                f"clip {name!r}: keyframe t_ms values are not monotonically "
+                f"increasing ({times})",
+                f"/clips/{name}/keyframes",
+            )
+
+    return report
+
+
+def validate_chain_document(doc: Any) -> ValidationReport:
+    """Validate a chain file, including the terminal-voice-rung rule.
+
+    This is the mechanical enforcement of principle 2 — every intent is always
+    satisfiable — and it is the reason the SDK rejects chains at all.
+    """
+    report = ValidationReport()
+
+    if not isinstance(doc, Mapping):
+        report.error("schema", "a chain file must be a mapping of intent name to chain")
+        return report
+
+    try:
+        parsed = _chains.parse_chain_set(doc)
+    except _chains.UnterminatedChainError as exc:
+        report.error("unterminated_chain", str(exc))
+        return report
+    except _chains.ChainError as exc:
+        report.error("malformed_chain", str(exc))
+        return report
+
+    for name in parsed:
+        kind, argument = _intents.parse(name)
+        try:
+            _intents.validate_intent_name(kind, argument)
+        except _intents.UnknownIntentError as exc:
+            report.error("unknown_intent", str(exc), f"/{name}")
+
+    for name, chain in parsed.items():
+        if chain.mode == _chains.ChainMode.ALL:
+            report.warn(
+                "reserved_mode",
+                f"chain {name!r} uses mode: all, which is RSV. The P0 engine "
+                f"binds the first matching rung only.",
+                f"/{name}/mode",
+            )
+
+    return report
+
+
+# --------------------------------------------------------------------------
+# Memory database
+# --------------------------------------------------------------------------
+
+#: Column names that would make a memory body-specific. Memories belong to the
+#: soul and travel with the bundle; if retrieval were scoped by body, moving a
+#: bundle to a new chassis would silently return zero rows and the robot would
+#: greet its owner of six months as a stranger. Experiences travel; conditions
+#: do not.
+_BODY_COLUMN_HINTS = ("body_id", "body", "chassis", "manifest_id")
+
+_SOUL_TABLES = ("people", "memories", "episodes")
+
+
+def validate_memory_db(path: str | Path) -> ValidationReport:
+    """Assert that a bundle's memory database is not namespaced by body."""
+    report = ValidationReport()
+    db = Path(path)
+    if not db.exists():
+        report.error("missing_file", f"no memory database at {db}")
+        return report
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        tables = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        ]
+        for table in tables:
+            if table not in _SOUL_TABLES:
+                continue
+            for row in conn.execute(f"PRAGMA table_info({table})"):
+                column = row[1].lower()
+                if any(hint in column for hint in _BODY_COLUMN_HINTS):
+                    report.error(
+                        "memory_body_column",
+                        f"table {table!r} has column {row[1]!r}, which appears to "
+                        f"scope memory to a body. Memories belong to the soul and "
+                        f"must travel with the bundle; body-local state lives in "
+                        f"/etc/emet/state/<body.id>.json.",
+                        f"{table}.{row[1]}",
+                    )
+
+    return report

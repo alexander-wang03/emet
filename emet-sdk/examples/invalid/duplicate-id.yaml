@@ -1,0 +1,34 @@
+# INVALID: two capabilities share the id `head`.
+#
+# Capability ids are how chains, motion packs, and `mounted_on` refer to
+# parts of the body. A duplicate makes every one of those references
+# ambiguous.
+#
+# Expected: duplicate_id, /capabilities/1/id
+
+manifest_version: "0.1"
+
+body:
+  id: twins
+  name: "a robot with two heads called head"
+  scale: desk
+  power: plugged_in
+
+audio:
+  input:  {device: "plughw:1,0", sample_rate: 16000, channels: 1, aec: hardware, doa: false}
+  output: {device: "plughw:1,0", gain_db: -6.0}
+
+capabilities:
+  - id: head
+    type: joint_group
+    role: head
+    driver: {plugin: emet_hal.pca9685, params: {bus: 1, address: 0x40}}
+    joints:
+      - {id: pan, axis: yaw, channel: 0, range_deg: [-90, 90], home_deg: 0}
+
+  - id: head
+    type: joint_group
+    role: custom
+    driver: {plugin: emet_hal.pca9685, params: {bus: 1, address: 0x41}}
+    joints:
+      - {id: tilt, axis: pitch, channel: 0, range_deg: [-30, 45], home_deg: 0}
