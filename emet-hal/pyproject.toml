@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "emet-hal"
+version = "0.2.0"
+description = "Emet HAL — hardware abstraction layer: drivers and locomotion plugins."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "The Emet Authors" }]
+keywords = ["emet", "robotics", "hal", "drivers"]
+
+dependencies = ["emet-sdk>=0.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# Installing a package is what makes a driver exist. Nothing scans directories
+# and the engine has no compiled-in list of known hardware.
+#
+# For actuators and sensors the entry-point name is the string a manifest puts
+# in `driver.plugin`. For locomotion it is the value of `drive.kinematics` —
+# which is what keeps that enum genuinely open.
+
+[project.entry-points."emet.actuators"]
+"emet_hal.mock" = "emet_hal.mock:MockActuator"
+
+[project.entry-points."emet.sensors"]
+"emet_hal.mock_sensor" = "emet_hal.mock:MockSensor"
+
+[project.entry-points."emet.locomotion"]
+"differential" = "emet_hal.differential:DifferentialDrive"
+"tracked" = "emet_hal.tracked:TrackedDrive"
+
+[tool.hatch.build.targets.wheel]
+packages = ["emet_hal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

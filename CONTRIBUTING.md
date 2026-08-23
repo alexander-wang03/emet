@@ -44,6 +44,7 @@ everything is equally cheap to get wrong.
 **Welcome, and the reason the project is open:**
 
 - **Drivers** in `emet-hal` — servos, displays, LEDs, sensors, motor drivers.
+  None are written yet; `emet_hal.mock` shows the shape one takes.
 - **Locomotion plugins** — new kinematics. `drive.kinematics` is an open enum
   precisely so that `legged`, `omni`, and things nobody has thought of can
   arrive as packages rather than as schema changes.
@@ -91,17 +92,26 @@ a pull request — that conversation is usually more interesting than the patch.
 ## Running things
 
 ```sh
-cd emet-sdk
 python -m venv .venv
-.venv/bin/pip install -e ".[dev]"     # Windows: .venv\Scripts\pip
-.venv/bin/pytest
+.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]"
 ```
+
+Install **both** packages even if you are only touching one. Plugin discovery
+reads entry points, so several SDK tests are meaningless unless something is
+registered to be discovered.
 
 Before opening a PR, run what CI runs:
 
 ```sh
 python tools/check_layering.py .
 cd emet-sdk && python -m pytest -q
+cd ../emet-hal && python -m pytest -q
+```
+
+To see what your driver actually binds to, without a robot:
+
+```sh
+cd emet-sdk && emet explain examples/mock-scout.yaml --why
 ```
 
 ## Reporting a security issue

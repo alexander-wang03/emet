@@ -10,6 +10,12 @@ Layering, enforced in CI: `emet_sdk` imports nothing internal. `emet_hal`
 imports `emet_sdk` only. `emet_engine` imports `emet_sdk` only.
 """
 
+from emet_sdk.plugin import (
+    ActuatorPlugin,
+    LocomotionPlugin,
+    PluginError,
+    SensorPlugin,
+)
 from emet_sdk.types import (
     Action,
     CapabilityDescriptor,
@@ -19,13 +25,14 @@ from emet_sdk.types import (
     MemoryKind,
     Pose,
     Priority,
+    Reading,
     Sensitivity,
     Target,
     TargetKind,
     Twist,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 #: Bumped when a released schema changes shape. Manifests and bundles record
 #: the version they were written against; a document from a newer SDK is a
@@ -36,6 +43,11 @@ __all__ = [
     "__version__",
     "SCHEMA_VERSION",
     "Action",
+    "ActuatorPlugin",
+    "LocomotionPlugin",
+    "PluginError",
+    "Reading",
+    "SensorPlugin",
     "CapabilityDescriptor",
     "Health",
     "Intent",

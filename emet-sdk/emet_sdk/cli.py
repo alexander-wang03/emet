@@ -1,9 +1,12 @@
 """The `emet` command line tool.
 
-0.1 ships one subcommand. `emet validate` is the whole executable surface of
-Prima Materia's first minor release: there is no runtime yet, no plugin
-discovery, and no engine — only the contracts and the ability to check a
-document against them.
+    emet validate    check a document against the schemas and the semantic rules
+    emet explain     show what each intent means on a particular body
+
+`explain` is the one to reach for when a robot is not doing what you expected.
+It prints the binding table: for every intent, which part of *this* body
+performs it, and — for anything that fell short of its best option — which
+rungs were skipped and why.
 
 Exit codes: 0 clean, 1 validation errors, 2 usage or IO failure.
 """
@@ -17,6 +20,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from emet_sdk import __version__
+from emet_sdk.discovery import PluginRegistry as _Registry
+from emet_sdk.resolve import descriptors_from_manifest, resolve, unused_reasons
+from emet_sdk.chains import parse_chain_set
 from emet_sdk.validate import (
     PluginRegistry,
     ValidationReport,
@@ -121,7 +127,7 @@ def _print_human(path: Path, kind: str, report: ValidationReport, *, strict: boo
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    registry = PluginRegistry(verify_drivers=args.verify_drivers)
+    registry = _Registry.discover().with_verification(args.verify_drivers)
     results: list[tuple[Path, str, ValidationReport]] = []
 
     for raw in args.paths:
@@ -175,6 +181,132 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+
+# --------------------------------------------------------------------------
+# emet explain
+# --------------------------------------------------------------------------
+
+
+def _shipped_chain_files() -> list[Path]:
+    return sorted((Path(__file__).resolve().parent / "chains").glob("*.yaml"))
+
+
+def _load_chains(extra: list[str] | None) -> dict:
+    """SDK defaults first, then any override file — later wins.
+
+    That ordering is how per-soul chain overrides are meant to work: a bundle
+    ships only the ladders it wants to change.
+    """
+    chains: dict = {}
+    for path in _shipped_chain_files():
+        chains.update(parse_chain_set(load_yaml(path)))
+    for path in extra or []:
+        chains.update(parse_chain_set(load_yaml(Path(path))))
+    return chains
+
+
+def _fmt_params(params: dict) -> str:
+    if not params:
+        return ""
+    return " ".join(f"{k}={v}" for k, v in sorted(params.items()))
+
+
+def _cmd_explain(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest)
+    if not manifest_path.exists():
+        print(f"no such file: {manifest_path}", file=sys.stderr)
+        return 2
+
+    # `validate` already reports unreadable input as a finding rather than a
+    # traceback; `explain` must behave the same way. Someone pointing this at
+    # the wrong file should be told which file and why, not shown a stack.
+    try:
+        manifest = load_yaml(manifest_path)
+    except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+        print(f"FAIL {manifest_path}  (unreadable)")
+        print(f"     x read_error")
+        for line in f"{type(exc).__name__}: {exc}".splitlines():
+            print(f"       {line}")
+        return 1
+
+    if not isinstance(manifest, Mapping) or "manifest_version" not in manifest:
+        print(f"FAIL {manifest_path}  (not a manifest)")
+        print("     x unknown_document")
+        print("       `emet explain` needs a body manifest — a document with a")
+        print("       top-level `manifest_version` key. For soul bundles and")
+        print("       motion packs, use `emet validate`.")
+        return 1
+
+    registry = _Registry.discover()
+
+    report = validate_manifest(manifest, registry=registry)
+    if not report.ok:
+        print(f"FAIL {manifest_path}  (manifest)")
+        for finding in report.errors:
+            where = f" {finding.path}" if finding.path else ""
+            print(f"     x {finding.code}{where}")
+            for line in finding.message.splitlines():
+                print(f"       {line}")
+        print()
+        print("Cannot resolve chains against a manifest that does not validate.")
+        return 1
+
+    try:
+        chains = _load_chains(args.chains)
+    except Exception as exc:  # noqa: BLE001
+        print(f"FAIL  (chains)")
+        print(f"     x chain_error")
+        for line in f"{type(exc).__name__}: {exc}".splitlines():
+            print(f"       {line}")
+        return 1
+    caps = descriptors_from_manifest(manifest)
+    table = resolve(chains, caps)
+
+    body = (manifest.get("body") or {}).get("id", "?")
+    print(f"BINDING TABLE  —  {manifest_path}   (body: {body})")
+    print(f"{len(caps)} capabilities, {len(table)} intents, "
+          f"{len(table.hardware_bound)} bound to hardware, "
+          f"{len(table.voice_bound)} to voice")
+    print()
+    print("  These bindings are what the manifest CLAIMS. The engine resolves")
+    print("  against what plugins report after starting, so a part that fails")
+    print("  to initialise will fall through where this shows it binding.")
+    print()
+
+    width = max((len(i) for i in table), default=20)
+    for intent in table:
+        b = table[intent]
+        mark = " " if not b.degraded else "~"
+        params = _fmt_params(dict(b.params))
+        print(f"  {mark} {intent:<{width}}  {b.target:<12} {b.action:<12} {params}")
+        if args.why and b.skipped:
+            for skip in b.skipped:
+                print(f"      skipped {skip}")
+
+    degraded = [i for i in table if table[i].degraded]
+
+    unused = table.unused_capabilities()
+    if unused:
+        reasons = unused_reasons(chains, caps, table)
+        print()
+        print("  Actuators no intent binds to:")
+        for cap_id in unused:
+            print(f"    {cap_id} — {reasons.get(cap_id, 'bound by nothing')}")
+
+    if args.why and not degraded:
+        # Silence here would read as "the flag did nothing" rather than as the
+        # good news it is.
+        print()
+        print("  Nothing degraded: every intent bound to the first rung it asked for.")
+        print("  This body can express everything the chains describe.")
+    elif not args.why and degraded:
+        print()
+        print(f"  ~ marks the {len(degraded)} intent(s) that fell short of their best "
+              f"rung. Re-run with --why for the reason.")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="emet",
@@ -196,8 +328,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument(
         "--verify-drivers",
         action="store_true",
-        help="require every driver plugin to be installed (plugin discovery lands in 0.2, "
-             "so this currently rejects everything)",
+        help="require every driver plugin to be installed — what the engine does at "
+             "boot. Off by default, because describing hardware you have not wired "
+             "yet is a normal thing to do.",
     )
     validate.add_argument(
         "--pair",
@@ -207,6 +340,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("--json", action="store_true", help="machine-readable output")
     validate.set_defaults(func=_cmd_validate)
+
+    explain = sub.add_parser(
+        "explain",
+        help="show what each intent means on a particular body",
+    )
+    explain.add_argument("manifest", metavar="MANIFEST")
+    explain.add_argument(
+        "--chains",
+        action="append",
+        metavar="FILE",
+        help="override chain file; may be repeated, later files win",
+    )
+    explain.add_argument(
+        "--why",
+        action="store_true",
+        help="for every degraded binding, list the rungs that were skipped and why",
+    )
+    explain.set_defaults(func=_cmd_explain)
 
     return parser
 
