@@ -1,0 +1,51 @@
+name: Contract change proposal
+description: A change to the schemas, intent vocabulary, capability types, or plugin ABCs.
+labels: ["contract", "needs-discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Open this before writing code.**
+
+        A field added today costs nothing. The same field added once strangers
+        have robots running Emet costs a migration on every SD card in the
+        field. That asymmetry is why the whole schema was written before the
+        engine existed, and why this is the one area that is not open to
+        drive-by pull requests.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you want to change
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-not-existing
+    attributes:
+      label: Why the existing surface cannot express it
+      description: |
+        Reserved fields already cover a lot. `kinematics` is an open enum, so a
+        new way of moving is a plugin rather than a schema change. Check
+        DESIGN.md for an `RSV` field that already fits.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Which tier
+      options:
+        - "P0: implemented now"
+        - "RSV: reserved in the schema, engine ignores it"
+        - "V1: not in the schema yet"
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: What happens to documents written before this change
+      description: They must keep validating, or this needs a version bump and a migration.
+    validations:
+      required: true
