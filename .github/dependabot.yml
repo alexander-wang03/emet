@@ -1,0 +1,42 @@
+# Dependabot configuration.
+#
+# github-actions matters most here. Every action in ci.yml is pinned to a full
+# commit SHA so that the code running with our token cannot change under us.
+# The cost of pinning is that pins rot silently, and this is what stops that.
+#
+# pip is deliberately monthly. emet-sdk is a library and its dependencies are
+# floors rather than pins, so raising them narrows what users may install
+# alongside us. Security updates arrive separately and immediately regardless
+# of this schedule.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: pip
+    directory: /emet-sdk
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: pip
+    directory: /emet-hal
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"

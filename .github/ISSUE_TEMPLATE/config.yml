@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/alexander-wang03/emet/discussions
+    about: Anything that is not a bug or a proposal. Wiring, hardware choices, whether something is possible yet.
+  - name: Security vulnerability
+    url: https://github.com/alexander-wang03/emet/security/advisories/new
+    about: Report privately. Do not open a public issue.

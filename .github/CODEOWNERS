@@ -1,0 +1,30 @@
+# Ownership by reversibility, matching the tiers in CONTRIBUTING.md.
+#
+# Rulesets cannot require Code Owner review (that is classic branch protection
+# only), so these lines auto-request a reviewer rather than block a merge. They
+# still do the useful thing: nothing changes the contract layer without the
+# maintainer seeing it.
+
+# Everything, unless a later line wins.
+*                               @alexander-wang03
+
+# The contract layer. A change here is a change to every robot in the field.
+/emet-sdk/schemas/              @alexander-wang03
+/emet-sdk/emet_sdk/types.py     @alexander-wang03
+/emet-sdk/emet_sdk/intents.py   @alexander-wang03
+/emet-sdk/emet_sdk/plugin.py    @alexander-wang03
+/emet-sdk/emet_sdk/chains.py    @alexander-wang03
+
+# Design, licensing, and the name.
+/DESIGN.md                      @alexander-wang03
+/LICENSE                        @alexander-wang03
+/NOTICE                         @alexander-wang03
+/TRADEMARK.md                   @alexander-wang03
+/SECURITY.md                    @alexander-wang03
+
+# Supply chain.
+/.github/                       @alexander-wang03
+/tools/                         @alexander-wang03
+
+# emet-hal is the community surface and is deliberately not listed. A driver
+# that turns out to be wrong is reverted in a minute.

@@ -117,5 +117,8 @@ cd emet-sdk && emet explain examples/mock-scout.yaml --why
 ## Reporting a security issue
 
 Do not open a public issue. Emet listens continuously and remembers what it
-hears, so a vulnerability here is a vulnerability in someone's home. Contact
-the maintainer directly.
+hears, so a vulnerability here is a vulnerability in someone's home.
+
+Use [GitHub's private vulnerability reporting](https://github.com/alexander-wang03/emet/security/advisories/new),
+or email <wake.up.emet@gmail.com>. See [SECURITY.md](SECURITY.md) for what
+counts and what does not.

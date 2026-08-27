@@ -1,0 +1,48 @@
+name: Driver or locomotion plugin
+description: Propose or submit support for a piece of hardware.
+labels: ["hal", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Drivers are the part of Emet most open to contribution. They are cheap
+        to accept and cheap to revert, unlike the contract layer.
+
+        You do not need the hardware in hand to open this. Saying what you want
+        supported is useful on its own.
+
+  - type: input
+    id: hardware
+    attributes:
+      label: The hardware
+      placeholder: PCA9685 16-channel PWM driver
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of plugin
+      options:
+        - Actuator (joints, display, light)
+        - Sensor
+        - Locomotion (a new value for drive.kinematics)
+    validations:
+      required: true
+
+  - type: textarea
+    id: describe
+    attributes:
+      label: What would `describe()` report
+      description: |
+        Roles, axes, joints, actions. This is what fallback chains bind
+        against, so it matters more than the wiring.
+      render: text
+
+  - type: checkboxes
+    id: understanding
+    attributes:
+      label: Two things drivers get wrong
+      options:
+        - label: "`describe()` will report what the hardware can actually do after `start()`, not what the manifest claims. Over-reporting means a chain binds and the robot silently does nothing."
+        - label: "`apply()` will return promptly. Long moves come from repeated calls at 50Hz, so sleeping through a gesture blocks preemption."

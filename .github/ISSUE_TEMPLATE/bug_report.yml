@@ -1,0 +1,51 @@
+name: Bug report
+description: Something behaves differently from what the documentation says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if a robot is not doing what you expected, run
+        `emet explain <your-manifest> --why`. It shows which rung each intent
+        bound to and why anything fell short, which answers most of these.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Commands, and the manifest or bundle if you can share it.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: explain
+    attributes:
+      label: Output of `emet explain <manifest> --why`
+      description: Skip if the issue is not about a robot behaving oddly.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `emet --version`.
+      placeholder: emet-sdk 0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Raspberry Pi 5, Pi OS Bookworm, Python 3.11
+    validations:
+      required: true
