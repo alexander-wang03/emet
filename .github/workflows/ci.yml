@@ -11,9 +11,14 @@
 
 name: ci
 
+# Branch work is covered by `pull_request`; `push` only guards what lands.
+# Triggering on both for every branch ran the whole suite twice per push,
+# doubling Actions minutes — which are metered on private repositories — and
+# filling the checks list with confusing (push)/(pull_request) pairs.
 on:
   push:
-    branches: ["**"]
+    branches: [master]
+    tags: ["v*"]
   pull_request:
 
 permissions:
