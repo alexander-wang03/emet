@@ -93,6 +93,19 @@
             "device": { "type": "string", "minLength": 1 },
             "gain_db": { "type": "number" }
           }
+        },
+        "wake": {
+          "description": "P0, optional. Which wake word engine listens on this body, and how it is tuned. Omit to take the shipped default. The name resolves against installed emet.wake plugins, so this is an open enum: an unknown value is a missing plugin, never a schema error. The wake PHRASE is not here — it belongs to the soul, as identity.wake_word.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engine"],
+          "properties": {
+            "engine": { "type": "string", "minLength": 1 },
+            "params": {
+              "description": "Passed to the plugin untouched. Emet never inspects these.",
+              "type": "object"
+            }
+          }
         }
       }
     },

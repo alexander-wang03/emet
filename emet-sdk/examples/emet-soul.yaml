@@ -1,9 +1,12 @@
 # The reference soul, Emet. The house character and the reference
 # implementation for documentation.
 #
-# Note `identity.name` and `identity.wake_word` are separate fields. This soul
-# happens to set both to the same word; a soul named Barnaby that answers to
-# "emet" is equally valid, and can be told so in its own persona.
+# Note `identity.name` and `identity.wake_word` are separate fields, and that
+# this soul does not set them to the same string. The name is chosen for
+# meaning; the wake phrase has to survive a room full of other conversation,
+# which two syllables does badly. Both get to be right. A soul named Barnaby
+# that wakes on "hey barnaby" is equally valid, and one that wakes on
+# something unrelated can be told so in its own persona.
 #
 # Every RSV field is populated. A clean run proves the reserved-now,
 # implemented-later discipline actually works.
@@ -12,7 +15,7 @@ bundle_version: "0.1"
 
 identity:
   name: "Emet"
-  wake_word: "emet"
+  wake_word: "hey emet"
   line: emet
   pronouns: "it/its"
   author: "The Emet Authors"

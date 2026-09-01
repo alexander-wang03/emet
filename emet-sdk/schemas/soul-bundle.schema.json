@@ -25,7 +25,7 @@
           "minLength": 1
         },
         "wake_word": {
-          "description": "P0. Which pretrained wake word wakes this soul. Must be a member of the shipped set — membership is a semantic rule so that the set can grow without a schema change. A soul may be named Barnaby and answer to 'emet'.",
+          "description": "P0. The phrase that wakes this soul. Free text: the shipped default engine is a phonetic spotter, so any phrase works given a pronunciation. Prefer three or more syllables — a wake phrase is an acoustic target, which is why it is separate from `name`. Whether a given body can hear it depends on the wake engine it installs, and is checked at boot, not here.",
           "type": "string",
           "minLength": 1
         },

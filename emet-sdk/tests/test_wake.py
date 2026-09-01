@@ -120,7 +120,7 @@ def test_the_phrase_comes_from_the_soul_and_the_engine_from_the_body():
     plugin = make("hey emet", threshold=0.62)
     assert plugin.phrase == "hey emet"
     assert plugin.params["threshold"] == 0.62
-    assert plugin.capability["engine"] == "fake"
+    assert plugin.config["engine"] == "fake"
 
 
 def test_params_are_read_from_the_wake_block_not_driver_params():

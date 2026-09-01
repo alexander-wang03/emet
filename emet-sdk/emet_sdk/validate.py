@@ -34,7 +34,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import json
 
@@ -49,8 +49,8 @@ __all__ = [
     "ValidationError",
     "MissingPluginError",
     "PluginRegistry",
-    "SHIPPED_WAKE_WORDS",
     "BUILTIN_LOCOMOTION",
+    "BUILTIN_WAKE",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -71,10 +71,19 @@ Severity = Literal["error", "warning"]
 BUILTIN_LOCOMOTION: frozenset[str] = frozenset({"differential", "tracked"})
 
 
-#: Provisional. Which pretrained wake words ship is not settled yet. What is
-#: settled is that `identity.wake_word` is a separate field from
-#: `identity.name`, so that the set can grow without a schema change.
-SHIPPED_WAKE_WORDS: frozenset[str] = frozenset({"emet", "hugr", "neuma"})
+#: What `emet-hal` ships today. Same status as `BUILTIN_LOCOMOTION`: not what
+#: the validator checks against, because `audio.wake.engine` is an open enum
+#: resolved against real entry points.
+#:
+#: `identity.wake_word` used to be checked against a fixed set of pretrained
+#: names, on the assumption that a wake engine can only hear words somebody
+#: trained a model for. That assumption belonged to one class of engine. A
+#: phonetic keyword spotter takes any phrase and a pronunciation, so the
+#: shipped default is `pocketsphinx` (0.3) and the field is free text: a soul
+#: may answer to whatever it likes, and whether a given engine can actually
+#: hear it is answered by `WakeDescriptor.can_detect` after `start()`, not by
+#: a list in this file.
+BUILTIN_WAKE: frozenset[str] = frozenset({"mock"})
 
 
 # --------------------------------------------------------------------------
@@ -238,8 +247,44 @@ def validate_manifest(
     _check_single_drive(capabilities, report)
     _check_mount_references(capabilities, doc, report)
     _check_plugins(capabilities, registry, report)
+    _check_wake_engine(doc, registry, report)
 
     return report
+
+
+def _check_wake_engine(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.wake.engine` the same way `driver.plugin` resolves.
+
+    Absent is fine — a manifest that says nothing about wake gets the default,
+    and most will. What is checked is a name that was written down and does
+    not resolve, which is the failure that took out every free Porcupine user
+    on 30 June 2026 and is worth naming precisely.
+    """
+    engine = ((doc.get("audio") or {}).get("wake") or {}).get("engine")
+    if not isinstance(engine, str) or registry.has_wake(engine):
+        return
+    installed = ", ".join(registry.wake_names) or "(none)"
+    if registry.verify_drivers:
+        report.error(
+            "missing_plugin",
+            f"no wake word plugin provides {engine!r}. Installed: {installed}. "
+            f"`audio.wake.engine` is an open enum — this value is legal, the "
+            f"plugin simply is not installed.",
+            "/audio/wake/engine",
+        )
+    else:
+        report.warn(
+            "wake_engine_not_installed",
+            f"wake engine {engine!r} is not installed. Installed: {installed}. "
+            f"Legal in a manifest, but the engine will refuse to boot against "
+            f"it — a robot that cannot hear its name has no fallback to degrade "
+            f"to. Run with --verify-drivers to treat this as an error.",
+            "/audio/wake/engine",
+        )
 
 
 def _check_unique_ids(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:
@@ -371,27 +416,19 @@ def _check_plugins(
 # --------------------------------------------------------------------------
 
 
-def validate_soul(
-    doc: Any,
-    *,
-    wake_words: Iterable[str] | None = None,
-) -> ValidationReport:
+def validate_soul(doc: Any) -> ValidationReport:
+    """Validate a soul bundle.
+
+    Note what is *not* checked here. `identity.wake_word` is free text, and
+    whether it can actually be heard depends on which engine a given body
+    installs — which this document does not know and must not care about.
+    That check is a boot-time one against a live `WakeDescriptor`, and putting
+    it here would have made a soul valid or invalid depending on the machine
+    it was linted on.
+    """
     report = ValidationReport()
     if not _check_schema(doc, "soul-bundle", report):
         return report
-
-    allowed = frozenset(wake_words) if wake_words is not None else SHIPPED_WAKE_WORDS
-    identity = doc.get("identity") or {}
-    wake = identity.get("wake_word")
-    if isinstance(wake, str) and wake not in allowed:
-        report.error(
-            "unknown_wake_word",
-            f"wake_word {wake!r} is not in the shipped set: "
-            f"{', '.join(sorted(allowed))}. Custom wake words are RSV, pending "
-            f"licensing. `identity.name` is unconstrained — a soul may be called "
-            f"anything and still answer to one of these.",
-            "/identity/wake_word",
-        )
 
     weights = ((doc.get("idle") or {}).get("weights")) or {}
     if weights:

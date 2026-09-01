@@ -572,7 +572,9 @@ emet.emet/                       # the reference soul; others: hugr.emet, neuma.
     default.pack.yaml # P0  recorded clips, see §10
   voice/              # RSV  bundled TTS model, or a reference
   wake/
-    emet.ppn          # RSV  custom wake word (Porcupine, licensing pending)
+    lexicon.dict      # RSV  pronunciation for this soul's wake phrase, for
+                      #      engines that need one. Engine-neutral: a trained
+                      #      model may sit here instead.
   bundle.lock         # P0  engine version, schema version, checksum
 ```
 
@@ -583,8 +585,10 @@ bundle_version: "0.1"
 
 identity:
   name: "Emet"                   # P0  what it is called. Free text, any name.
-  wake_word: "emet"              # P0  which pretrained wake word wakes it.
-                                 #     MUST be one of the shipped set (§14).
+  wake_word: "hey emet"          # P0  the phrase that wakes it. Free text.
+                                 #     Whether a body can hear it depends on the
+                                 #     wake engine it installs (§14), which this
+                                 #     document does not know about.
                                  #     Deliberately separate from `name` — see 8.1.1.
   line: emet                     # P0  emet | hugr | neuma | custom  (soul line, §1.2)
   pronouns: "it/its"             # P0
@@ -645,16 +649,18 @@ models:                          # P0  BYOK
 
 #### 8.1.1 Why `name` and `wake_word` are separate fields
 
-P0 ships a fixed set of pretrained wake words (§14): custom wake words are `RSV`, pending licensing. If a single field served as both the robot's name and its wake word, then naming a soul "Barnaby" would silently produce a robot that cannot be woken, and the only fix once souls exist in the wild would be a schema migration.
+An earlier draft split them because P0 could only hear a fixed set of pretrained names, so a soul called "Barnaby" would have been silently unwakeable. That constraint is gone: wake is an open plugin category and the shipped default is a phonetic spotter, which takes any phrase and a pronunciation. `wake_word` is free text.
 
-Two fields, decided now, cost one line:
+The fields stay separate for a better reason. **A name is chosen for meaning; a wake phrase has to survive a room.** They optimise against each other:
 
-- **`name`** is free text. Call your robot anything. It appears in the persona, the greeting, and the docs.
-- **`wake_word`** must be a member of the shipped set. The validator rejects anything else, naming the available options.
+- **`name`** is what the robot is. It appears in the persona, the greeting, and the docs, and it should be whatever you want.
+- **`wake_word`** is an acoustic target. It wants three or more syllables, an uncommon shape, and enough distinctiveness that ordinary conversation does not trip it. Two-syllable names are measurably worse at this, which is why nearly every shipped wake phrase in the industry is "hey *something*".
 
-So a soul may be called Barnaby and answer to "Emet", and the persona can be told as much: *"Your name is Barnaby, but you only hear people when they say 'Emet', and you find this a little undignified."* Turning a P0 limitation into character is exactly the move principle 6 asks for: the constraint is real, so say so rather than hiding it.
+So a soul is called Barnaby and wakes on "hey barnaby", and both fields got to be right. A household that finds the phrase trips too often changes one field without renaming the robot.
 
-When custom wake words arrive, `wake_word` simply accepts more values. No migration, and every existing soul keeps working.
+The persona can still be told about the gap when there is one: *"Your name is Barnaby, but people have to say 'hey barnaby' to get your attention, and you find the formality a little undignified."* Principle 6 applies whether the constraint is a licence or a microphone.
+
+Whether a particular body can hear a particular phrase is not knowable from these documents, because it depends on which engine that body installs. It is answered at boot against a live `WakeDescriptor`. A validator that answered it here would make the same soul valid on one machine and invalid on another.
 
 ### 8.2 The soul line field
 
@@ -877,7 +883,7 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 
 | Stage | Placement | Note |
 |---|---|---|
-| Wake word | Local | Fixed pretrained set in P0; custom (Porcupine) is `RSV`, pending licensing. |
+| Wake word | Local | Open plugin category (`emet.wake`). Default is a phonetic spotter, so any phrase works without a trained model. |
 | VAD, speaker ID | Local | Reflex tier. |
 | Gaze / DoA / face tracking | Local | Reflex tier. |
 | STT | Cloud (streaming) | BYOK. |

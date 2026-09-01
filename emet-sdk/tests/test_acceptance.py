@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from emet_sdk import chains, intents
+from emet_sdk.discovery import PluginRegistry
 from emet_sdk.validate import (
     load_yaml,
     validate_chain_document,
@@ -31,6 +32,10 @@ CHAINS = Path(__file__).resolve().parent.parent / "emet_sdk" / "chains"
 
 def codes(report) -> set[str]:
     return {f.code for f in report.errors}
+
+
+def warnings(report) -> set[str]:
+    return {f.code for f in report.warnings}
 
 
 # ---------------------------------------------------------------- valid
@@ -78,19 +83,40 @@ def test_invalid_manifests_are_rejected(fixture: str, expected: str):
     assert expected in codes(report), report.errors
 
 
-def test_unknown_wake_word_is_rejected():
-    report = validate_soul(load_yaml(EXAMPLES / "invalid" / "unknown-wake-word.yaml"))
-    assert not report.ok
-    assert "unknown_wake_word" in codes(report)
+def test_a_soul_may_answer_to_any_phrase():
+    """This used to be rejected, and the rule was wrong rather than strict.
 
-
-def test_name_is_unconstrained_when_wake_word_is_legal():
-    """A soul may be called anything and answer to a shipped wake word."""
-    doc = load_yaml(EXAMPLES / "invalid" / "unknown-wake-word.yaml")
-    doc["identity"]["wake_word"] = "emet"
+    P0 assumed wake detection meant a pretrained model, so only a fixed set of
+    names could be heard and `wake_word: barnaby` was an error. The shipped
+    default is a phonetic keyword spotter, which takes any phrase and a
+    pronunciation. The field is free text, and whether a particular engine can
+    hear a particular phrase is answered at boot against a live descriptor —
+    not by a list in the validator, which would make a soul valid or invalid
+    depending on which machine linted it.
+    """
+    doc = load_yaml(EXAMPLES / "emet-soul.yaml")
+    doc["identity"]["name"] = "Barnaby"
+    doc["identity"]["wake_word"] = "hey barnaby"
     report = validate_soul(doc)
     assert report.ok, report.errors
-    assert doc["identity"]["name"] == "Barnaby"
+
+
+def test_an_uninstalled_wake_engine_is_a_warning_when_linting():
+    """Describing a body you have not finished building is normal."""
+    report = validate_manifest(load_yaml(EXAMPLES / "invalid" / "unknown-wake-engine.yaml"))
+    assert report.ok, report.errors
+    assert "wake_engine_not_installed" in warnings(report)
+
+
+def test_an_uninstalled_wake_engine_is_an_error_when_booting():
+    """Booting against one is not normal. Wake has no rung beneath it."""
+    registry = PluginRegistry.discover().with_verification(True)
+    report = validate_manifest(
+        load_yaml(EXAMPLES / "invalid" / "unknown-wake-engine.yaml"),
+        registry=registry,
+    )
+    assert not report.ok
+    assert "missing_plugin" in codes(report)
 
 
 # ------------------------------------------- the two that carry the design

@@ -16,6 +16,15 @@ Four categories, and the split is not arbitrary:
   only category configured jointly by a body and a soul, and the only one with
   no fallback beneath it.
 
+**Why there is no VAD category.** Voice activity detection looks like it
+belongs beside wake, and does not. It is not a swap point: there is one real
+answer (Silero), it is MIT licensed so it carries none of the rug-pull risk
+that made wake a category, and its output feeds turn-taking — `patience_ms`,
+the trailing-clause heuristic — which is personality rather than hardware. A
+seam there would decouple nothing. The asymmetry settles it: adding a category
+later is a minor version bump, removing one is a major bump, so under
+uncertainty the cheap direction is to leave it out.
+
 Everything here is hardware-agnostic on purpose. A plugin may talk to a servo
 board over I2C; nothing in this module knows that, and nothing in the soul
 layer ever will.
@@ -47,6 +56,7 @@ from emet_sdk.types import (
 
 __all__ = [
     "Plugin",
+    "CapabilityPlugin",
     "ActuatorPlugin",
     "SensorPlugin",
     "LocomotionPlugin",
@@ -66,26 +76,15 @@ class PluginError(RuntimeError):
 
 
 class Plugin(ABC):
-    """Common lifecycle for every plugin category."""
+    """Lifecycle, and only lifecycle.
 
-    #: The manifest `type` this plugin implements — joint_group, drive,
-    #: display, light, camera, sensor. Locomotion plugins leave this empty and
-    #: set `kinematics` instead.
-    capability_type: ClassVar[str] = ""
-
-    def __init__(self, capability: Mapping[str, Any]) -> None:
-        """Receive the whole capability block from the manifest.
-
-        Not just `driver.params`: a plugin needs `role`, `joints`, `form` and
-        the rest to answer `describe()` honestly. What it does with the
-        wiring-specific `params` is entirely its own business — Emet passes
-        them through without looking at them.
-        """
-        self.capability: Mapping[str, Any] = capability
-        self.capability_id: str = str(capability.get("id", ""))
-        self.params: Mapping[str, Any] = dict(
-            (capability.get("driver") or {}).get("params") or {}
-        )
+    Every category starts, shuts down, and reports health the same way. What a
+    plugin is *constructed from* differs: three categories are built from one
+    entry in a manifest's `capabilities` list, and wake is built from
+    `audio.wake` plus a phrase the soul supplies. Construction therefore
+    belongs to the subclasses, so that no category inherits a signature it has
+    to contradict.
+    """
 
     async def start(self) -> None:
         """Bring the hardware up. Raise `PluginError` if it is not there.
@@ -109,7 +108,34 @@ class Plugin(ABC):
         return Health()
 
 
-class ActuatorPlugin(Plugin):
+class CapabilityPlugin(Plugin):
+    """A plugin built from one entry in the manifest's `capabilities` list.
+
+    The common case, and the reason `capability_type`, `capability_id` and
+    `params` live here rather than on `Plugin`: wake has none of them.
+    """
+
+    #: The manifest `type` this plugin implements — joint_group, drive,
+    #: display, light, camera, sensor. Locomotion plugins leave this empty and
+    #: set `kinematics` instead.
+    capability_type: ClassVar[str] = ""
+
+    def __init__(self, capability: Mapping[str, Any]) -> None:
+        """Receive the whole capability block from the manifest.
+
+        Not just `driver.params`: a plugin needs `role`, `joints`, `form` and
+        the rest to answer `describe()` honestly. What it does with the
+        wiring-specific `params` is entirely its own business — Emet passes
+        them through without looking at them.
+        """
+        self.capability: Mapping[str, Any] = capability
+        self.capability_id: str = str(capability.get("id", ""))
+        self.params: Mapping[str, Any] = dict(
+            (capability.get("driver") or {}).get("params") or {}
+        )
+
+
+class ActuatorPlugin(CapabilityPlugin):
     """Something the robot can act with: joints, displays, lights."""
 
     @abstractmethod
@@ -136,7 +162,7 @@ class ActuatorPlugin(Plugin):
         """Return to the resting pose declared in the manifest."""
 
 
-class SensorPlugin(Plugin):
+class SensorPlugin(CapabilityPlugin):
     """Something the robot observes with. Never emits intents."""
 
     @abstractmethod
@@ -154,7 +180,7 @@ class SensorPlugin(Plugin):
         """
 
 
-class LocomotionPlugin(Plugin):
+class LocomotionPlugin(CapabilityPlugin):
     """How a body moves. The engine asks; it does not know.
 
     This is the seam that keeps `drive.kinematics` an open enum: the engine
@@ -219,16 +245,16 @@ class WakePlugin(Plugin):
     def __init__(self, config: Mapping[str, Any], phrase: str) -> None:
         """Receive the `audio.wake` block and the phrase to listen for.
 
-        Deliberately not the base signature. Wake is not a manifest
-        capability, so there is no `driver.params` to unwrap and no capability
-        id to carry; `params` is read straight off the wake block. Taking
-        `phrase` here rather than through a later `configure()` means an
-        instance cannot exist without knowing what it is listening for.
+        Not a `CapabilityPlugin`, which is why this signature is free to
+        differ rather than contradict one: wake declares no capability, so
+        there is no `driver.params` to unwrap and no capability id to carry.
+
+        Taking `phrase` here rather than through a later `configure()` means
+        an instance cannot exist without knowing what it listens for.
         """
-        self.capability = config
-        self.capability_id = "wake"
-        self.params = dict(config.get("params") or {})
-        #: The phrase from `identity.wake_word`.
+        self.config: Mapping[str, Any] = config
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+        #: The phrase from the soul's `identity.wake_word`.
         self.phrase = phrase
 
     @abstractmethod

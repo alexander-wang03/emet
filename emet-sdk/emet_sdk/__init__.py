@@ -12,9 +12,11 @@ imports `emet_sdk` only. `emet_engine` imports `emet_sdk` only.
 
 from emet_sdk.plugin import (
     ActuatorPlugin,
+    CapabilityPlugin,
     LocomotionPlugin,
     PluginError,
     SensorPlugin,
+    WakePlugin,
 )
 from emet_sdk.types import (
     Action,
@@ -30,6 +32,8 @@ from emet_sdk.types import (
     Target,
     TargetKind,
     Twist,
+    WakeDescriptor,
+    WakeEvent,
 )
 
 __version__ = "0.2.0"
@@ -44,10 +48,12 @@ __all__ = [
     "SCHEMA_VERSION",
     "Action",
     "ActuatorPlugin",
+    "CapabilityPlugin",
     "LocomotionPlugin",
     "PluginError",
     "Reading",
     "SensorPlugin",
+    "WakePlugin",
     "CapabilityDescriptor",
     "Health",
     "Intent",
@@ -59,4 +65,6 @@ __all__ = [
     "Target",
     "TargetKind",
     "Twist",
+    "WakeDescriptor",
+    "WakeEvent",
 ]
