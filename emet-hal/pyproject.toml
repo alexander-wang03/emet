@@ -30,6 +30,9 @@ dev = ["pytest>=8.0"]
 [project.entry-points."emet.sensors"]
 "emet_hal.mock_sensor" = "emet_hal.mock:MockSensor"
 
+[project.entry-points."emet.wake"]
+"mock" = "emet_hal.mock:MockWake"
+
 [project.entry-points."emet.locomotion"]
 "differential" = "emet_hal.differential:DifferentialDrive"
 "tracked" = "emet_hal.tracked:TrackedDrive"

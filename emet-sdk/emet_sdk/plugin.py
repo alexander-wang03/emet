@@ -1,6 +1,6 @@
 """The plugin contract. Breaking it is a major version bump.
 
-Three categories, and the split is not arbitrary:
+Four categories, and the split is not arbitrary:
 
 * **Actuators** receive `Action`s and do something physical. The engine tells
   them what should happen; how is theirs.
@@ -12,6 +12,9 @@ Three categories, and the split is not arbitrary:
   Wheels solve it with arithmetic, treads with the same arithmetic and
   different slip assumptions, and a legged plugin with a gait generator. The
   engine above them does not know or care.
+* **Wake** plugins listen for the robot's name and nothing else. They are the
+  only category configured jointly by a body and a soul, and the only one with
+  no fallback beneath it.
 
 Everything here is hardware-agnostic on purpose. A plugin may talk to a servo
 board over I2C; nothing in this module knows that, and nothing in the soul
@@ -38,6 +41,8 @@ from emet_sdk.types import (
     LocomotionDescriptor,
     Reading,
     Twist,
+    WakeDescriptor,
+    WakeEvent,
 )
 
 __all__ = [
@@ -45,6 +50,7 @@ __all__ = [
     "ActuatorPlugin",
     "SensorPlugin",
     "LocomotionPlugin",
+    "WakePlugin",
     "PluginError",
 ]
 
@@ -181,3 +187,77 @@ class LocomotionPlugin(Plugin):
     async def stop(self, hard: bool = False) -> None:
         """Come to rest. `hard=True` means brake now, safety is preempting."""
         await self.command(Twist())
+
+
+class WakePlugin(Plugin):
+    """What listens for the robot's name.
+
+    Wake sits oddly among the categories, on purpose. It is not a manifest
+    capability, for the same reason voice is not: the hardware floor already
+    guarantees a microphone, so there is nothing to declare. What varies is
+    which detector runs on that microphone, and that is a deployment fact, so
+    it is configured from `audio.wake` on the body.
+
+    The *phrase* arrives from the other side. `identity.wake_word` is a soul
+    field, which makes this the one place where a soul-declared value reaches
+    a plugin constructor. That does not breach principle 1: the soul says
+    which name it answers to, never which engine hears it, on what device, at
+    what threshold.
+
+    **Why this is a plugin category rather than a dependency.** Picovoice
+    disabled every free Porcupine access key on 30 June 2026. Anything that
+    had wired a single wake word engine in directly stopped waking that day,
+    and could not be fixed by its owner. The seam is the whole defence, and it
+    is the same seam as `drive.kinematics`: the engine holds no list of known
+    detectors, so a better one is a package nobody has published yet.
+    """
+
+    #: The string matched against `audio.wake.engine` in the manifest, and the
+    #: entry-point name this plugin registers under.
+    engine: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any], phrase: str) -> None:
+        """Receive the `audio.wake` block and the phrase to listen for.
+
+        Deliberately not the base signature. Wake is not a manifest
+        capability, so there is no `driver.params` to unwrap and no capability
+        id to carry; `params` is read straight off the wake block. Taking
+        `phrase` here rather than through a later `configure()` means an
+        instance cannot exist without knowing what it is listening for.
+        """
+        self.capability = config
+        self.capability_id = "wake"
+        self.params = dict(config.get("params") or {})
+        #: The phrase from `identity.wake_word`.
+        self.phrase = phrase
+
+    @abstractmethod
+    def describe(self) -> WakeDescriptor:
+        """Report what this instance can actually hear, after `start()`.
+
+        Report narrowly. An engine that could not load a model for
+        `self.phrase` must leave it out of `phrases` rather than claim it,
+        because there is no next rung here. A chain that cannot find a head
+        falls through to a light ring; a robot that cannot hear its name just
+        never answers, and looks broken rather than limited.
+        """
+
+    @abstractmethod
+    async def process(self, frame: bytes) -> WakeEvent | None:
+        """Consume one frame of audio. Return an event if the phrase was heard.
+
+        Audio is pushed in rather than pulled out so that the engine keeps sole
+        ownership of the microphone: one capture loop, one buffer, and a
+        detector that never competes with speech recognition for the device.
+
+        Frames arrive at the rate and size the descriptor asked for. **Must
+        return promptly** — this runs on every frame of the capture path, so
+        blocking here drops audio and delays the wake it is meant to catch.
+        """
+
+    async def reset(self) -> None:
+        """Drop accumulated audio state. Called once after a wake fires.
+
+        Default is a no-op. Streaming detectors holding a rolling buffer
+        override it so that one utterance cannot trigger twice.
+        """

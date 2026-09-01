@@ -5,15 +5,21 @@ points. Nothing scans directories, nothing imports by convention, and the
 engine has no list of known drivers compiled into it — installing a package is
 what makes a driver exist.
 
-Three groups:
+Four groups:
 
     emet.actuators    name = the string used in `driver.plugin`
     emet.sensors      name = the string used in `driver.plugin`
     emet.locomotion   name = the string used in `drive.kinematics`
+    emet.wake         name = the string used in `audio.wake.engine`
 
-For locomotion the entry-point name *is* the kinematics value, which is what
-makes that enum genuinely open: `kinematics: legged` is legal today and
+For locomotion and wake the entry-point name *is* the manifest value, which is
+what makes those enums genuinely open: `kinematics: legged` is legal today and
 resolves the moment somebody publishes a package registering `legged`.
+
+That openness is not theoretical for wake. Picovoice disabled every free
+Porcupine access key on 30 June 2026, and every project that had wired one
+detector in directly stopped waking. Here it would have been one line of a
+manifest.
 
 **Errors from this module are never schema errors.** A name that resolves to
 no installed package is a `MissingPluginError` — the document is well-formed
@@ -33,6 +39,7 @@ __all__ = [
     "GROUP_ACTUATOR",
     "GROUP_SENSOR",
     "GROUP_LOCOMOTION",
+    "GROUP_WAKE",
     "PluginRegistry",
     "discover",
 ]
@@ -40,6 +47,7 @@ __all__ = [
 GROUP_ACTUATOR = "emet.actuators"
 GROUP_SENSOR = "emet.sensors"
 GROUP_LOCOMOTION = "emet.locomotion"
+GROUP_WAKE = "emet.wake"
 
 
 def _entry_points(group: str) -> dict[str, EntryPoint]:
@@ -59,12 +67,14 @@ class PluginRegistry:
         actuators: Mapping[str, EntryPoint] | None = None,
         sensors: Mapping[str, EntryPoint] | None = None,
         locomotion: Mapping[str, EntryPoint] | None = None,
+        wake: Mapping[str, EntryPoint] | None = None,
         *,
         verify_drivers: bool = False,
     ) -> None:
         self._actuators = dict(actuators or {})
         self._sensors = dict(sensors or {})
         self._locomotion = dict(locomotion or {})
+        self._wake = dict(wake or {})
         #: When False, an unrecognised *driver* name is reported as a warning
         #: rather than an error. See `validate` for why the two callers differ:
         #: linting a manifest for hardware you have not wired yet is a normal
@@ -79,6 +89,7 @@ class PluginRegistry:
             actuators=_entry_points(GROUP_ACTUATOR),
             sensors=_entry_points(GROUP_SENSOR),
             locomotion=_entry_points(GROUP_LOCOMOTION),
+            wake=_entry_points(GROUP_WAKE),
         )
 
     def with_verification(self, verify_drivers: bool) -> "PluginRegistry":
@@ -91,6 +102,7 @@ class PluginRegistry:
             actuators=self._actuators,
             sensors=self._sensors,
             locomotion=self._locomotion,
+            wake=self._wake,
             verify_drivers=verify_drivers,
         )
 
@@ -102,6 +114,9 @@ class PluginRegistry:
     def has_locomotion(self, kinematics: str) -> bool:
         return kinematics in self._locomotion
 
+    def has_wake(self, engine: str) -> bool:
+        return engine in self._wake
+
     @property
     def driver_names(self) -> list[str]:
         return sorted({*self._actuators, *self._sensors})
@@ -110,8 +125,12 @@ class PluginRegistry:
     def locomotion_names(self) -> list[str]:
         return sorted(self._locomotion)
 
+    @property
+    def wake_names(self) -> list[str]:
+        return sorted(self._wake)
+
     def __bool__(self) -> bool:
-        return bool(self._actuators or self._sensors or self._locomotion)
+        return bool(self._actuators or self._sensors or self._locomotion or self._wake)
 
     def __iter__(self) -> Iterator[tuple[str, str]]:
         """(group, name) for everything installed. Used by `emet explain`."""
@@ -121,6 +140,8 @@ class PluginRegistry:
             yield ("sensor", name)
         for name in sorted(self._locomotion):
             yield ("locomotion", name)
+        for name in sorted(self._wake):
+            yield ("wake", name)
 
     # ----------------------------------------------------------------- load
 
@@ -136,6 +157,13 @@ class PluginRegistry:
         ep = self._locomotion.get(kinematics)
         if ep is None:
             raise _missing(kinematics, self.locomotion_names, "locomotion plugin")
+        return ep.load()
+
+    def load_wake(self, engine: str) -> type:
+        """Import and return the plugin class for an `audio.wake.engine` name."""
+        ep = self._wake.get(engine)
+        if ep is None:
+            raise _missing(engine, self.wake_names, "wake word plugin")
         return ep.load()
 
 

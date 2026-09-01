@@ -25,6 +25,8 @@ __all__ = [
     "Twist",
     "CapabilityDescriptor",
     "LocomotionDescriptor",
+    "WakeDescriptor",
+    "WakeEvent",
     "Health",
     "Reading",
     "Sensitivity",
@@ -177,6 +179,44 @@ class LocomotionDescriptor:
     can_turn_in_place: bool
     can_translate_and_rotate: bool
     holonomic: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WakeDescriptor:
+    """What a wake word engine can actually hear, reported after `start()`.
+
+    No chain binds against this, because there is no wake chain — but the boot
+    check does. A soul asking for a phrase this instance cannot detect is a
+    robot that will never answer to its own name, and unlike a missing head
+    there is nothing to degrade to. That has to fail at boot, loudly.
+    """
+
+    engine: str
+    #: Phrases this instance loaded a model for. Empty is legal and honest for
+    #: an engine that failed to load one; it is not the same as `healthy=False`,
+    #: which means the engine itself is broken.
+    phrases: frozenset[str] = frozenset()
+    #: Whether arbitrary phrases work without a per-phrase trained model.
+    #: True for phonetic keyword spotters, False for trained classifiers.
+    supports_custom_phrases: bool = False
+    sample_rate: int = 16000
+    frame_samples: int = 1280
+    healthy: bool = True
+
+    def can_detect(self, phrase: str) -> bool:
+        return self.healthy and (self.supports_custom_phrases or phrase in self.phrases)
+
+
+@dataclass(frozen=True, slots=True)
+class WakeEvent:
+    """The robot heard its name."""
+
+    phrase: str
+    confidence: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
 
 
 @dataclass(frozen=True, slots=True)
