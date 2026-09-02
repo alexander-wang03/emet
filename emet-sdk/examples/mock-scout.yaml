@@ -46,6 +46,11 @@ audio:
   output:
     device: "plughw:1,0"
     gain_db: -6.0
+  wake:
+    # Everything else on this body is mocked, so its ears are too. Fires when
+    # a frame literally contains the phrase, which makes the whole wake path
+    # testable on a laptop with no microphone.
+    engine: mock
 
 capabilities:
   - id: head

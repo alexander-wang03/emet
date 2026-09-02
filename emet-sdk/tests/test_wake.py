@@ -91,9 +91,18 @@ def test_an_engine_reports_only_the_phrases_it_loaded():
     assert plugin.describe().can_detect("alexa")
 
 
-def test_a_phonetic_engine_can_detect_anything():
+def test_supports_custom_phrases_is_advisory_not_a_claim_to_hear_anything():
+    """Found by implementing a real phonetic engine against this contract.
+
+    pocketsphinx can be pointed at any phrase, and a given instance is still
+    only listening for the one it loaded. The flag describes the engine's
+    class; `phrases` describes this instance. `can_detect` must read the
+    second, or a healthy engine claims it hears a name nobody gave it.
+    """
     plugin = make("hey barnaby", phrases=[], supports_custom=True)
-    assert plugin.describe().can_detect("hey barnaby")
+    descriptor = plugin.describe()
+    assert descriptor.supports_custom_phrases
+    assert not descriptor.can_detect("hey barnaby")
 
 
 def test_an_unhealthy_engine_detects_nothing_it_claims():

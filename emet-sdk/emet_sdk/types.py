@@ -196,15 +196,28 @@ class WakeDescriptor:
     #: an engine that failed to load one; it is not the same as `healthy=False`,
     #: which means the engine itself is broken.
     phrases: frozenset[str] = frozenset()
-    #: Whether arbitrary phrases work without a per-phrase trained model.
-    #: True for phonetic keyword spotters, False for trained classifiers.
+    #: Advisory, and deliberately NOT consulted by `can_detect`. Whether this
+    #: *engine* can be pointed at an arbitrary phrase given a pronunciation, as
+    #: a phonetic spotter can and a trained classifier cannot. Tooling uses it
+    #: to explain the options; it says nothing about what this instance is
+    #: currently listening for, which is `phrases`.
     supports_custom_phrases: bool = False
+    #: The audio contract. The engine feeds frames at this rate and size; a
+    #: plugin that needs something else says so here rather than resampling
+    #: quietly and drifting.
     sample_rate: int = 16000
     frame_samples: int = 1280
     healthy: bool = True
 
     def can_detect(self, phrase: str) -> bool:
-        return self.healthy and (self.supports_custom_phrases or phrase in self.phrases)
+        """Whether this instance, as configured and started, would hear `phrase`.
+
+        Does not consult `supports_custom_phrases`. An engine that *could* be
+        configured for any phrase is still only listening for what it actually
+        loaded, and conflating the two would let a healthy engine claim it
+        hears a name nobody ever gave it.
+        """
+        return self.healthy and phrase in self.phrases
 
 
 @dataclass(frozen=True, slots=True)

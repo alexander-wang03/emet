@@ -165,6 +165,16 @@ jobs:
           python -m pip install -e "emet-sdk[dev]"
           python -m pip install -e "emet-hal[dev]"
 
+      # The shipped wake engine, which is an optional extra rather than a hard
+      # dependency. pocketsphinx publishes cp311 and cp313 wheels and no cp312
+      # one, so installing it everywhere would make the 3.12 job compile a
+      # speech decoder from source. The wake tests `importorskip`, so 3.12 runs
+      # the rest of the suite and skips them, and the engine is still exercised
+      # on two of the three versions.
+      - name: Install the wake engine where a wheel exists
+        if: matrix.python-version != '3.12'
+        run: python -m pip install -e "emet-hal[wake]"
+
       - name: Test emet-sdk
         working-directory: emet-sdk
         run: python -m pytest -q
