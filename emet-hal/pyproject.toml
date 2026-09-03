@@ -18,6 +18,10 @@ dependencies = ["emet-sdk>=0.1"]
 # The shipped wake engine. Optional because a body that never wakes — a test
 # rig, a CI run resolving chains — should not pull an acoustic model down.
 wake = ["pocketsphinx>=5.0"]
+# Microphone and speaker. Optional for the same reason, and because on Linux
+# it needs the system PortAudio (`apt install libportaudio2`) that a headless
+# build has no use for.
+audio = ["sounddevice>=0.4"]
 dev = ["pytest>=8.0"]
 
 # Installing a package is what makes a driver exist. Nothing scans directories
