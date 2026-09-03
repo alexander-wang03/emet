@@ -101,22 +101,42 @@ def test_a_soul_may_answer_to_any_phrase():
     assert report.ok, report.errors
 
 
-def test_an_uninstalled_wake_engine_is_a_warning_when_linting():
-    """Describing a body you have not finished building is normal."""
+def test_an_uninstalled_wake_engine_is_an_error():
+    """Not a warning, unlike a missing driver. `audio.wake.engine` names an
+    implementation that has to exist rather than hardware you might not have
+    wired yet, and wake is the one thing with no rung beneath it."""
     report = validate_manifest(load_yaml(EXAMPLES / "invalid" / "unknown-wake-engine.yaml"))
-    assert report.ok, report.errors
-    assert "wake_engine_not_installed" in warnings(report)
-
-
-def test_an_uninstalled_wake_engine_is_an_error_when_booting():
-    """Booting against one is not normal. Wake has no rung beneath it."""
-    registry = PluginRegistry.discover().with_verification(True)
-    report = validate_manifest(
-        load_yaml(EXAMPLES / "invalid" / "unknown-wake-engine.yaml"),
-        registry=registry,
-    )
     assert not report.ok
     assert "missing_plugin" in codes(report)
+
+
+def test_an_uninstalled_driver_is_still_only_a_warning():
+    """The other half of that distinction, pinned so the two do not drift
+    together. Describing a body you have not finished building is normal."""
+    doc = load_yaml(EXAMPLES / "scout-01.yaml")
+    doc["capabilities"][0]["driver"]["plugin"] = "nobody.ships.this"
+    report = validate_manifest(doc)
+    assert report.ok, report.errors
+    assert "driver_not_installed" in warnings(report)
+
+
+def test_every_invalid_fixture_is_actually_rejected():
+    """The contract of `examples/invalid/`: plain `emet validate` rejects all
+    of it.
+
+    That rule lived only in the CI workflow, so a fixture that merely warned
+    could be added, pass every test here, and turn the pipeline red afterwards.
+    Which is exactly what happened. Sweeping the directory keeps the rule and
+    the fixtures in the same place.
+    """
+    from emet_sdk.cli import _validate_path
+
+    registry = PluginRegistry.discover()
+    fixtures = sorted((EXAMPLES / "invalid").glob("*.yaml"))
+    assert fixtures, "no invalid fixtures found; the glob or the path is wrong"
+    for path in fixtures:
+        kind, report = _validate_path(path, registry)
+        assert not report.ok, f"{path.name} validated clean as {kind!r}"
 
 
 # ------------------------------------------- the two that carry the design

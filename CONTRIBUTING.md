@@ -18,23 +18,54 @@ which appends:
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-That line is the [Developer Certificate of Origin](https://developercertificate.org/)
-It is a statement that you wrote the change, or have the right to submit it
+That line is the [Developer Certificate of Origin](https://developercertificate.org/):
+a statement that you wrote the change, or otherwise have the right to submit it
 under Apache 2.0.
 
-**We use a DCO rather than a CLA on purpose.** A CLA asks someone to sign a
-legal document before fixing a typo, and most of the people who will improve
-this project are building robots in spare rooms. The trade we accept in return
-is that nobody, including the maintainer, can unilaterally relicense Emet. Any
-future licence change needs the agreement of everyone who has contributed. For
-a project whose pitch is that it will not be taken away, that is the right way
-round.
+### Never thinking about this again
 
-To sign off work you have already committed:
+Most contributors should never have to remember the flag:
 
-```sh
-git rebase --signoff HEAD~3     # last three commits
-```
+- **Editing on github.com** — nothing to do. Web commits are signed off for you.
+- **VS Code** — nothing to do. This repository ships a `.vscode/settings.json`
+  that turns on `git.alwaysSignOff`, and the built-in Git UI honours it.
+- **Command line** — use `git commit -s`. If you forget, fix it afterwards
+  rather than redoing the work:
+
+  ```sh
+  git rebase --signoff origin/master
+  ```
+
+**There is no git config for this, and looking for one wastes an afternoon.**
+`commit.signoff` does not exist; git accepts it into your config file and
+silently ignores it. `format.signoff` is real but applies only to
+`git format-patch`, never to `git commit`. Sign-off comes from the `-s` flag, a
+`prepare-commit-msg` hook, or a client passing the flag on your behalf.
+
+Signing off is also unrelated to *signing*. `commit.gpgsign` produces a
+cryptographic signature; `Signed-off-by` is a line of text asserting the DCO.
+A commit can have either, both, or neither.
+
+### Why a DCO and not a CLA
+
+A CLA asks someone to sign a legal document before fixing a typo, and most of
+the people who will improve this project are building robots in spare rooms.
+
+Two things are easy to conflate here, and the distinction decides what this
+section actually buys:
+
+- **Nobody, including the maintainer, can unilaterally relicense Emet.** That
+  follows from there being *no CLA*: contributors keep their copyright and
+  grant Emet nothing beyond Apache 2.0, so any future licence change needs the
+  agreement of everyone who has contributed. The DCO does not produce this
+  property and it would hold without it.
+- **The DCO's own job is narrower**: a per-commit record that you had the right
+  to submit what you submitted. Apache 2.0 §5 already places contributions
+  under this licence by default. What it does not capture is the assertion that
+  the code was yours to give, and that is the gap the sign-off fills.
+
+For a project whose pitch is that it cannot be taken away, the first property
+is the load-bearing one, and it is worth knowing which mechanism provides it.
 
 ## What is open to contribution, and what is not
 

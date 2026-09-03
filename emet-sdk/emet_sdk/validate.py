@@ -257,34 +257,40 @@ def _check_wake_engine(
     registry: PluginRegistry,
     report: ValidationReport,
 ) -> None:
-    """Resolve `audio.wake.engine` the same way `driver.plugin` resolves.
+    """Resolve `audio.wake.engine`, the way `drive.kinematics` resolves.
 
-    Absent is fine — a manifest that says nothing about wake gets the default,
-    and most will. What is checked is a name that was written down and does
-    not resolve, which is the failure that took out every free Porcupine user
-    on 30 June 2026 and is worth naming precisely.
+    Absent is fine — a manifest that says nothing about wake takes the default,
+    and most will.
+
+    Unconditional, unlike the `driver.plugin` check a few lines up, and the
+    difference is worth stating because both are open enums resolved against
+    entry points. `driver.plugin` names a driver for *a physical device*, and
+    describing a body you have not finished wiring is an ordinary thing to do,
+    so an absent one is a warning. `drive.kinematics` and `audio.wake.engine`
+    name an *implementation that has to exist* for the document to mean
+    anything: there is no half-built state in which a body moves by a
+    kinematics nobody wrote, or wakes to a detector nobody installed.
+
+    Wake has the stronger claim of the two. Every other missing piece degrades
+    — a chain that cannot find a head falls through to a light ring. A robot
+    that cannot hear its own name has no next rung, so this is the last place
+    a soft warning would be a kindness. It is also not hypothetical: Picovoice
+    disabled every free Porcupine access key on 30 June 2026, and a manifest
+    naming one went from working to unbindable overnight.
     """
     engine = ((doc.get("audio") or {}).get("wake") or {}).get("engine")
     if not isinstance(engine, str) or registry.has_wake(engine):
         return
     installed = ", ".join(registry.wake_names) or "(none)"
-    if registry.verify_drivers:
-        report.error(
-            "missing_plugin",
-            f"no wake word plugin provides {engine!r}. Installed: {installed}. "
-            f"`audio.wake.engine` is an open enum — this value is legal, the "
-            f"plugin simply is not installed.",
-            "/audio/wake/engine",
-        )
-    else:
-        report.warn(
-            "wake_engine_not_installed",
-            f"wake engine {engine!r} is not installed. Installed: {installed}. "
-            f"Legal in a manifest, but the engine will refuse to boot against "
-            f"it — a robot that cannot hear its name has no fallback to degrade "
-            f"to. Run with --verify-drivers to treat this as an error.",
-            "/audio/wake/engine",
-        )
+    report.error(
+        "missing_plugin",
+        f"no wake word plugin provides {engine!r}. Installed: {installed}. "
+        f"`audio.wake.engine` is an open enum — this value is legal, the "
+        f"plugin simply is not installed. Unlike a missing driver this is an "
+        f"error rather than a warning, because a robot that cannot hear its "
+        f"own name has nothing to fall back to.",
+        "/audio/wake/engine",
+    )
 
 
 def _check_unique_ids(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:
