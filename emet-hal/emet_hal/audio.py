@@ -36,7 +36,9 @@ import logging
 import wave
 from array import array
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
+
+from emet_sdk.types import SAMPLE_BYTES, AudioFormat, AudioSource
 
 __all__ = [
     "AudioError",
@@ -52,33 +54,9 @@ __all__ = [
 
 log = logging.getLogger("emet_hal.audio")
 
-#: int16. Two bytes a sample, everywhere in this module.
-SAMPLE_BYTES = 2
-
 
 class AudioError(RuntimeError):
     """Audio could not be brought up, with a message a person can act on."""
-
-
-@dataclass(frozen=True, slots=True)
-class AudioFormat:
-    """What a consumer needs. Defaults are what the wake engine asks for.
-
-    `frame_samples` is per channel and always mono by the time it leaves this
-    module: a four-microphone array is downmixed here, so nothing downstream
-    has to know how many capsules a body has.
-    """
-
-    sample_rate: int = 16000
-    frame_samples: int = 1280
-
-    @property
-    def frame_bytes(self) -> int:
-        return self.frame_samples * SAMPLE_BYTES
-
-    @property
-    def frame_ms(self) -> float:
-        return 1000.0 * self.frame_samples / self.sample_rate
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,24 +207,6 @@ def _check_rate(device: int | None, rate: int, channels: int, *, want_input: boo
 # --------------------------------------------------------------------------
 # Sources
 # --------------------------------------------------------------------------
-
-
-@runtime_checkable
-class AudioSource(Protocol):
-    """Something that produces mono int16 frames at a known rate.
-
-    The seam that lets a wav file stand in for a microphone. `read()` returns
-    exactly `format.frame_bytes` bytes, or None when the source has ended —
-    which a microphone never does and a file always does.
-    """
-
-    format: AudioFormat
-
-    async def start(self) -> None: ...
-
-    async def read(self) -> bytes | None: ...
-
-    async def stop(self) -> None: ...
 
 
 def _downmix(raw: bytes, channels: int, *, mix: str) -> bytes:

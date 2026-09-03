@@ -72,6 +72,17 @@ def test_the_format_states_what_a_frame_is():
     assert fmt.frame_ms == pytest.approx(80.0)
 
 
+def test_the_audio_contract_lives_in_the_sdk():
+    """`emet_engine` may import `emet_sdk` and nothing else, so the Protocol
+    describing the engine's own input cannot live here. This module re-exports
+    it for convenience; it does not own it."""
+    from emet_sdk.types import AudioFormat as SdkFormat
+    from emet_sdk.types import AudioSource as SdkSource
+
+    assert AudioSource is SdkSource
+    assert AudioFormat is SdkFormat
+
+
 def test_the_default_format_is_what_the_wake_engine_asks_for():
     """These two travelling apart is how a detector ends up hearing nothing."""
     from emet_hal.pocketsphinx_wake import FRAME_SAMPLES, SAMPLE_RATE

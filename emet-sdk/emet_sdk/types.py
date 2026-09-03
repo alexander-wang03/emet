@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 __all__ = [
     "Priority",
@@ -27,6 +27,9 @@ __all__ = [
     "LocomotionDescriptor",
     "WakeDescriptor",
     "WakeEvent",
+    "AudioFormat",
+    "AudioSource",
+    "SAMPLE_BYTES",
     "Health",
     "Reading",
     "Sensitivity",
@@ -230,6 +233,54 @@ class WakeEvent:
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+#: Audio is int16 throughout. Two bytes a sample, everywhere.
+SAMPLE_BYTES = 2
+
+
+@dataclass(frozen=True, slots=True)
+class AudioFormat:
+    """The shape of the audio crossing the boundary. Mono int16, always.
+
+    Defaults are what the shipped wake engine asks for. A body with a
+    four-capsule array downmixes before this point, so nothing above the HAL
+    counts microphones.
+    """
+
+    sample_rate: int = 16000
+    frame_samples: int = 1280
+
+    @property
+    def frame_bytes(self) -> int:
+        return self.frame_samples * SAMPLE_BYTES
+
+    @property
+    def frame_ms(self) -> float:
+        return 1000.0 * self.frame_samples / self.sample_rate
+
+
+@runtime_checkable
+class AudioSource(Protocol):
+    """Something producing mono int16 frames at a known rate.
+
+    Here rather than in `emet_hal` because it is the seam the engine sees. The
+    engine may import `emet_sdk` and nothing else, so a microphone reaches it
+    as this Protocol and never as a concrete class — which is the same reason
+    a servo reaches it as `ActuatorPlugin`. Put this type in the HAL and the
+    engine cannot describe its own input.
+
+    `read()` returns exactly `format.frame_bytes` bytes, or None when the
+    source has ended: a file always does, a microphone never should.
+    """
+
+    format: AudioFormat
+
+    async def start(self) -> None: ...
+
+    async def read(self) -> bytes | None: ...
+
+    async def stop(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

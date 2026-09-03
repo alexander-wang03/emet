@@ -20,6 +20,8 @@ from emet_sdk.plugin import (
 )
 from emet_sdk.types import (
     Action,
+    AudioFormat,
+    AudioSource,
     CapabilityDescriptor,
     Health,
     Intent,
@@ -48,6 +50,8 @@ __all__ = [
     "SCHEMA_VERSION",
     "Action",
     "ActuatorPlugin",
+    "AudioFormat",
+    "AudioSource",
     "CapabilityPlugin",
     "LocomotionPlugin",
     "PluginError",
