@@ -272,6 +272,12 @@ class AudioSource(Protocol):
 
     `read()` returns exactly `format.frame_bytes` bytes, or None when the
     source has ended: a file always does, a microphone never should.
+
+    **Construction.** Implementations discovered through the `emet.audio`
+    entry-point group are built as `cls(config, fmt)`, where `config` is the
+    manifest's `audio.input` block and `fmt` the format the consumer needs.
+    Same shape as a plugin receiving its capability block, and for the same
+    reason: the caller has a name and a mapping, never a class it imported.
     """
 
     format: AudioFormat

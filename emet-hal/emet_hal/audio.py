@@ -237,13 +237,35 @@ class WavSource:
     a detector expecting 16.
     """
 
-    def __init__(self, path: str, fmt: AudioFormat | None = None, *, mix: str = "first") -> None:
-        self.path = path
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        fmt: AudioFormat | None = None,
+        *,
+        mix: str = "first",
+    ) -> None:
+        """`config` is the manifest's `audio.input` block; the file is
+        `params.path`. Same signature as `MicrophoneSource` because both are
+        built by name through `emet.audio`, and the engine that builds them
+        knows only the name."""
+        self.config = dict(config or {})
+        self.path = str((self.config.get("params") or {}).get("path") or "")
         self.format = fmt or AudioFormat()
         self._mix = mix
         self._wav: wave.Wave_read | None = None
 
+    @classmethod
+    def from_path(cls, path: str, fmt: AudioFormat | None = None, *, mix: str = "first"):
+        """Build one directly. For tests and for anything holding a real path
+        rather than a manifest."""
+        return cls({"source": "wav", "params": {"path": path}}, fmt, mix=mix)
+
     async def start(self) -> None:
+        if not self.path:
+            raise AudioError(
+                "the wav source needs a file: set `audio.input.params.path` to a "
+                "16-bit mono PCM wav at the rate the consumer asks for."
+            )
         try:
             wav = wave.open(self.path, "rb")
         except Exception as exc:

@@ -120,7 +120,7 @@ def test_a_four_capsule_array_arrives_downstream_as_mono():
 
 
 def test_a_file_can_stand_in_for_a_microphone(tmp_path):
-    src = WavSource(str(write_wav(tmp_path / "a.wav", silence(1280 * 3))))
+    src = WavSource.from_path(str(write_wav(tmp_path / "a.wav", silence(1280 * 3))))
     assert isinstance(src, AudioSource)
 
     async def scenario():
@@ -139,7 +139,7 @@ def test_a_file_can_stand_in_for_a_microphone(tmp_path):
 def test_a_partial_trailing_frame_ends_the_stream(tmp_path):
     """Half a frame is not a frame. Padding it would hand the detector
     silence that was never recorded."""
-    src = WavSource(str(write_wav(tmp_path / "b.wav", silence(1280 * 2 + 400))))
+    src = WavSource.from_path(str(write_wav(tmp_path / "b.wav", silence(1280 * 2 + 400))))
 
     async def scenario():
         await src.start()
@@ -154,7 +154,7 @@ def test_a_partial_trailing_frame_ends_the_stream(tmp_path):
 
 def test_a_stereo_file_is_downmixed(tmp_path):
     path = write_wav(tmp_path / "c.wav", silence(1280, channels=2), channels=2)
-    src = WavSource(str(path))
+    src = WavSource.from_path(str(path))
 
     async def scenario():
         await src.start()
@@ -167,15 +167,36 @@ def test_a_stereo_file_is_downmixed(tmp_path):
 
 def test_a_file_at_the_wrong_rate_is_refused_by_name(tmp_path):
     """The failure this module exists to prevent, in its cheapest form."""
-    src = WavSource(str(write_wav(tmp_path / "d.wav", silence(1280), rate=44100)))
+    src = WavSource.from_path(str(write_wav(tmp_path / "d.wav", silence(1280), rate=44100)))
     with pytest.raises(AudioError) as exc:
         run(src.start())
     assert "44100" in str(exc.value)
     assert "16000" in str(exc.value)
 
 
+def test_a_wav_source_can_be_built_the_way_the_engine_builds_it(tmp_path):
+    """`cls(config, fmt)` with the manifest's `audio.input` block, which is all
+    the engine has: it holds a name and a mapping, never an imported class."""
+    path = write_wav(tmp_path / "cfg.wav", silence(1280))
+    src = WavSource({"source": "wav", "params": {"path": str(path)}})
+
+    async def scenario():
+        await src.start()
+        frame = await src.read()
+        await src.stop()
+        return frame
+
+    assert len(run(scenario())) == 2560
+
+
+def test_a_wav_source_with_no_path_says_so(tmp_path):
+    src = WavSource({"source": "wav"})
+    with pytest.raises(AudioError, match="params.path"):
+        run(src.start())
+
+
 def test_a_missing_file_says_which_one(tmp_path):
-    src = WavSource(str(tmp_path / "nope.wav"))
+    src = WavSource.from_path(str(tmp_path / "nope.wav"))
     with pytest.raises(AudioError, match="nope.wav"):
         run(src.start())
 
@@ -188,7 +209,7 @@ def test_eight_bit_audio_is_refused(tmp_path):
         w.setframerate(16000)
         w.writeframes(b"\x80" * 1280)
     with pytest.raises(AudioError, match="8-bit"):
-        run(WavSource(str(path)).start())
+        run(WavSource.from_path(str(path)).start())
 
 
 # ------------------------------------------------- the whole path, no mic
@@ -204,7 +225,7 @@ def test_the_wake_path_runs_over_a_file(tmp_path):
     pytest.importorskip("pocketsphinx", reason="emet-hal[wake] is not installed")
     from emet_hal.pocketsphinx_wake import PocketSphinxWake
 
-    src = WavSource(str(write_wav(tmp_path / "quiet.wav", silence(1280 * 20))))
+    src = WavSource.from_path(str(write_wav(tmp_path / "quiet.wav", silence(1280 * 20))))
     wake = PocketSphinxWake({"engine": "pocketsphinx", "params": {}}, "hey emet")
 
     async def scenario():
@@ -237,7 +258,7 @@ def test_a_mock_engine_wakes_from_a_file(tmp_path):
 
     phrase = b"hey emet"
     pcm = silence(1280) + phrase + silence(1280) * 2
-    src = WavSource(str(write_wav(tmp_path / "spelled.wav", pcm)))
+    src = WavSource.from_path(str(write_wav(tmp_path / "spelled.wav", pcm)))
     wake = MockWake({"engine": "mock", "params": {}}, "hey emet")
 
     async def scenario():

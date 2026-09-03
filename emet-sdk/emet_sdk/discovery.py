@@ -5,15 +5,27 @@ points. Nothing scans directories, nothing imports by convention, and the
 engine has no list of known drivers compiled into it — installing a package is
 what makes a driver exist.
 
-Four groups:
+Five groups:
 
     emet.actuators    name = the string used in `driver.plugin`
     emet.sensors      name = the string used in `driver.plugin`
     emet.locomotion   name = the string used in `drive.kinematics`
     emet.wake         name = the string used in `audio.wake.engine`
+    emet.audio        name = the string used in `audio.input.source`
 
-For locomotion and wake the entry-point name *is* the manifest value, which is
-what makes those enums genuinely open: `kinematics: legged` is legal today and
+`emet.audio` exists for a reason the others do not share. The engine may import
+`emet_sdk` and nothing else, so it cannot reach into `emet_hal` for a
+microphone even though that is exactly where microphones live. Discovery is
+what carries one across the boundary — the engine asks for `microphone` and
+receives a class it never imported. Without this group the layering rule and a
+working engine are mutually exclusive.
+
+It earns its place a second way. Pointing a body at `wav` instead of
+`microphone` replays a recording through the identical path, which is how you
+reproduce a wake failure somebody reports without owning their room.
+
+For locomotion, wake and audio the entry-point name *is* the manifest value,
+which is what makes those enums genuinely open: `kinematics: legged` is legal today and
 resolves the moment somebody publishes a package registering `legged`.
 
 That openness is not theoretical for wake. Picovoice disabled every free
@@ -40,6 +52,7 @@ __all__ = [
     "GROUP_SENSOR",
     "GROUP_LOCOMOTION",
     "GROUP_WAKE",
+    "GROUP_AUDIO",
     "PluginRegistry",
     "discover",
 ]
@@ -48,6 +61,7 @@ GROUP_ACTUATOR = "emet.actuators"
 GROUP_SENSOR = "emet.sensors"
 GROUP_LOCOMOTION = "emet.locomotion"
 GROUP_WAKE = "emet.wake"
+GROUP_AUDIO = "emet.audio"
 
 
 def _entry_points(group: str) -> dict[str, EntryPoint]:
@@ -68,6 +82,7 @@ class PluginRegistry:
         sensors: Mapping[str, EntryPoint] | None = None,
         locomotion: Mapping[str, EntryPoint] | None = None,
         wake: Mapping[str, EntryPoint] | None = None,
+        audio: Mapping[str, EntryPoint] | None = None,
         *,
         verify_drivers: bool = False,
     ) -> None:
@@ -75,6 +90,7 @@ class PluginRegistry:
         self._sensors = dict(sensors or {})
         self._locomotion = dict(locomotion or {})
         self._wake = dict(wake or {})
+        self._audio = dict(audio or {})
         #: When False, an unrecognised *driver* name is reported as a warning
         #: rather than an error. See `validate` for why the two callers differ:
         #: linting a manifest for hardware you have not wired yet is a normal
@@ -90,6 +106,7 @@ class PluginRegistry:
             sensors=_entry_points(GROUP_SENSOR),
             locomotion=_entry_points(GROUP_LOCOMOTION),
             wake=_entry_points(GROUP_WAKE),
+            audio=_entry_points(GROUP_AUDIO),
         )
 
     def with_verification(self, verify_drivers: bool) -> "PluginRegistry":
@@ -103,6 +120,7 @@ class PluginRegistry:
             sensors=self._sensors,
             locomotion=self._locomotion,
             wake=self._wake,
+            audio=self._audio,
             verify_drivers=verify_drivers,
         )
 
@@ -117,6 +135,9 @@ class PluginRegistry:
     def has_wake(self, engine: str) -> bool:
         return engine in self._wake
 
+    def has_audio(self, source: str) -> bool:
+        return source in self._audio
+
     @property
     def driver_names(self) -> list[str]:
         return sorted({*self._actuators, *self._sensors})
@@ -129,8 +150,18 @@ class PluginRegistry:
     def wake_names(self) -> list[str]:
         return sorted(self._wake)
 
+    @property
+    def audio_names(self) -> list[str]:
+        return sorted(self._audio)
+
     def __bool__(self) -> bool:
-        return bool(self._actuators or self._sensors or self._locomotion or self._wake)
+        return bool(
+            self._actuators
+            or self._sensors
+            or self._locomotion
+            or self._wake
+            or self._audio
+        )
 
     def __iter__(self) -> Iterator[tuple[str, str]]:
         """(group, name) for everything installed. Used by `emet explain`."""
@@ -142,6 +173,8 @@ class PluginRegistry:
             yield ("locomotion", name)
         for name in sorted(self._wake):
             yield ("wake", name)
+        for name in sorted(self._audio):
+            yield ("audio", name)
 
     # ----------------------------------------------------------------- load
 
@@ -164,6 +197,20 @@ class PluginRegistry:
         ep = self._wake.get(engine)
         if ep is None:
             raise _missing(engine, self.wake_names, "wake word plugin")
+        return ep.load()
+
+    def load_audio(self, source: str) -> type:
+        """Import and return the class for an `audio.input.source` name.
+
+        The returned class is constructed as `cls(config, fmt)`, where `config`
+        is the manifest's `audio.input` block and `fmt` the `AudioFormat` the
+        consumer needs. That convention is the audio equivalent of a plugin
+        receiving its capability block, and it is what lets the engine build a
+        microphone it cannot import.
+        """
+        ep = self._audio.get(source)
+        if ep is None:
+            raise _missing(source, self.audio_names, "audio source")
         return ep.load()
 
 

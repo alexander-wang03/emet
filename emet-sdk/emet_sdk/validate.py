@@ -51,6 +51,7 @@ __all__ = [
     "PluginRegistry",
     "BUILTIN_LOCOMOTION",
     "BUILTIN_WAKE",
+    "BUILTIN_AUDIO",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -84,6 +85,14 @@ BUILTIN_LOCOMOTION: frozenset[str] = frozenset({"differential", "tracked"})
 #: hear it is answered by `WakeDescriptor.can_detect` after `start()`, not by
 #: a list in this file.
 BUILTIN_WAKE: frozenset[str] = frozenset({"mock"})
+
+#: What `emet-hal` ships as audio sources. Same status again: documentation,
+#: not what the validator checks against.
+#:
+#: `microphone` is the default and needs no manifest entry. `wav` replays a
+#: recording through the identical path, which is how a wake failure reported
+#: by somebody else gets reproduced without their room.
+BUILTIN_AUDIO: frozenset[str] = frozenset({"microphone", "wav"})
 
 
 # --------------------------------------------------------------------------
@@ -248,6 +257,7 @@ def validate_manifest(
     _check_mount_references(capabilities, doc, report)
     _check_plugins(capabilities, registry, report)
     _check_wake_engine(doc, registry, report)
+    _check_audio_source(doc, registry, report)
 
     return report
 
@@ -290,6 +300,35 @@ def _check_wake_engine(
         f"error rather than a warning, because a robot that cannot hear its "
         f"own name has nothing to fall back to.",
         "/audio/wake/engine",
+    )
+
+
+def _check_audio_source(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.input.source`, on the same terms as the wake engine.
+
+    Absent is the common case and means a live microphone.
+
+    Unconditional, like `kinematics` and `wake.engine` and unlike
+    `driver.plugin`: this names an implementation that has to exist, not a
+    device you might not have wired. A body whose audio source does not resolve
+    produces no frames at all, which takes the wake engine and every voice rung
+    with it.
+    """
+    source = ((doc.get("audio") or {}).get("input") or {}).get("source")
+    if not isinstance(source, str) or registry.has_audio(source):
+        return
+    installed = ", ".join(registry.audio_names) or "(none)"
+    report.error(
+        "missing_plugin",
+        f"no audio source provides {source!r}. Installed: {installed}. "
+        f"`audio.input.source` is an open enum — this value is legal, the "
+        f"plugin simply is not installed. Omit it entirely for a live "
+        f"microphone, which is the default.",
+        "/audio/input/source",
     )
 
 

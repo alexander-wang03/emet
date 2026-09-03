@@ -72,6 +72,15 @@
           "additionalProperties": false,
           "required": ["device"],
           "properties": {
+            "source": {
+              "description": "P0, optional. Which audio source produces frames on this body. Resolves against installed emet.audio plugins, so this is an open enum: an unknown value is a missing plugin, never a schema error. Omit for the default, a live microphone. Set it to `wav` with params.path to replay a recording through the identical path, which is how a wake failure is reproduced without the room it happened in.",
+              "type": "string",
+              "minLength": 1
+            },
+            "params": {
+              "description": "Passed to the source untouched. Emet never inspects these.",
+              "type": "object"
+            },
             "device": { "type": "string", "minLength": 1 },
             "sample_rate": { "type": "integer", "exclusiveMinimum": 0 },
             "channels": { "type": "integer", "minimum": 1 },

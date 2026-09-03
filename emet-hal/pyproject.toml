@@ -37,6 +37,10 @@ dev = ["pytest>=8.0"]
 [project.entry-points."emet.sensors"]
 "emet_hal.mock_sensor" = "emet_hal.mock:MockSensor"
 
+[project.entry-points."emet.audio"]
+"microphone" = "emet_hal.audio:MicrophoneSource"
+"wav" = "emet_hal.audio:WavSource"
+
 [project.entry-points."emet.wake"]
 "pocketsphinx" = "emet_hal.pocketsphinx_wake:PocketSphinxWake"
 "mock" = "emet_hal.mock:MockWake"
