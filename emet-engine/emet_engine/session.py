@@ -1,0 +1,182 @@
+"""The listen loop: audio in, wake events out.
+
+This is the first thing in Emet that is neither a contract nor a driver. It
+takes a body manifest and a soul bundle, brings up the two pieces of hardware
+the floor guarantees, and produces an event each time the robot hears its name.
+
+**It imports `emet_sdk` and nothing else.** Microphones and wake detectors live
+in `emet_hal`, and this module never names that package. Both arrive by name
+through entry-point discovery, which is the only reason a layering rule that
+forbids the import and an engine that needs a microphone can both be true.
+
+**Order matters at start-up, and not the obvious way round.** The detector is
+brought up first and asked what audio it needs, and the source is then
+configured to match. Doing it the other way — opening the microphone at
+whatever rate the manifest mentions and hoping the detector agrees — is how a
+robot ends up running perfectly and hearing nothing, because feeding 48 kHz
+audio to a 16 kHz model does not raise anything. It just stops working.
+
+**The boot check that has no fallback.** Every other missing piece degrades: a
+chain that cannot find a head falls through to a light ring, and one that finds
+nothing still speaks. A robot that cannot hear its own name has no next rung,
+so `start()` refuses rather than running deaf. That check is the entire reason
+`WakeDescriptor.can_detect` exists.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, AsyncIterator, Mapping
+
+from emet_sdk.discovery import PluginRegistry
+from emet_sdk.types import AudioFormat, AudioSource, WakeDescriptor, WakeEvent
+from emet_sdk.validate import DEFAULT_AUDIO_SOURCE, DEFAULT_WAKE_ENGINE
+
+__all__ = ["EngineError", "ListenSession"]
+
+log = logging.getLogger("emet_engine.session")
+
+
+class EngineError(RuntimeError):
+    """The engine cannot run, with a message naming what to fix."""
+
+
+class ListenSession:
+    """One run of the listen loop, for one body and one soul.
+
+    Usage is two lines once it is started:
+
+        async for event in session.wakes():
+            ...
+
+    The iterator ends when the source does, which a file always does and a
+    microphone never should.
+    """
+
+    def __init__(
+        self,
+        manifest: Mapping[str, Any],
+        soul: Mapping[str, Any],
+        *,
+        registry: PluginRegistry | None = None,
+    ) -> None:
+        self.manifest = manifest
+        self.soul = soul
+        self.registry = registry or PluginRegistry.discover()
+
+        audio = manifest.get("audio") or {}
+        self._input_block: Mapping[str, Any] = audio.get("input") or {}
+        self._wake_block: Mapping[str, Any] = audio.get("wake") or {}
+        self.phrase = str((soul.get("identity") or {}).get("wake_word") or "")
+
+        self.engine_name = str(self._wake_block.get("engine") or DEFAULT_WAKE_ENGINE)
+        self.source_name = str(self._input_block.get("source") or DEFAULT_AUDIO_SOURCE)
+
+        self._wake: Any = None
+        self._audio: AudioSource | None = None
+        self.descriptor: WakeDescriptor | None = None
+        self.format: AudioFormat | None = None
+
+    # ------------------------------------------------------------ lifecycle
+
+    async def start(self) -> None:
+        if not self.phrase:
+            raise EngineError(
+                "the soul bundle has no `identity.wake_word`, so there is "
+                "nothing to listen for."
+            )
+
+        self._wake = self._build_wake()
+        await self._wake.start()
+
+        self.descriptor = self._wake.describe()
+        if not self.descriptor.can_detect(self.phrase):
+            raise EngineError(self._deaf_message())
+
+        # The detector states the contract; the source is made to fit it.
+        self.format = AudioFormat(
+            sample_rate=self.descriptor.sample_rate,
+            frame_samples=self.descriptor.frame_samples,
+        )
+
+        source_cls = self.registry.load_audio(self.source_name)
+        self._audio = source_cls(self._input_block, self.format)
+        await self._audio.start()
+
+        log.info(
+            "listening for %r via %s on %s at %d Hz",
+            self.phrase,
+            self.engine_name,
+            self.source_name,
+            self.format.sample_rate,
+        )
+
+    def _build_wake(self) -> Any:
+        wake_cls = self.registry.load_wake(self.engine_name)
+        return wake_cls(self._wake_block, self.phrase)
+
+    def _deaf_message(self) -> str:
+        """Say what is wrong in the terms the person can act on.
+
+        A health detail from the plugin is more specific than anything this
+        layer could invent, so prefer it and fall back to naming the phrase.
+        """
+        detail = ""
+        health = self._wake.health()
+        if not health.ok and health.detail:
+            detail = f" {health.detail}"
+        return (
+            f"the wake engine {self.engine_name!r} cannot hear {self.phrase!r}, so this "
+            f"robot would never answer to its own name. Unlike a missing head there is "
+            f"nothing to fall back to, so it will not start.{detail}"
+        )
+
+    async def stop(self) -> None:
+        """Safe to call twice, and safe if `start()` raised part way through."""
+        if self._audio is not None:
+            await self._audio.stop()
+            self._audio = None
+        if self._wake is not None:
+            await self._wake.shutdown()
+            self._wake = None
+
+    async def __aenter__(self) -> "ListenSession":
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.stop()
+
+    # ----------------------------------------------------------------- loop
+
+    async def wakes(self) -> AsyncIterator[WakeEvent]:
+        """Yield an event each time the phrase is heard.
+
+        The detector is reset after every event rather than before the next
+        read: its hypothesis persists until the utterance is closed, so without
+        this one wake becomes one event per frame for the rest of the session.
+        """
+        if self._audio is None or self._wake is None:
+            raise EngineError("session was not started")
+
+        while True:
+            frame = await self._audio.read()
+            if frame is None:
+                return
+            event = await self._wake.process(frame)
+            if event is not None:
+                yield event
+                await self._wake.reset()
+
+    # -------------------------------------------------------------- honesty
+
+    @property
+    def dropped(self) -> int:
+        """Frames the source discarded because this loop fell behind.
+
+        Read defensively: `AudioSource` does not require it, and a file cannot
+        drop anything. Non-zero means wake words were missed, and a robot that
+        knows it missed something should be able to say so rather than let it
+        pass as bad luck.
+        """
+        return int(getattr(self._audio, "dropped", 0) or 0)

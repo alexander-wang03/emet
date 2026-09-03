@@ -52,6 +52,8 @@ __all__ = [
     "BUILTIN_LOCOMOTION",
     "BUILTIN_WAKE",
     "BUILTIN_AUDIO",
+    "DEFAULT_WAKE_ENGINE",
+    "DEFAULT_AUDIO_SOURCE",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -93,6 +95,16 @@ BUILTIN_WAKE: frozenset[str] = frozenset({"mock"})
 #: recording through the identical path, which is how a wake failure reported
 #: by somebody else gets reproduced without their room.
 BUILTIN_AUDIO: frozenset[str] = frozenset({"microphone", "wav"})
+
+#: What an omitted field means. Most manifests will mention neither, so these
+#: are the values the engine actually runs with most of the time.
+#:
+#: They live here rather than in the engine because "what an absent field
+#: means" is part of the document's meaning, and a validator and an engine
+#: quietly disagreeing about a default is the kind of bug that only ever
+#: appears on somebody else's robot.
+DEFAULT_WAKE_ENGINE = "pocketsphinx"
+DEFAULT_AUDIO_SOURCE = "microphone"
 
 
 # --------------------------------------------------------------------------
