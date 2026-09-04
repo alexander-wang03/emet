@@ -11,6 +11,23 @@ who is opinionated and interrupts. That is the whole point of putting it there:
 the same engine produces two different conversational temperaments from two
 data files.
 
+**On the default of 900 ms.** The numbers it trades against are measured rather
+than guessed, and they are not ours: they come from the TurnBench corpus
+analysis (Jiang et al., *TurnBench: A Multi-Domain Benchmark for Turn-Taking
+Dynamics in Spoken Dialogue*, arXiv:2608.25218, 2026 — see `CITATIONS.md`).
+
+    floor transfer offset, median        -151 ms   (before the turn ends)
+    inter-speaker gap, median             380 ms
+    pause *within* one speaker's turn      510 ms
+
+The third number is why a silence threshold cannot be made good. A pause inside
+somebody's own turn and a gap between speakers overlap heavily, so no threshold
+separates "still thinking" from "finished". 900 ms sits above both: it will
+rarely cut anybody off, and it will always feel slower than a person, who
+starts speaking before you have finished. That is a deliberate trade, not a
+tuned value, and it is the right way round while the only evidence available is
+energy.
+
 **Scope.** `extend_on_incomplete`, the trailing-clause heuristic, is not here.
 The specification is precise that it triggers when *the transcript* looks
 unfinished, and there is no transcript until speech recognition exists. Trying

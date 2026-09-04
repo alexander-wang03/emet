@@ -120,6 +120,33 @@ See [DESIGN.md](DESIGN.md) §2 for the full set and the reasoning behind each.
 If a change seems to require breaking one of these, open an issue rather than
 a pull request: that conversation is usually more interesting than the patch.
 
+## Citing outside work
+
+If a change takes something from a paper, a repository, a dataset, or anyone
+else's writing, credit it **in this repository** — a citation at the point of
+use and an entry in [CITATIONS.md](CITATIONS.md).
+
+**Ideas count, not only copied code.** Using a paper's measurement to choose a
+default, or a project's data format for a file Emet writes, is taking
+something even when not a line is copied. The default `patience_ms` is a live
+example: the constant is ours, the evidence that it is the right shape of
+compromise is somebody else's, and the docstring says so.
+
+Two things the entry must record:
+
+- **What was taken**, specifically enough that a reader can tell whether a
+  later change still depends on it.
+- **The licence of the thing taken**, which is not always the licence of the
+  repository it came from. A project can publish an MIT tool beside a corpus
+  you may not use commercially, and only one of those is safe to build on.
+
+This is partly courtesy and partly self-defence. Emet is Apache 2.0 and wants
+to stay cleanly licensed, and an uncredited borrowing is much harder to
+untangle a year later when nobody remembers where the number came from.
+
+Ordinary dependencies do not belong here — declare those in the relevant
+`pyproject.toml`. This file is for what a lockfile cannot record.
+
 ## Running things
 
 ```sh

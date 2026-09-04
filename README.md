@@ -101,6 +101,8 @@ tells you which rungs were skipped and what was wrong with each:
   it did.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: what is open to contribution, the
   design rules that are not negotiable, and how to run what CI runs.
+- **[CITATIONS.md](CITATIONS.md)**: outside work whose ideas, findings, or data
+  shaped Emet, and the licence attached to each.
 - **[TRADEMARK.md](TRADEMARK.md)**: the code is yours to fork; the name is not.
 
 ## Licence
