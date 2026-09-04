@@ -32,6 +32,7 @@ from emet_sdk.discovery import PluginRegistry
 from emet_sdk.types import AudioFormat, AudioSource, WakeDescriptor, WakeEvent
 from emet_sdk.validate import DEFAULT_AUDIO_SOURCE, DEFAULT_WAKE_ENGINE
 
+from emet_engine.metrics import SessionStats, Stopwatch
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance
 
 __all__ = ["EngineError", "ListenSession"]
@@ -84,6 +85,10 @@ class ListenSession:
         self._audio: AudioSource | None = None
         self.descriptor: WakeDescriptor | None = None
         self.format: AudioFormat | None = None
+        #: Whether the loop is keeping up. Populated as it runs; see
+        #: `emet_engine.metrics` for why the real-time factor is the number
+        #: that decides whether a body can run Emet at all.
+        self.stats = SessionStats()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -106,6 +111,8 @@ class ListenSession:
             sample_rate=self.descriptor.sample_rate,
             frame_samples=self.descriptor.frame_samples,
         )
+
+        self.stats.frame_ms = self.format.frame_ms
 
         source_cls = self.registry.load_audio(self.source_name)
         self._audio = source_cls(self._input_block, self.format)
@@ -171,8 +178,13 @@ class ListenSession:
             frame = await self._audio.read()
             if frame is None:
                 return
-            event = await self._wake.process(frame)
+            # Timed around the work only. The wait for audio above is not
+            # work, and counting it would flatter every measurement.
+            with Stopwatch() as watch:
+                event = await self._wake.process(frame)
+            self._record(watch.elapsed_ms)
             if event is not None:
+                self.stats.wakes += 1
                 yield event
                 await self._wake.reset()
 
@@ -201,21 +213,33 @@ class ListenSession:
                 return
 
             if endpointer is None:
-                event = await self._wake.process(frame)
+                with Stopwatch() as watch:
+                    event = await self._wake.process(frame)
+                self._record(watch.elapsed_ms)
                 if event is not None:
+                    self.stats.wakes += 1
                     await self._wake.reset()
                     pending = event
                     endpointer = Endpointer(self.format, patience_ms=self.patience_ms)
                 continue
 
-            utterance = endpointer.feed(frame)
+            with Stopwatch() as watch:
+                utterance = endpointer.feed(frame)
+            self._record(watch.elapsed_ms)
             if utterance is not None:
                 assert pending is not None
+                self.stats.turns += 1
                 yield pending, utterance
                 endpointer = None
                 pending = None
 
     # -------------------------------------------------------------- honesty
+
+    def _record(self, process_ms: float) -> None:
+        self.stats.record_frame(process_ms)
+        # Pulled from the source each frame rather than read once at the end:
+        # a run that is killed part way through should still say what it lost.
+        self.stats.dropped = self.dropped
 
     @property
     def dropped(self) -> int:

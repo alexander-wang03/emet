@@ -110,12 +110,22 @@ async def _run(args: argparse.Namespace) -> int:
 
         # Only reached when the source ends, which means a replay finished.
         print(f"\nsource ended. heard it {heard} time(s).")
-        if session.dropped:
-            print(
-                f"warning: {session.dropped} frame(s) were dropped, so wake words "
-                f"may have been missed."
-            )
+        _finish(session, args)
     return 0
+
+
+def _finish(session: ListenSession, args: argparse.Namespace) -> None:
+    """Report what the run cost, if asked, and always report what it lost."""
+    if args.stats:
+        # `live` from the source that actually ran, not from the flag: only a
+        # real sound card can drift, and claiming otherwise for a file would
+        # be inventing a measurement.
+        print("\n" + session.stats.report(live=session.source_name != "wav"))
+    if session.dropped:
+        print(
+            f"\nwarning: {session.dropped} frame(s) were dropped, so wake words "
+            f"may have been missed. The loop is not keeping up with the audio."
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -130,6 +140,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="WAV",
         help="read this 16-bit mono wav instead of the microphone, so a wake "
         "failure can be reproduced away from the room it happened in",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="report whether the loop kept up: per-frame timings, frames over "
+        "budget, and the real-time factor. This is how the ten-minute soak in "
+        "the 0.3 acceptance criteria is actually checked",
     )
     args = parser.parse_args(argv)
 
