@@ -45,10 +45,25 @@ def saying(times: int) -> bytes:
     return (silence(1280) + PHRASE.encode() + silence(1280)) * times
 
 
-def body(path: str, *, engine: str = "mock", source: str = "wav", **wake_params) -> dict:
+def body(
+    path: str,
+    *,
+    engine: str = "mock",
+    source: str = "wav",
+    sink: str = "null",
+    **wake_params,
+) -> dict:
+    """A body whose ears are a file and whose mouth is a bin.
+
+    `sink="null"` is not incidental. The default is a real speaker, so a test
+    body that said nothing about output would open whatever is plugged into the
+    machine running the suite — which fails on a headless CI runner and is rude
+    on a laptop. Tests state where their audio goes.
+    """
     return {
         "audio": {
             "input": {"source": source, "device": "file", "params": {"path": path}},
+            "output": {"sink": sink, "device": "none"},
             "wake": {"engine": engine, "params": wake_params},
         }
     }
@@ -94,11 +109,12 @@ def test_the_detector_states_the_format_and_the_source_is_made_to_fit(tmp_path):
 
 
 def test_defaults_apply_when_the_manifest_says_nothing(tmp_path):
-    """Most manifests will mention neither, so the defaults are what actually
-    runs most of the time."""
+    """Most manifests will mention none of these, so the defaults are what
+    actually runs most of the time. Constructing does not open anything."""
     session = ListenSession({"audio": {"input": {"device": "x"}}}, soul())
     assert session.engine_name == "pocketsphinx"
     assert session.source_name == "microphone"
+    assert session.sink_name == "speaker"
 
 
 # ------------------------------------------------- the check with no fallback

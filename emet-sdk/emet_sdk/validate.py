@@ -54,6 +54,8 @@ __all__ = [
     "BUILTIN_AUDIO",
     "DEFAULT_WAKE_ENGINE",
     "DEFAULT_AUDIO_SOURCE",
+    "BUILTIN_AUDIO_OUT",
+    "DEFAULT_AUDIO_SINK",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -105,6 +107,12 @@ BUILTIN_AUDIO: frozenset[str] = frozenset({"microphone", "wav"})
 #: appears on somebody else's robot.
 DEFAULT_WAKE_ENGINE = "pocketsphinx"
 DEFAULT_AUDIO_SOURCE = "microphone"
+
+#: Audio sinks `emet-hal` ships, and the default. `null` exists so the loop can
+#: run without making a sound, which is what you want on a laptop at midnight
+#: and in any test that would otherwise play through whatever is plugged in.
+BUILTIN_AUDIO_OUT: frozenset[str] = frozenset({"speaker", "wav", "null"})
+DEFAULT_AUDIO_SINK = "speaker"
 
 
 # --------------------------------------------------------------------------
@@ -270,6 +278,7 @@ def validate_manifest(
     _check_plugins(capabilities, registry, report)
     _check_wake_engine(doc, registry, report)
     _check_audio_source(doc, registry, report)
+    _check_audio_sink(doc, registry, report)
 
     return report
 
@@ -341,6 +350,32 @@ def _check_audio_source(
         f"plugin simply is not installed. Omit it entirely for a live "
         f"microphone, which is the default.",
         "/audio/input/source",
+    )
+
+
+def _check_audio_sink(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.output.sink`, on the same terms as the input source.
+
+    Unconditional, for the same reason: it names an implementation that has to
+    exist. A body that cannot play audio has no voice rung, and every fallback
+    chain in Emet terminates in one — so this failing quietly would hollow out
+    the guarantee the whole abstraction rests on.
+    """
+    sink = ((doc.get("audio") or {}).get("output") or {}).get("sink")
+    if not isinstance(sink, str) or registry.has_audio_out(sink):
+        return
+    installed = ", ".join(registry.audio_out_names) or "(none)"
+    report.error(
+        "missing_plugin",
+        f"no audio sink provides {sink!r}. Installed: {installed}. "
+        f"`audio.output.sink` is an open enum — this value is legal, the "
+        f"plugin simply is not installed. Omit it entirely for a real speaker, "
+        f"which is the default.",
+        "/audio/output/sink",
     )
 
 

@@ -38,15 +38,18 @@ from array import array
 from dataclasses import dataclass
 from typing import Any
 
-from emet_sdk.types import SAMPLE_BYTES, AudioFormat, AudioSource
+from emet_sdk.types import SAMPLE_BYTES, AudioFormat, AudioSink, AudioSource
 
 __all__ = [
     "AudioError",
     "AudioFormat",
     "AudioSource",
+    "AudioSink",
     "Device",
     "MicrophoneSource",
+    "NullSink",
     "Speaker",
+    "WavSink",
     "WavSource",
     "devices",
     "resolve_device",
@@ -387,27 +390,35 @@ class MicrophoneSource:
 
 
 class Speaker:
-    """Playback, so that a voice rung is a sound rather than a promise.
+    """Playback through a real sound card, so a voice rung is a sound rather
+    than a promise.
 
-    Deliberately small. It takes int16 PCM at a stated rate and plays it; how
-    that audio came to exist is the business of whatever synthesises speech,
-    which does not exist yet.
+    Deliberately small. It takes int16 PCM at the format it was given and plays
+    it; how that audio came to exist is the business of whatever synthesises
+    speech.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None, *, sample_rate: int = 22050) -> None:
+    def __init__(self, config: dict[str, Any] | None = None, fmt: AudioFormat | None = None) -> None:
         """`config` is the manifest's `audio.output` block."""
         self.config = dict(config or {})
-        self.sample_rate = sample_rate
+        # 22.05 kHz rather than the 16 kHz of the input side: this is a
+        # synthesis rate, and speech generated at 16 kHz sounds like a
+        # telephone. The two directions are unrelated and need not agree.
+        self.format = fmt or AudioFormat(sample_rate=22050)
         self._device: int | None = None
         self._sd: Any = None
+
+    @property
+    def sample_rate(self) -> int:
+        return self.format.sample_rate
 
     async def start(self) -> None:
         self._sd = _sd()
         self._device = resolve_device(self.config.get("device"), want_input=False)
         _check_rate(self._device, self.sample_rate, 1, want_input=False)
 
-    async def play(self, pcm: bytes, *, blocking: bool = True) -> None:
-        """Play mono int16 PCM. Returns when it has finished, unless told not to."""
+    async def play(self, pcm: bytes) -> None:
+        """Play mono int16 PCM, returning when it has finished."""
         if self._sd is None:
             raise AudioError("speaker was not started")
         samples = array("h")
@@ -418,9 +429,86 @@ class Speaker:
             device=self._device,
             blocking=False,
         )
-        if blocking:
-            await asyncio.to_thread(self._sd.wait)
+        await asyncio.to_thread(self._sd.wait)
 
-    async def stop(self) -> None:
+    async def cancel(self) -> None:
+        """Stop mid-word. This is what barge-in is made of."""
         if self._sd is not None:
             self._sd.stop()
+
+    async def stop(self) -> None:
+        await self.cancel()
+        self._sd = None
+
+
+class WavSink:
+    """Writes what the robot said to a file instead of playing it.
+
+    The counterpart to `WavSource`, and useful for the same reason: a bug
+    report about what the robot *said* is reproducible if the audio still
+    exists. It is also the only sink that can be asserted on in a test.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None, fmt: AudioFormat | None = None) -> None:
+        self.config = dict(config or {})
+        self.format = fmt or AudioFormat(sample_rate=22050)
+        self.path = str((self.config.get("params") or {}).get("path") or "")
+        self._wav: wave.Wave_write | None = None
+
+    async def start(self) -> None:
+        if not self.path:
+            raise AudioError(
+                "the wav sink needs a destination: set `audio.output.params.path`."
+            )
+        try:
+            wav = wave.open(self.path, "wb")
+        except Exception as exc:
+            raise AudioError(f"could not open {self.path!r} for writing: {exc}") from exc
+        wav.setnchannels(1)
+        wav.setsampwidth(SAMPLE_BYTES)
+        wav.setframerate(self.format.sample_rate)
+        self._wav = wav
+
+    async def play(self, pcm: bytes) -> None:
+        if self._wav is None:
+            raise AudioError("wav sink was not started")
+        self._wav.writeframes(pcm)
+
+    async def cancel(self) -> None:
+        """Nothing to interrupt: a file is written as fast as it is handed
+        over, so there is never playback in progress to stop."""
+
+    async def stop(self) -> None:
+        if self._wav is not None:
+            self._wav.close()
+            self._wav = None
+
+
+class NullSink:
+    """Accepts audio and discards it, counting what it was given.
+
+    Not only for tests, though it is essential there — a suite that plays sound
+    through whatever happens to be plugged in is as rude as one that records.
+    It is also how you run the loop on a laptop at midnight, and how a body
+    with no speaker attached still satisfies the contract that every chain
+    terminates in a voice rung.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None, fmt: AudioFormat | None = None) -> None:
+        self.config = dict(config or {})
+        self.format = fmt or AudioFormat(sample_rate=22050)
+        #: Bytes discarded. The only evidence this sink leaves behind.
+        self.written = 0
+        self.cancelled = 0
+
+    async def start(self) -> None:
+        pass
+
+    async def play(self, pcm: bytes) -> None:
+        self.written += len(pcm)
+
+    async def cancel(self) -> None:
+        self.cancelled += 1
+
+    async def stop(self) -> None:
+        pass

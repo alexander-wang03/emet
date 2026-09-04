@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from emet_sdk.discovery import GROUP_AUDIO, PluginRegistry
-from emet_sdk.types import AudioFormat, AudioSource
+from emet_sdk.discovery import GROUP_AUDIO, GROUP_AUDIO_OUT, PluginRegistry
+from emet_sdk.types import AudioFormat, AudioSink, AudioSource
 from emet_sdk.validate import MissingPluginError, load_yaml, validate_manifest
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
@@ -143,3 +143,62 @@ def test_a_shipped_source_validates_clean():
     doc = load_yaml(EXAMPLES / "bodiless.yaml")
     doc["audio"]["input"]["source"] = "microphone"
     assert validate_manifest(doc).ok
+
+
+# ------------------------------------------------------- the other direction
+
+
+def test_audio_out_is_its_own_entry_point_group():
+    """Separate from `emet.audio` because audio is pushed into a sink and
+    pulled from a source, and because the two are chosen independently: read a
+    recording, play to a real speaker."""
+    registry = PluginRegistry.discover()
+    assert GROUP_AUDIO_OUT == "emet.audio_out"
+    assert set(registry.audio_out_names) >= {"speaker", "wav", "null"}
+    assert registry.has_audio_out("null")
+
+
+def test_a_name_can_mean_different_things_in_each_direction():
+    """`wav` reads in one group and writes in the other. Sharing a namespace
+    would have made that impossible to express."""
+    registry = PluginRegistry.discover()
+    assert registry.load_audio("wav") is not registry.load_audio_out("wav")
+
+
+def test_both_directions_appear_in_the_registry_listing():
+    listed = {group for group, _ in PluginRegistry.discover()}
+    assert {"audio", "audio_out"} <= listed
+
+
+def test_an_uninstalled_sink_is_a_missing_plugin():
+    with pytest.raises(MissingPluginError):
+        PluginRegistry.discover().load_audio_out("a_tin_can_and_string")
+
+
+def test_the_engine_can_build_a_sink_it_never_imported():
+    registry = PluginRegistry.discover()
+    cls = registry.load_audio_out("null")
+    sink = cls({"sink": "null"}, AudioFormat(sample_rate=22050))
+    assert isinstance(sink, AudioSink)
+    assert cls.__module__.startswith("emet_hal")
+
+
+def test_every_shipped_sink_takes_the_documented_constructor():
+    registry = PluginRegistry.discover()
+    for name in registry.audio_out_names:
+        cls = registry.load_audio_out(name)
+        assert isinstance(cls({"sink": name}, AudioFormat()), AudioSink), name
+
+
+def test_an_unresolvable_sink_is_an_error():
+    """A body that cannot play audio has no voice rung, and every chain in
+    Emet terminates in one."""
+    doc = load_yaml(EXAMPLES / "bodiless.yaml")
+    doc["audio"]["output"]["sink"] = "nobody_ships_this"
+    report = validate_manifest(doc)
+    assert not report.ok
+    assert "missing_plugin" in codes(report)
+
+
+def test_an_absent_sink_is_the_common_case():
+    assert validate_manifest(load_yaml(EXAMPLES / "bodiless.yaml")).ok

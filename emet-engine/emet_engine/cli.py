@@ -78,6 +78,16 @@ async def _run(args: argparse.Namespace) -> int:
     soul = _load(Path(args.soul), "soul", registry)
     if args.replay:
         manifest = _replay(manifest, args.replay)
+    if args.echo:
+        # Echo replays captured *input* audio, so the sink has to run at the
+        # input's rate rather than the synthesis rate it would normally use.
+        # Once there is speech synthesis this goes away: the sink will run at
+        # whatever the voice produces and nothing will need to match.
+        manifest = copy.deepcopy(manifest)
+        output = manifest.setdefault("audio", {}).setdefault("output", {})
+        output["sample_rate"] = int(
+            (manifest["audio"].get("input") or {}).get("sample_rate") or 16000
+        )
 
     session = ListenSession(manifest, soul, registry=registry)
     async with session:
@@ -103,6 +113,9 @@ async def _run(args: argparse.Namespace) -> int:
                     f"    then {utterance.duration_ms / 1000:.1f}s of speech, "
                     f"ended on {utterance.reason.value}"
                 )
+                if args.echo:
+                    await session.say(utterance.audio)
+                    print("    played it back")
             elif utterance.reason is EndReason.SOURCE_ENDED:
                 print("    the recording ended before anything followed.")
             else:
@@ -140,6 +153,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="WAV",
         help="read this 16-bit mono wav instead of the microphone, so a wake "
         "failure can be reproduced away from the room it happened in",
+    )
+    parser.add_argument(
+        "--echo",
+        action="store_true",
+        help="play each captured utterance back through the output. There is "
+        "no speech synthesis yet, so this is what proves the whole duplex path "
+        "works: audio in, wake, endpoint, audio out",
     )
     parser.add_argument(
         "--stats",

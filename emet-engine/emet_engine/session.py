@@ -29,8 +29,12 @@ import logging
 from typing import Any, AsyncIterator, Mapping
 
 from emet_sdk.discovery import PluginRegistry
-from emet_sdk.types import AudioFormat, AudioSource, WakeDescriptor, WakeEvent
-from emet_sdk.validate import DEFAULT_AUDIO_SOURCE, DEFAULT_WAKE_ENGINE
+from emet_sdk.types import AudioFormat, AudioSink, AudioSource, WakeDescriptor, WakeEvent
+from emet_sdk.validate import (
+    DEFAULT_AUDIO_SINK,
+    DEFAULT_AUDIO_SOURCE,
+    DEFAULT_WAKE_ENGINE,
+)
 
 from emet_engine.metrics import SessionStats, Stopwatch
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance
@@ -70,10 +74,12 @@ class ListenSession:
         audio = manifest.get("audio") or {}
         self._input_block: Mapping[str, Any] = audio.get("input") or {}
         self._wake_block: Mapping[str, Any] = audio.get("wake") or {}
+        self._output_block: Mapping[str, Any] = audio.get("output") or {}
         self.phrase = str((soul.get("identity") or {}).get("wake_word") or "")
 
         self.engine_name = str(self._wake_block.get("engine") or DEFAULT_WAKE_ENGINE)
         self.source_name = str(self._input_block.get("source") or DEFAULT_AUDIO_SOURCE)
+        self.sink_name = str(self._output_block.get("sink") or DEFAULT_AUDIO_SINK)
 
         # Turn-taking is a persona trait, not engine tuning: a reflective soul
         # waits longer than an eager one, and that difference is the whole
@@ -83,6 +89,7 @@ class ListenSession:
 
         self._wake: Any = None
         self._audio: AudioSource | None = None
+        self._sink: AudioSink | None = None
         self.descriptor: WakeDescriptor | None = None
         self.format: AudioFormat | None = None
         #: Whether the loop is keeping up. Populated as it runs; see
@@ -118,6 +125,15 @@ class ListenSession:
         self._audio = source_cls(self._input_block, self.format)
         await self._audio.start()
 
+        # The output rate is not the input rate and has no reason to be: one is
+        # what the detector needs, the other is what synthesis produces.
+        self.sink_format = AudioFormat(
+            sample_rate=int(self._output_block.get("sample_rate") or 22050)
+        )
+        sink_cls = self.registry.load_audio_out(self.sink_name)
+        self._sink = sink_cls(self._output_block, self.sink_format)
+        await self._sink.start()
+
         log.info(
             "listening for %r via %s on %s at %d Hz",
             self.phrase,
@@ -148,6 +164,9 @@ class ListenSession:
 
     async def stop(self) -> None:
         """Safe to call twice, and safe if `start()` raised part way through."""
+        if self._sink is not None:
+            await self._sink.stop()
+            self._sink = None
         if self._audio is not None:
             await self._audio.stop()
             self._audio = None
@@ -161,6 +180,31 @@ class ListenSession:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.stop()
+
+    # ---------------------------------------------------------------- speech
+
+    async def say(self, pcm: bytes) -> None:
+        """Play mono int16 audio at the sink's rate.
+
+        The whole of Emet's output side for now. 0.4 puts speech synthesis in
+        front of it; nothing below this line needs to change when it does,
+        which is the point of the sink being a discovered contract rather than
+        a speaker this module imported.
+        """
+        if self._sink is None:
+            raise EngineError("session was not started")
+        await self._sink.play(pcm)
+
+    async def hush(self) -> None:
+        """Stop talking immediately, mid-word.
+
+        Barge-in is built on this: `DESIGN.md` §13 requires that speech during
+        playback interrupts rather than queues. Nothing calls it yet, and the
+        sink contract carries it from the start so that adding barge-in later
+        is engine work rather than a breaking change to every sink.
+        """
+        if self._sink is not None:
+            await self._sink.cancel()
 
     # ----------------------------------------------------------------- loop
 

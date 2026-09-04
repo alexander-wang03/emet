@@ -29,6 +29,7 @@ __all__ = [
     "WakeEvent",
     "AudioFormat",
     "AudioSource",
+    "AudioSink",
     "SAMPLE_BYTES",
     "Health",
     "Reading",
@@ -285,6 +286,45 @@ class AudioSource(Protocol):
     async def start(self) -> None: ...
 
     async def read(self) -> bytes | None: ...
+
+    async def stop(self) -> None: ...
+
+
+@runtime_checkable
+class AudioSink(Protocol):
+    """Somewhere mono int16 audio goes. The other half of the hardware floor.
+
+    Deliberately shaped the opposite way round from `AudioSource`, and kept a
+    separate group for that reason: audio is *pushed* into a sink and *pulled*
+    from a source. Forcing both into one contract would give every microphone a
+    `play` it cannot honour.
+
+    Splitting them also lets the two be chosen independently, which is how a
+    wake failure gets debugged: read from a recording, play to a real speaker,
+    or read from a microphone and write what was said to a file.
+
+    **Construction** matches sources exactly. Implementations discovered
+    through the `emet.audio_out` entry-point group are built as
+    `cls(config, fmt)`, where `config` is the manifest's `audio.output` block.
+    """
+
+    format: AudioFormat
+
+    async def start(self) -> None: ...
+
+    async def play(self, pcm: bytes) -> None:
+        """Play a whole buffer, returning when it has finished."""
+        ...
+
+    async def cancel(self) -> None:
+        """Stop immediately, mid-word if need be.
+
+        Barge-in depends on this: `DESIGN.md` §13 requires that speech during
+        playback stops the audio rather than queueing behind it. A sink that
+        cannot be interrupted makes the robot talk over the person correcting
+        it, which is the single rudest thing it could do.
+        """
+        ...
 
     async def stop(self) -> None: ...
 

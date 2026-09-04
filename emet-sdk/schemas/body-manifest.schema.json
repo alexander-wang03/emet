@@ -99,7 +99,21 @@
           "additionalProperties": false,
           "required": ["device"],
           "properties": {
+            "sink": {
+              "description": "P0, optional. Where audio goes on this body. Resolves against installed emet.audio_out plugins, so this is an open enum: an unknown value is a missing plugin, never a schema error. Omit for the default, a real speaker. `wav` writes what the robot said to a file; `null` discards it, which is how the loop runs without making a sound.",
+              "type": "string",
+              "minLength": 1
+            },
+            "params": {
+              "description": "Passed to the sink untouched. Emet never inspects these.",
+              "type": "object"
+            },
             "device": { "type": "string", "minLength": 1 },
+            "sample_rate": {
+              "description": "P0, optional. The rate audio is played at, which is a property of whatever synthesises it and need not match audio.input.sample_rate. Speech generated at 16 kHz sounds like a telephone, so this defaults higher.",
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
             "gain_db": { "type": "number" }
           }
         },

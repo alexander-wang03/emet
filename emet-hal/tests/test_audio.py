@@ -23,7 +23,11 @@ import pytest
 from emet_hal.audio import (
     AudioError,
     AudioFormat,
+    AudioSink,
     AudioSource,
+    NullSink,
+    Speaker,
+    WavSink,
     MicrophoneSource,
     WavSource,
     _downmix,
@@ -361,3 +365,59 @@ def test_dropped_frames_are_counted_rather_than_queued():
     src = run(scenario())
     assert src.dropped == 3
     assert src._queue.qsize() == 2
+
+
+# ------------------------------------------------------------------- sinks
+
+
+def test_the_null_sink_swallows_audio_and_counts_it():
+    """How the loop runs at midnight, and how a test avoids playing sound
+    through whatever is plugged into the machine running it."""
+    sink = NullSink()
+
+    async def scenario():
+        await sink.start()
+        await sink.play(silence(100))
+        await sink.play(silence(50))
+        await sink.cancel()
+        await sink.stop()
+
+    run(scenario())
+    assert sink.written == 300
+    assert sink.cancelled == 1
+
+
+def test_the_wav_sink_writes_a_readable_file(tmp_path):
+    path = tmp_path / "said.wav"
+    sink = WavSink({"sink": "wav", "params": {"path": str(path)}}, AudioFormat(sample_rate=22050))
+
+    async def scenario():
+        await sink.start()
+        await sink.play(silence(1000))
+        await sink.stop()
+
+    run(scenario())
+    with wave.open(str(path)) as w:
+        assert w.getframerate() == 22050
+        assert w.getnchannels() == 1
+        assert w.getnframes() == 1000
+
+
+def test_the_wav_sink_needs_a_destination():
+    with pytest.raises(AudioError, match="params.path"):
+        run(WavSink({"sink": "wav"}).start())
+
+
+def test_a_speaker_can_be_built_without_touching_hardware():
+    """Construction must be inert; only `start()` may open a device. A test
+    that constructs one must not make a sound."""
+    speaker = Speaker({"device": "plughw:1,0"}, AudioFormat(sample_rate=22050))
+    assert speaker.sample_rate == 22050
+    assert isinstance(speaker, AudioSink)
+
+
+def test_output_defaults_to_a_synthesis_rate_not_the_input_rate():
+    """16 kHz is what the detector needs. Speech generated at 16 kHz sounds
+    like a telephone, and the two directions have no reason to agree."""
+    assert NullSink().format.sample_rate == 22050
+    assert AudioFormat().sample_rate == 16000

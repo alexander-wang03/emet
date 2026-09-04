@@ -46,6 +46,10 @@ audio:
   output:
     device: "plughw:1,0"
     gain_db: -6.0
+    # Everything else on this body is mocked, so its mouth is too: `null`
+    # accepts audio and discards it, which is how the whole loop runs on a
+    # laptop without playing sound through whatever is plugged in.
+    sink: "null"
   wake:
     # Everything else on this body is mocked, so its ears are too. Fires when
     # a frame literally contains the phrase, which makes the whole wake path
