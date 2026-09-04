@@ -32,6 +32,8 @@ from emet_sdk.discovery import PluginRegistry
 from emet_sdk.types import AudioFormat, AudioSource, WakeDescriptor, WakeEvent
 from emet_sdk.validate import DEFAULT_AUDIO_SOURCE, DEFAULT_WAKE_ENGINE
 
+from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance
+
 __all__ = ["EngineError", "ListenSession"]
 
 log = logging.getLogger("emet_engine.session")
@@ -71,6 +73,12 @@ class ListenSession:
 
         self.engine_name = str(self._wake_block.get("engine") or DEFAULT_WAKE_ENGINE)
         self.source_name = str(self._input_block.get("source") or DEFAULT_AUDIO_SOURCE)
+
+        # Turn-taking is a persona trait, not engine tuning: a reflective soul
+        # waits longer than an eager one, and that difference is the whole
+        # reason the number lives on the soul rather than in this file.
+        interaction = soul.get("interaction") or {}
+        self.patience_ms = int(interaction.get("patience_ms") or DEFAULT_PATIENCE_MS)
 
         self._wake: Any = None
         self._audio: AudioSource | None = None
@@ -167,6 +175,45 @@ class ListenSession:
             if event is not None:
                 yield event
                 await self._wake.reset()
+
+    async def turns(self) -> AsyncIterator[tuple[WakeEvent, Utterance]]:
+        """Yield the wake and the speech that followed it, once per turn.
+
+        While an utterance is being captured the wake detector is not fed. That
+        is deliberate: the phrase often appears inside what somebody then says
+        ("hey emet, what did you mean, hey emet is a silly name"), and a
+        detector still listening would start a second turn inside the first.
+        """
+        if self._audio is None or self._wake is None or self.format is None:
+            raise EngineError("session was not started")
+
+        endpointer: Endpointer | None = None
+        pending: WakeEvent | None = None
+
+        while True:
+            frame = await self._audio.read()
+            if frame is None:
+                if endpointer is not None and pending is not None:
+                    # The source ran out mid-turn. Hand over what was caught
+                    # rather than dropping it: a truncated question is still
+                    # more useful than silence.
+                    yield pending, endpointer.close()
+                return
+
+            if endpointer is None:
+                event = await self._wake.process(frame)
+                if event is not None:
+                    await self._wake.reset()
+                    pending = event
+                    endpointer = Endpointer(self.format, patience_ms=self.patience_ms)
+                continue
+
+            utterance = endpointer.feed(frame)
+            if utterance is not None:
+                assert pending is not None
+                yield pending, utterance
+                endpointer = None
+                pending = None
 
     # -------------------------------------------------------------- honesty
 

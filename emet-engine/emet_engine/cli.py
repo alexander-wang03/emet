@@ -28,6 +28,7 @@ from emet_sdk.validate import (
 )
 
 from emet_engine.session import EngineError, ListenSession
+from emet_engine.turn import EndReason
 
 __all__ = ["main"]
 
@@ -83,17 +84,29 @@ async def _run(args: argparse.Namespace) -> int:
         assert session.descriptor is not None and session.format is not None
         print(
             f"listening for {session.phrase!r}\n"
-            f"  engine  {session.engine_name}\n"
-            f"  source  {session.source_name}\n"
-            f"  audio   {session.format.sample_rate} Hz, "
-            f"{session.format.frame_ms:.0f} ms frames"
+            f"  engine   {session.engine_name}\n"
+            f"  source   {session.source_name}\n"
+            f"  audio    {session.format.sample_rate} Hz, "
+            f"{session.format.frame_ms:.0f} ms frames\n"
+            f"  patience {session.patience_ms} ms"
         )
         print("  (ctrl-c to stop)\n" if not args.replay else "")
 
         heard = 0
-        async for event in session.wakes():
+        async for event, utterance in session.turns():
             heard += 1
             print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
+            if utterance.had_speech:
+                # 0.4 hands this audio to speech recognition. Until then the
+                # useful thing to show is that the turn was bounded correctly.
+                print(
+                    f"    then {utterance.duration_ms / 1000:.1f}s of speech, "
+                    f"ended on {utterance.reason.value}"
+                )
+            elif utterance.reason is EndReason.SOURCE_ENDED:
+                print("    the recording ended before anything followed.")
+            else:
+                print("    then nothing. probably a false wake.")
 
         # Only reached when the source ends, which means a replay finished.
         print(f"\nsource ended. heard it {heard} time(s).")

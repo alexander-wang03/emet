@@ -12,7 +12,19 @@ a working robot, which is a different thing: install it alongside.
 """
 
 from emet_engine.session import EngineError, ListenSession
+from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance
+from emet_engine.vad import EnergyVad, VadTuning
 
 __version__ = "0.2.0"
 
-__all__ = ["EngineError", "ListenSession", "__version__"]
+__all__ = [
+    "EngineError",
+    "ListenSession",
+    "Endpointer",
+    "Utterance",
+    "EndReason",
+    "EnergyVad",
+    "VadTuning",
+    "DEFAULT_PATIENCE_MS",
+    "__version__",
+]

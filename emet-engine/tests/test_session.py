@@ -180,6 +180,82 @@ def test_the_loop_ends_when_the_source_does(tmp_path):
     assert run(scenario()) == 1
 
 
+# ---------------------------------------------------------------- turns
+
+
+FRAME_BYTES = 2560
+
+
+def frame(payload: bytes = b"") -> bytes:
+    # bytes(n) rather than an escape: zero bytes without a backslash in sight.
+    return payload + bytes(FRAME_BYTES - len(payload))
+
+
+def loud_frame(amplitude: int = 4000) -> bytes:
+    from array import array
+
+    return array("h", [amplitude, -amplitude] * (FRAME_BYTES // 4)).tobytes()
+
+
+def test_a_turn_is_a_wake_and_the_speech_after_it(tmp_path):
+    """The 0.3 loop end to end: hear the name, capture what follows, stop when
+    they stop."""
+    pcm = frame() + frame(PHRASE.encode()) + loud_frame() * 5 + frame() * 20
+    manifest = body(write_wav(tmp_path / "turn.wav", pcm))
+    session = ListenSession(manifest, soul())
+
+    async def scenario():
+        async with session:
+            return [(e, u) async for e, u in session.turns()]
+
+    turns = run(scenario())
+    assert len(turns) == 1
+    event, utterance = turns[0]
+    assert event.phrase == PHRASE
+    assert utterance.had_speech
+    assert utterance.reason.value == "silence"
+    assert utterance.audio
+
+
+def test_a_wake_with_silence_after_it_is_reported_as_such(tmp_path):
+    """A false wake is not the same as a question, and the engine above has to
+    be able to tell them apart."""
+    pcm = frame() + frame(PHRASE.encode()) + frame() * 60
+    session = ListenSession(body(write_wav(tmp_path / "empty.wav", pcm)), soul())
+
+    async def scenario():
+        async with session:
+            return [(e, u) async for e, u in session.turns()]
+
+    turns = run(scenario())
+    assert len(turns) == 1
+    assert not turns[0][1].had_speech
+
+
+def test_patience_comes_from_the_soul(tmp_path):
+    session = ListenSession(
+        body(write_wav(tmp_path / "p.wav", frame())),
+        {"identity": {"wake_word": PHRASE}, "interaction": {"patience_ms": 2500}},
+    )
+    assert session.patience_ms == 2500
+
+
+def test_patience_defaults_when_the_soul_is_silent_about_it(tmp_path):
+    session = ListenSession(body(write_wav(tmp_path / "q.wav", frame())), soul())
+    assert session.patience_ms == 900
+
+
+def test_iterating_turns_before_starting_is_an_error(tmp_path):
+    session = ListenSession(body(write_wav(tmp_path / "r.wav", frame())), soul())
+
+    async def scenario():
+        with pytest.raises(EngineError, match="not started"):
+            async for _ in session.turns():
+                pass
+
+    run(scenario())
+
+
 def test_iterating_before_starting_is_an_error(tmp_path):
     session = ListenSession(body(write_wav(tmp_path / "j.wav", silence(1280))), soul())
 
