@@ -284,3 +284,23 @@ def test_motion_pack_rejects_unknown_intent():
     report = validate_motion_pack(pack)
     assert not report.ok
     assert "unknown_intent" in codes(report)
+
+
+# ----------------------------------------------------------------- version
+
+
+def test_the_reported_version_matches_the_installed_distribution():
+    """One declaration, in `pyproject.toml`, read back at import time.
+
+    This test exists because the two used to be written separately and drifted:
+    the installed metadata said 0.1.0 while the source said 0.2.0, and
+    nothing noticed because nothing compared them. A version that is quietly
+    wrong is worse than no version, because it gets reported in bug reports as
+    fact.
+    """
+    from importlib.metadata import version
+
+    import emet_sdk
+
+    assert emet_sdk.__version__ == version("emet-sdk")
+    assert emet_sdk.__version__ != "0+unknown", "package is not installed"

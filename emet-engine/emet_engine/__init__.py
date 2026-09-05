@@ -15,7 +15,18 @@ from emet_engine.session import EngineError, ListenSession
 from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance
 from emet_engine.vad import EnergyVad, VadTuning
 
-__version__ = "0.2.0"
+from importlib import metadata as _metadata
+
+#: Read from the installed distribution rather than written here, so that
+#: `pyproject.toml` is the single place this number appears. Two declarations
+#: drift silently: before this change the metadata said one version and the
+#: source said another, and nothing noticed because nothing compared them.
+try:
+    __version__ = _metadata.version("emet-engine")
+except _metadata.PackageNotFoundError:  # pragma: no cover - source checkout
+    # Imported from a tree that was never installed. Say so rather than
+    # inventing a number that would later be reported as fact.
+    __version__ = "0+unknown"
 
 __all__ = [
     "EngineError",

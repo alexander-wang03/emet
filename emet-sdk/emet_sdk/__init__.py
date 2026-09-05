@@ -10,6 +10,8 @@ Layering, enforced in CI: `emet_sdk` imports nothing internal. `emet_hal`
 imports `emet_sdk` only. `emet_engine` imports `emet_sdk` only.
 """
 
+from importlib import metadata as _metadata
+
 from emet_sdk.plugin import (
     ActuatorPlugin,
     CapabilityPlugin,
@@ -38,7 +40,16 @@ from emet_sdk.types import (
     WakeEvent,
 )
 
-__version__ = "0.2.0"
+#: Read from the installed distribution rather than written here, so that
+#: `pyproject.toml` is the single place this number appears. Two declarations
+#: drift silently: before this change the metadata said one version and the
+#: source said another, and nothing noticed because nothing compared them.
+try:
+    __version__ = _metadata.version("emet-sdk")
+except _metadata.PackageNotFoundError:  # pragma: no cover - source checkout
+    # Imported from a tree that was never installed. Say so rather than
+    # inventing a number that would later be reported as fact.
+    __version__ = "0+unknown"
 
 #: Bumped when a released schema changes shape. Manifests and bundles record
 #: the version they were written against; a document from a newer SDK is a

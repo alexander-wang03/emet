@@ -137,12 +137,27 @@ jobs:
         run: |
           cd /tmp
           python - <<'PY'
+          from importlib.metadata import version
           from emet_sdk.discovery import PluginRegistry
+
           r = PluginRegistry.discover()
           assert r.has_locomotion("differential"), "entry points did not survive packaging"
           assert r.has_locomotion("tracked")
           assert r.has_driver("emet_hal.mock")
+          assert r.has_wake("pocketsphinx"), "wake group did not survive packaging"
+          assert r.has_audio("microphone"), "audio group did not survive packaging"
+          assert r.has_audio_out("speaker"), "audio_out group did not survive packaging"
           print("discovered:", [f"{g}:{n}" for g, n in r])
+
+          # The version is declared once, in pyproject.toml, and read back
+          # through importlib.metadata. From a wheel that resolution path is
+          # different from an editable install, so it is worth checking here
+          # rather than only in the test suite.
+          import emet_sdk, emet_hal, emet_engine
+          for dist, mod in (("emet-sdk", emet_sdk), ("emet-hal", emet_hal), ("emet-engine", emet_engine)):
+              assert mod.__version__ == version(dist), f"{dist} version drifted"
+              assert mod.__version__ != "0+unknown", f"{dist} reports no version"
+          print("versions:", emet_sdk.__version__)
           PY
 
   test:

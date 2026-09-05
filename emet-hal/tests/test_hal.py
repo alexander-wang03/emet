@@ -218,3 +218,23 @@ def test_a_wake_engine_can_start_and_still_not_know_the_name():
     descriptor = wake.describe()
     assert descriptor.healthy
     assert not descriptor.can_detect("hey emet")
+
+
+# ----------------------------------------------------------------- version
+
+
+def test_the_reported_version_matches_the_installed_distribution():
+    """One declaration, in `pyproject.toml`, read back at import time.
+
+    This test exists because the two used to be written separately and drifted:
+    the installed metadata said 0.1.0 while the source said 0.2.0, and
+    nothing noticed because nothing compared them. A version that is quietly
+    wrong is worse than no version, because it gets reported in bug reports as
+    fact.
+    """
+    from importlib.metadata import version
+
+    import emet_hal
+
+    assert emet_hal.__version__ == version("emet-hal")
+    assert emet_hal.__version__ != "0+unknown", "package is not installed"
