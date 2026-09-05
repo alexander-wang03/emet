@@ -11,20 +11,20 @@ term in Android's sense: the abstraction itself lives here in
 `emet_sdk.plugin`, and `emet-hal` is the collection of per-device
 implementations that satisfy it.
 
-## What is in 0.2
+## What is in 0.3
 
-Schema, validation, the plugin contract, and chain resolution. There is still
-no audio and no engine — nothing here runs a robot. What it can now do is
-answer, for any body you describe, what each intent would mean on it.
+Schema, validation, the plugin contracts, and chain resolution. This package
+still runs nothing: it is the layer the engine and every plugin agree on, and
+it deliberately contains almost no logic.
 
 | | |
 |---|---|
 | `schemas/` | Body manifest, soul bundle, and motion pack, as JSON Schema. The **full** surface — every P0 field, every RSV field reserved for later releases, and the reserved V1 capability types. |
-| `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `Health`, `Priority`, `Sensitivity`. |
+| `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `WakeDescriptor`, `AudioFormat`, `AudioSource`, `AudioSink`, `Health`, `Priority`, `Sensitivity`. |
 | `emet_sdk/intents.py` | The closed intent vocabulary, plus the four names reserved from P0. |
 | `emet_sdk/chains.py` | Fallback chain format, and the rule that every chain terminates in a voice rung. |
-| `emet_sdk/plugin.py` | `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin` — the public contract. |
-| `emet_sdk/discovery.py` | Entry-point discovery. Installing a package is what makes a driver exist. |
+| `emet_sdk/plugin.py` | `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin`, `WakePlugin` — the public contract. |
+| `emet_sdk/discovery.py` | Entry-point discovery across six groups. Installing a package is what makes a driver exist. |
 | `emet_sdk/resolve.py` | Chain resolution: `(chains, descriptors) → binding table`. |
 | `emet_sdk/validate.py` | Semantic rules and the error taxonomy. |
 | `emet_sdk/cli.py` | `emet validate`, `emet explain`. |

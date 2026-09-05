@@ -13,13 +13,30 @@ is a promise: the thing you are talking to is honest about what it is.
 
 ---
 
-## Status: 0.2 (early)
+## Status: 0.3 (early)
 
-Emet does not yet listen, speak, remember, or move. Nothing here drives a servo.
+Emet listens. It does not yet understand, remember, or move, and nothing here
+drives a servo.
 
-What it does today is answer one question: **given a robot, what would each
-intent mean on it?** That question turns out to be the whole product in
-miniature.
+What it does today is two things. It hears its own name and works out when you
+have finished speaking:
+
+```sh
+$ emet-listen examples/scout-01.yaml examples/emet-soul.yaml
+listening for 'hey emet'
+  engine   pocketsphinx
+  source   microphone
+  patience 900 ms
+
+  heard 'hey emet'  (confidence 1.00)
+    then 4.0s of speech, ended on silence
+```
+
+There is no speech recognition yet, so it cannot tell you *what* you said. That
+arrives in 0.4.
+
+And it answers the question the whole design rests on: **given a robot, what
+would each intent mean on it?**
 
 ```sh
 $ emet explain examples/bodiless.yaml
@@ -101,6 +118,8 @@ tells you which rungs were skipped and what was wrong with each:
   it did.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: what is open to contribution, the
   design rules that are not negotiable, and how to run what CI runs.
+- **[RELEASING.md](RELEASING.md)**: the checklist every release goes through,
+  and what went wrong to put each item on it.
 - **[CITATIONS.md](CITATIONS.md)**: outside work whose ideas, findings, or data
   shaped Emet, and the licence attached to each.
 - **[TRADEMARK.md](TRADEMARK.md)**: the code is yours to fork; the name is not.

@@ -147,6 +147,18 @@ untangle a year later when nobody remembers where the number came from.
 Ordinary dependencies do not belong here — declare those in the relevant
 `pyproject.toml`. This file is for what a lockfile cannot record.
 
+## Releasing
+
+Minor and major releases follow [RELEASING.md](RELEASING.md). Two scripts do
+the mechanical half:
+
+```sh
+python tools/check_layering.py .
+python tools/release_check.py .
+```
+
+Both run in CI, so they cannot quietly stop working.
+
 ## Running things
 
 ```sh

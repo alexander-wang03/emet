@@ -40,6 +40,12 @@ jobs:
       - name: Check package layering
         run: python tools/check_layering.py .
 
+      # Cross-package invariants no single suite can see: the three packages
+      # agreeing about the version, every discovery group having something
+      # behind it, and no document advertising a version the code is not.
+      - name: Check release invariants
+        run: python tools/release_check.py .
+
   dco:
     name: dco sign-off
     runs-on: ubuntu-latest
