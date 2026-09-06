@@ -6,8 +6,8 @@ ring, and a chain that finds nothing at all still speaks. A robot that cannot
 hear its own name has no next rung. It just never answers, and looks broken
 rather than limited.
 
-So these tests are mostly about honesty at the boundary — an engine reporting
-what it can actually hear, rather than what the manifest hoped it would — and
+So these tests are mostly about honesty at the boundary (an engine reporting
+what it can actually hear, rather than what the manifest hoped it would) and
 about keeping the choice of engine swappable. Picovoice disabled every free
 Porcupine access key on 30 June 2026. The seam tested here is what makes that
 a one-line manifest change instead of a dead robot.

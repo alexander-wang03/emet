@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "emet-engine"
 version = "0.3.0"
-description = "Emet engine — the listen loop and the runtime that drives a body."
+description = "Emet engine: the listen loop and the runtime that drives a body."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

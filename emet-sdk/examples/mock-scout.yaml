@@ -1,6 +1,6 @@
 # The same robot as scout-01, wired entirely to mock plugins.
 #
-# scout-01.yaml names real chips — pca9685, gc9a01, ws2812 — none of which
+# scout-01.yaml names real chips (pca9685, gc9a01, ws2812), none of which
 # have drivers yet. It is the aspirational example, and it validates with a
 # warning saying so.
 #
@@ -9,14 +9,14 @@
 #     emet validate examples/mock-scout.yaml --verify-drivers   # passes
 #     emet explain  examples/mock-scout.yaml
 #
-# That is the point of the mock. The whole stack above the metal — chain
-# resolution, arbitration, the choreographer, eventually a conversation — can
+# That is the point of the mock. The whole stack above the metal (chain
+# resolution, arbitration, the choreographer, eventually a conversation) can
 # be exercised without owning a servo. It is also how a driver author checks
 # what the choreographer actually sends before wiring anything up.
 #
 # Note the `ring` here declares `role: status` rather than scout-01's
 # `role: ambient`, so the signal.* chains bind to it instead of falling
-# through to the eyes. Compare the two binding tables — it is the clearest
+# through to the eyes. Compare the two binding tables; it is the clearest
 # demonstration in the repository that a role, not a part, is what a chain
 # asks for.
 
@@ -66,8 +66,8 @@ capabilities:
     joints:
       - {id: pan,  axis: yaw,   channel: 0, range_deg: [-90, 90], home_deg: 0, max_speed_dps: 180}
       - {id: tilt, axis: pitch, channel: 1, range_deg: [-30, 45], home_deg: 0, max_speed_dps: 120}
-      # A roll axis scout-01 does not have. Several chains ask for one —
-      # express.affection, express.confusion, idle.fidget — so this body
+      # A roll axis scout-01 does not have. Several chains ask for one
+      # (express.affection, express.confusion, idle.fidget), so this body
       # binds them to the head where scout-01 falls through to the eyes.
       - {id: roll, axis: roll,  channel: 2, range_deg: [-20, 20], home_deg: 0, max_speed_dps: 90}
 

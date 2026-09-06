@@ -36,7 +36,7 @@ audio:
   wake:
     # The shipped engine. Phonetic, so it hears whatever phrase the soul
     # names without a model trained for it. Omitting this whole block is
-    # legal — `bodiless.yaml` does, and takes the default.
+    # legal; `bodiless.yaml` does, and takes the default.
     engine: pocketsphinx
     params:
       # The shipped default, written out so it is visible. Lower is stricter:

@@ -25,7 +25,7 @@
           "$ref": "#/$defs/identifier"
         },
         "name": {
-          "description": "P0. Human label for the body. Not the robot's name — that lives in the soul bundle.",
+          "description": "P0. Human label for the body. The robot's name lives in the soul bundle.",
           "type": "string"
         },
         "scale": {
@@ -118,7 +118,7 @@
           }
         },
         "wake": {
-          "description": "P0, optional. Which wake word engine listens on this body, and how it is tuned. Omit to take the shipped default. The name resolves against installed emet.wake plugins, so this is an open enum: an unknown value is a missing plugin, never a schema error. The wake PHRASE is not here — it belongs to the soul, as identity.wake_word.",
+          "description": "P0, optional. Which wake word engine listens on this body, and how it is tuned. Omit to take the shipped default. The name resolves against installed emet.wake plugins, so this is an open enum: an unknown value is a missing plugin, never a schema error. The wake PHRASE belongs to the soul, as identity.wake_word.",
           "type": "object",
           "additionalProperties": false,
           "required": ["engine"],
@@ -134,7 +134,7 @@
     },
 
     "capabilities": {
-      "description": "P0. May be empty — a Pi with a USB speakerphone and nothing else is a valid body, and is milestone one.",
+      "description": "P0. May be empty: a Pi with a USB speakerphone and nothing else is a valid body, and is milestone one.",
       "type": "array",
       "default": [],
       "items": { "$ref": "#/$defs/capability" }
@@ -159,7 +159,7 @@
     },
 
     "driver": {
-      "description": "Which plugin owns this hardware, and its instantiation parameters. Resolution to an installed package is a semantic rule — a missing plugin is a MissingPluginError, never a schema error.",
+      "description": "Which plugin owns this hardware, and its instantiation parameters. Resolution to an installed package is a semantic rule: a missing plugin is a MissingPluginError, never a schema error.",
       "type": "object",
       "additionalProperties": false,
       "required": ["plugin"],
@@ -263,7 +263,7 @@
         "id": true,
         "type": true,
         "kinematics": {
-          "description": "P0. OPEN ENUM — any string naming a locomotion plugin. Built in: differential, tracked. An unknown value is a MissingPluginError, not a schema error, which is what keeps this open.",
+          "description": "P0. OPEN ENUM: any string naming a locomotion plugin. Built in: differential, tracked. An unknown value is a MissingPluginError, not a schema error, which is what keeps this open.",
           "type": "string",
           "minLength": 1,
           "pattern": "^[a-z][a-z0-9_]*$"

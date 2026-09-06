@@ -8,7 +8,7 @@ so explicitly: the licence does not give permission to use a project's trade
 names or marks.
 
 **This is deliberate, and it is the project's only point of control.** Because
-the licence is permissive, anyone may take Emet, close their fork, and sell it
+the licence is permissive, anyone may take Emet, close their fork, and sell it,
 and that is a permitted outcome. What the name preserves is that "I run Emet"
 keeps meaning something specific: this engine, these guarantees, this
 behaviour. Without it, the sentence decays into "I run something derived from

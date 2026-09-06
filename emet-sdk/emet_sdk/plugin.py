@@ -4,7 +4,7 @@ Four categories, and the split is not arbitrary:
 
 * **Actuators** receive `Action`s and do something physical. The engine tells
   them what should happen; how is theirs.
-* **Sensors** invert the flow — the engine polls, they return `Reading`s. A
+* **Sensors** invert the flow: the engine polls, they return `Reading`s. A
   sensor never emits an intent, because deciding what an observation *means*
   belongs to the engine. Letting a driver push intents would put its author in
   charge of the personality.
@@ -19,8 +19,8 @@ Four categories, and the split is not arbitrary:
 **Why there is no VAD category.** Voice activity detection looks like it
 belongs beside wake, and does not. It is not a swap point: there is one real
 answer (Silero), it is MIT licensed so it carries none of the rug-pull risk
-that made wake a category, and its output feeds turn-taking — `patience_ms`,
-the trailing-clause heuristic — which is personality rather than hardware. A
+that made wake a category, and its output feeds turn-taking (`patience_ms`,
+the trailing-clause heuristic), which is personality rather than hardware. A
 seam there would decouple nothing. The asymmetry settles it: adding a category
 later is a minor version bump, removing one is a major bump, so under
 uncertainty the cheap direction is to leave it out.
@@ -30,7 +30,7 @@ board over I2C; nothing in this module knows that, and nothing in the soul
 layer ever will.
 
 **On `describe()` and `start()`.** A descriptor reports what an instance can
-*actually* do, which is only knowable after initialisation — so `start()`
+*actually* do, which is only knowable after initialisation, so `start()`
 exists, and `describe()` is defined to be called after it. A joint group whose
 servo board failed to answer returns a narrower descriptor (or `healthy=False`),
 and fallback chains bind past it to the next rung. That is the difference
@@ -70,7 +70,7 @@ class PluginError(RuntimeError):
 
     Raising this from `start()` is the supported way to say "this hardware is
     not present or not working". The engine records it, marks the capability
-    unhealthy, and lets chains fall through — it does not crash, because a
+    unhealthy, and lets chains fall through rather than crashing, because a
     robot with a dead servo is still a robot that can talk.
     """
 
@@ -115,7 +115,7 @@ class CapabilityPlugin(Plugin):
     `params` live here rather than on `Plugin`: wake has none of them.
     """
 
-    #: The manifest `type` this plugin implements — joint_group, drive,
+    #: The manifest `type` this plugin implements: joint_group, drive,
     #: display, light, camera, sensor. Locomotion plugins leave this empty and
     #: set `kinematics` instead.
     capability_type: ClassVar[str] = ""
@@ -125,7 +125,7 @@ class CapabilityPlugin(Plugin):
 
         Not just `driver.params`: a plugin needs `role`, `joints`, `form` and
         the rest to answer `describe()` honestly. What it does with the
-        wiring-specific `params` is entirely its own business — Emet passes
+        wiring-specific `params` is entirely its own business; Emet passes
         them through without looking at them.
         """
         self.capability: Mapping[str, Any] = capability
@@ -153,7 +153,7 @@ class ActuatorPlugin(CapabilityPlugin):
         """Execute one action.
 
         **Must return promptly.** Long moves are driven by repeated `apply()`
-        calls from the choreographer at 50Hz — a plugin that sleeps for the
+        calls from the choreographer at 50Hz; a plugin that sleeps for the
         duration of a gesture blocks the loop that would let a higher-priority
         intent preempt it.
         """
@@ -175,7 +175,7 @@ class SensorPlugin(CapabilityPlugin):
 
         Called by the engine on its own schedule. If the value is old, say so
         with `Reading(stale=True)` rather than returning a stale number as if
-        it were fresh — a robot acting confidently on a dead sensor is worse
+        it were fresh; a robot acting confidently on a dead sensor is worse
         than one that knows it cannot see.
         """
 
@@ -277,7 +277,7 @@ class WakePlugin(Plugin):
         detector that never competes with speech recognition for the device.
 
         Frames arrive at the rate and size the descriptor asked for. **Must
-        return promptly** — this runs on every frame of the capture path, so
+        return promptly**: this runs on every frame of the capture path, so
         blocking here drops audio and delays the wake it is meant to catch.
         """
 

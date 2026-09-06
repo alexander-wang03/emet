@@ -1,4 +1,4 @@
-"""Fallback chains — the mechanism that makes one soul run any body.
+"""Fallback chains: the mechanism that makes one soul run any body.
 
 A chain maps an intent to an ordered list of rungs. At boot the engine walks
 each chain top to bottom and binds the first rung whose actuator selector
@@ -6,13 +6,13 @@ matches something in the manifest. A body with a pan/tilt head tilts it; a
 body with only eyes squints; a body with neither says "hm?".
 
 Chains are data, live in the SDK, and are overridable per-soul. Degradation is
-declared, not improvised (principle 5) — there is no `if hasattr(...)`
+declared, not improvised (principle 5): there is no `if hasattr(...)`
 anywhere in the engine.
 
 **The rule this module exists to enforce:** every chain's final rung must be a
 voice rung. Because the hardware floor is a microphone and a speaker, a chain
-ending in voice can never fail to bind, which is what makes principle 2 —
-every intent is always satisfiable — mechanical rather than aspirational.
+ending in voice can never fail to bind, which is what makes principle 2,
+every intent is always satisfiable, mechanical rather than aspirational.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ class ChainError(ValueError):
 class UnterminatedChainError(ChainError):
     """A chain whose final rung is not a voice rung.
 
-    Its own exception type because this is not a typo — it is a chain that
+    Its own exception type because this is worse than a typo: a chain that
     can fail to bind on a sufficiently bare body, which breaks the guarantee
     the whole abstraction rests on.
     """
@@ -60,7 +60,7 @@ class ChainMode:
 class ActuatorSelector:
     """Which part of a body a rung wants.
 
-    Selectors name roles and axes — `head`, `pitch`, `eyes` — never drivers or
+    Selectors name roles and axes (`head`, `pitch`, `eyes`), never drivers or
     channels. This is the seam that keeps principle 1 intact while still
     letting a chain be specific about what it needs.
     """
@@ -73,7 +73,7 @@ class ActuatorSelector:
     def __post_init__(self) -> None:
         if self.voice and (self.role or self.type or self.axis):
             raise ChainError(
-                "a voice rung selector takes no role, type, or axis — "
+                "a voice rung selector takes no role, type, or axis: "
                 "voice is the floor, and it is unconditional"
             )
         if not self.voice and not (self.role or self.type or self.axis):

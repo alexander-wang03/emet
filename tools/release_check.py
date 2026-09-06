@@ -2,7 +2,7 @@
 """Check the things a release gets wrong that no single package can notice.
 
 Every package has its own tests, and they pass while the *repository* is
-inconsistent — because a package cannot see its siblings. `emet-sdk` could sit
+inconsistent, because a package cannot see its siblings. `emet-sdk` could sit
 at 0.3.0 beside an `emet-hal` still at 0.2.0 and every suite would be green.
 This looks across the whole tree instead.
 
@@ -18,8 +18,8 @@ It checks the *cross-cutting* invariants:
 **Why this exists.** 0.3's scope was "audio in/out, wake word, VAD,
 endpointing". Audio *out* was not wired, and it went unnoticed for days because
 the work was checked against a memory of the scope rather than the written
-scope. A script cannot read a roadmap, so it cannot catch that one — see
-`RELEASING.md` for the human half — but everything it *can* mechanise, it
+scope. A script cannot read a roadmap, so it cannot catch that one (see
+`RELEASING.md` for the human half), but everything it *can* mechanise, it
 should, because the checks people skip are the ones that need remembering.
 
 Dependency-free and short enough to read, like `check_layering.py`.

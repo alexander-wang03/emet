@@ -3,7 +3,7 @@
 The listen loop and the runtime that drives a body.
 
 Imports `emet_sdk` only. Hardware reaches it by name through entry-point
-discovery, never by import — see the layering check in `tools/check_layering.py`.
+discovery, never by import. See the layering check in `tools/check_layering.py`.
 
 ```sh
 emet-listen path/to/manifest.yaml path/to/soul.yaml
@@ -25,7 +25,7 @@ emet-listen manifest.yaml soul.yaml --replay ten-minutes.wav --stats
 The figure that matters is **realtime**: processing time divided by the audio
 processed. Audio arrives at a fixed rate whatever the CPU is doing, so 1.0 is
 exactly keeping up with no margin and anything above it is falling behind.
-`frames over budget` matters separately — a loop with a fine average that
+`frames over budget` matters separately: a loop with a fine average that
 overruns once a minute is dropping a word once a minute, and the average hides
 it.
 
@@ -50,5 +50,5 @@ and the full turn loop:
 Raspberry Pi, and an x86 laptop says nothing about ARM except by comparison.
 The same command on a Pi is the measurement that matters, and it has not been
 taken. A file replay also exercises everything except the sound card, so
-genuine clock drift — where the card's second and the system's slowly diverge —
+genuine clock drift, where the card's second and the system's slowly diverge,
 is still unmeasured and needs a live microphone.

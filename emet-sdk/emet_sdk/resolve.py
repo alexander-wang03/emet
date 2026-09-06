@@ -1,4 +1,4 @@
-"""Chain resolution — deciding what each intent means on a particular body.
+"""Chain resolution: deciding what each intent means on a particular body.
 
     (chains, capability descriptors)  ->  binding table
 
@@ -13,7 +13,7 @@ only eyes, a squint. On a bare speakerphone, "hm?". Same soul, same chains,
 three different bodies, zero conditionals.
 
 This lives in the SDK rather than the engine because it is a pure function over
-contract data — no state, no I/O, no personality — and because a HAL
+contract data (no state, no I/O, no personality) and because a HAL
 contributor needs to see where their driver binds without running an engine.
 The choreographer, which is stateful and runs at 50Hz, does not.
 
@@ -45,8 +45,8 @@ __all__ = [
 #: Axes a joint may declare, mirrored from the manifest schema.
 _AXES = frozenset({"yaw", "pitch", "roll", "linear"})
 
-#: Capability types a chain can bind to. Cameras and sensors are inputs — the
-#: engine consumes what they report; no intent drives them — so they are never
+#: Capability types a chain can bind to. Cameras and sensors are inputs (the
+#: engine consumes what they report; no intent drives them), so they are never
 #: candidates for a rung and never "unused".
 _BINDABLE_TYPES = frozenset({"joint_group", "drive", "display", "light"})
 
@@ -125,7 +125,7 @@ class BindingTable:
         table and their absence here means nothing.
 
         An actuator showing up is worth a look but is not automatically a
-        mistake. It usually means the part is outranked everywhere — a light
+        mistake. It usually means the part is outranked everywhere: a light
         ring sits below the head and eyes in every chain that mentions it, so
         on a body with both it never binds. `mode: all` would light it; P0
         binds one rung per intent.
@@ -176,8 +176,8 @@ def resolve(
 ) -> BindingTable:
     """Bind every chain against a body.
 
-    Never fails. Every chain is guaranteed to terminate in a voice rung — the
-    validator refuses to load one that does not — so the worst case is that
+    Never fails. Every chain is guaranteed to terminate in a voice rung (the
+    validator refuses to load one that does not), so the worst case is that
     everything binds to the speaker, which is exactly what should happen on a
     body with no actuators.
     """
@@ -231,7 +231,7 @@ def unused_reasons(
     builder needs to tell them apart:
 
     * **Nothing asks for it.** A light declared `role: decorative` when every
-      chain wants `ambient` or `status` — a manifest mistake, and a part that
+      chain wants `ambient` or `status`: a manifest mistake, and a part that
       will never do anything.
     * **Something better always wins.** A body whose head has all three axes
       never reaches the eyes rung of any express chain. Nothing is wrong; the
@@ -266,7 +266,7 @@ def unused_reasons(
         if eligible == 0:
             reasons[cap.capability_id] = (
                 f"no chain selects a {cap.capability_type!r} with role "
-                f"{cap.role!r} — check the role against what the chains ask for"
+                f"{cap.role!r}; check the role against what the chains ask for"
             )
         elif outranked:
             winner, count = max(outranked.items(), key=lambda kv: kv[1])
@@ -286,7 +286,7 @@ def descriptors_from_manifest(
     """Project a manifest into descriptors *without instantiating anything*.
 
     This is what a manifest **claims**, not what hardware **reports**. The
-    engine builds descriptors the real way — start each plugin, ask it — and a
+    engine builds descriptors the real way (start each plugin, ask it) and a
     joint group whose servo board did not answer will describe itself more
     narrowly than the YAML does.
 

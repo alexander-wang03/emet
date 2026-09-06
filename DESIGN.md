@@ -23,12 +23,13 @@ sparse at the start; internal cross-references depend on it.
 
 ## 0. How to read this document
 
-Every schema field and subsystem carries a tag describing **how finished it
-is**, not when it will arrive:
+Every schema field and subsystem carries a tag describing **how settled it
+is**: whether the field exists, and whether the engine is meant to read it. The
+tags say nothing about when anything ships; `ROADMAP.md` does that.
 
 | Tag | Meaning |
 |---|---|
-| **`P0`** | Implemented. The engine reads this field and acts on it. |
+| **`P0`** | In scope for the first product. The engine reads this field, or will by 1.0. Whether it has shipped yet is a question for `ROADMAP.md` and `STATUS.md`, never for this document. |
 | **`RSV`** | Reserved. The field exists in the schema and validators accept it, but the engine ignores it. |
 | **`V1`** | End-goal. Not in the schema yet. Listed so that today's design does not foreclose it. |
 
@@ -91,8 +92,9 @@ emet/                         one repository, Apache 2.0 throughout
   emet-sdk/         the contract layer
     schemas/          manifest, soul bundle, motion pack (JSON Schema)
     emet_sdk/
-      types.py        Intent, Action, CapabilityDescriptor, Pose, Twist
-      plugin.py       ActuatorPlugin, SensorPlugin, LocomotionPlugin ABCs
+      types.py        Intent, Action, CapabilityDescriptor, Pose, Twist,
+                      WakeDescriptor, AudioFormat, AudioSource, AudioSink
+      plugin.py       ActuatorPlugin, SensorPlugin, LocomotionPlugin, WakePlugin ABCs
       intents.py      the canonical intent vocabulary
       chains.py       fallback chain format + the voice-rung rule
       discovery.py    entry-point plugin discovery
@@ -100,30 +102,33 @@ emet/                         one repository, Apache 2.0 throughout
       validate.py     manifest + bundle validators
 
   emet-hal/         community-contributed
-    mock.py           an actuator and a sensor that pretend
+    mock.py           an actuator, a sensor and a wake engine that pretend
     differential.py   two independently driven wheels  (§12.1)
     tracked.py        the same arithmetic, plus tread scrub
-    ...               pca9685, tb6612, gc9a01, ws2812 — not yet written
+    pocketsphinx_wake.py   the shipped wake engine  (§12.2)
+    audio.py          microphone and speaker through PortAudio; wav and null
+    ...               pca9685, tb6612, gc9a01, ws2812: not yet written
 
-  emet-engine/      personality synthesis, memory, arbitration,
-                    choreography, prompting, safety, consolidation.
+  emet-engine/      the listen loop today (wake, VAD, endpointing, §13);
+                    personality synthesis, memory, arbitration, choreography,
+                    prompting, safety and consolidation as releases arrive.
 ```
 
 **HAL** is *hardware abstraction layer*: the standard embedded and OS term for the layer separating generic upper software from specific silicon. Emet uses it in Android's sense: the abstraction itself is `emet_sdk.plugin` (the ABCs and capability descriptors), and `emet-hal` is the collection of per-device *implementations* that satisfy it. Spell the acronym out on first use in any document a newcomer might read first; not every contributor arrives from embedded work.
 
-The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic, targeting under ~2,000 lines. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
+The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic, targeting under ~3,500 lines. The original target of 2,000 predates the wake and audio contracts, which added about 800 lines; the rest is headroom for the speech-to-text seam. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
 
 **Where the line falls when something is arguably logic:** deterministic pure functions over contract data belong in the SDK; anything stateful, scheduled, or personality-bearing belongs in the engine. Chain resolution (§6) is the former, `(chains, descriptors) → binding table` with no state and no I/O, and it lives in the SDK so that a HAL contributor can check where their driver binds without running an engine. The choreographer, at 50Hz and holding motion state, is the latter.
 
 **One license, permissive, everywhere, settled August 2026.** Apache 2.0 for the SDK, the HAL, and the engine alike. There is no licence boundary inside the repository and nothing about it to explain to a contributor. A hobbyist may do anything with it, and so may a company.
 
-The consequence to hold onto: **anyone may fork Emet, close their fork, and ship it.** That is permitted, not accidental. The only thing that stops such a fork calling itself *Emet* is the trademark. See `TRADEMARK.md`.
+The consequence to hold onto: **anyone may fork Emet, close their fork, and ship it.** That is permitted and deliberate. The only thing that stops such a fork calling itself *Emet* is the trademark. See `TRADEMARK.md`.
 
 **`P0`**: everything public from the first commit, under its final license. Open is a one-way door: once published, it is published, and a permissive release can never be walked back for code already out.
 
 **Layering is enforced by CI, not by a license wall.** An import linter asserts that `emet-sdk` imports nothing internal, `emet-hal` imports only `emet-sdk`, and `emet-engine` imports only `emet-sdk`. Previously this invariant was maintained by the engine being a separate closed artifact; that structural guarantee is now a test, and it must actually run in CI or it will rot.
 
-Python import namespace: `emet_sdk`, `emet_hal`. CLI binary: `emet`. Config root: `/etc/emet/`. Soul bundles: `*.emet` directories.
+Python import namespaces: `emet_sdk`, `emet_hal`, `emet_engine`. CLI binaries: `emet` and `emet-listen`. Config root: `/etc/emet/`. Soul bundles: `*.emet` directories.
 
 ---
 
@@ -154,16 +159,26 @@ compute:
   ram_gb: 8                      # P0
   accelerator: none              # RSV  none | hailo8l | coral
 
-audio:                           # P0  required — this is the hardware floor
+audio:                           # P0  required: this is the hardware floor
   input:
     device: "plughw:1,0"
     sample_rate: 16000
     channels: 4
     aec: hardware                # P0  hardware | software | none
     doa: true                    # P0  direction of arrival available
+    source: microphone           # P0  optional. OPEN ENUM naming an installed
+                                 #     emet.audio plugin; default microphone.
+                                 #     `wav` replays a recording (params.path).
   output:
     device: "plughw:1,0"
     gain_db: -6.0
+    sink: speaker                # P0  optional. OPEN ENUM naming an installed
+                                 #     emet.audio_out plugin; default speaker.
+                                 #     `wav` records, `null` discards.
+  wake:                          # P0  optional. Omit for the shipped default.
+    engine: pocketsphinx         #     OPEN ENUM naming an installed emet.wake
+                                 #     plugin. The PHRASE is on the soul (§8.1).
+    params: {}                   #     passed to the engine untouched
 
 capabilities: []                 # P0  see 4.2
 
@@ -240,7 +255,7 @@ Declared axes are what let the choreographer generate motion without user code. 
 ```yaml
 - id: base
   type: drive
-  kinematics: differential       # P0  OPEN ENUM — any string naming an
+  kinematics: differential       # P0  OPEN ENUM: any string naming an
                                  #     installed locomotion plugin.
                                  #     Built-in P0: differential | tracked
                                  #     Later: omni | ackermann | legged | ...
@@ -276,7 +291,7 @@ a legged plugin arrives:
 - id: base
   type: drive
   kinematics: legged             # accepted today; plugin comes later
-  legs:                          # RSV — reserved, ignored by the P0 engine
+  legs:                          # RSV  reserved, ignored by the P0 engine
     count: 2
     dof_per_leg: 3
     gait: static                 # RSV  static | dynamic
@@ -351,6 +366,7 @@ Enforced by `emet_sdk.validate`, run at boot and by the CLI:
 - `memory.db` contains **no body-identifying column**. Enforced by schema inspection rather than convention. See §4.1, "What `body.id` is and is not". A bundle whose memory database carries a body reference is invalid.
 - `drive.kinematics` must be a **string that resolves to an installed locomotion plugin**, not a member of a frozen list. An unrecognized value fails boot with "no locomotion plugin provides `legged`; install one or change `kinematics`", which is a *missing plugin* error, not a *schema* error. This is what keeps the enum open.
 - Every referenced `driver.plugin` resolves to an installed plugin, or boot fails loudly with the missing package name. Never silently degrade because of a typo: that is a *different* failure from missing hardware, and conflating them costs support hours.
+- `audio.wake.engine`, `audio.input.source` and `audio.output.sink` resolve to installed plugins, or validation fails. `driver.plugin` may name hardware not yet wired and so only warns outside `--verify-drivers`; these name software that has to exist for the robot to hear or speak at all.
 
 ---
 
@@ -429,7 +445,7 @@ express.curiosity:
     - actuator: {role: ambient, type: light}
       action: pulse
       params: {hue: 190, period_ms: 1200}
-    - actuator: {voice: true}    # terminal rung — ALWAYS binds
+    - actuator: {voice: true}    # terminal rung, ALWAYS binds
       action: inflect
       params: {preset: rising, filler: ["hm?", "hmm."]}
 ```
@@ -487,7 +503,7 @@ YOUR BODY
 You are a small treaded robot, about the size of a coffee mug, sitting on a desk.
 You can turn your head left and right, and tilt it up and down.
 You have two round eyes that can change expression.
-You can drive forward, back, and turn in place — slowly, about walking pace
+You can drive forward, back, and turn in place, slowly, at about walking pace
   for an ant.
 You cannot see: you have no camera.
 You have no arms and cannot pick anything up.
@@ -589,7 +605,7 @@ identity:
                                  #     Whether a body can hear it depends on the
                                  #     wake engine it installs (§14), which this
                                  #     document does not know about.
-                                 #     Deliberately separate from `name` — see 8.1.1.
+                                 #     Deliberately separate from `name`, see 8.1.1.
   line: emet                     # P0  emet | hugr | neuma | custom  (soul line, §1.2)
   pronouns: "it/its"             # P0
   author: "The Emet Authors"     # P0  free text; a handle, a name, anything
@@ -664,7 +680,7 @@ Whether a particular body can hear a particular phrase is not knowable from thes
 
 ### 8.2 The soul line field
 
-`identity.line` names which reference personality a bundle derives from (§1.2). It is metadata only: the engine does not branch on it, but it lets the community registry group and filter souls, and it lets docs say "based on Hugr" meaningfully. Custom souls set `line: custom`.
+`identity.line` names which reference personality a bundle derives from (§1.2). It is metadata only. The engine does not branch on it. It lets the community registry group and filter souls, and it lets docs say "based on Hugr" meaningfully. Custom souls set `line: custom`.
 
 ### 8.3 Portability contract
 
@@ -821,7 +837,7 @@ class PCA9685Servos(ActuatorPlugin):
         """Called on SIGTERM and on fault. Must leave hardware safe."""
 
     def health(self) -> Health:
-        """RSV — polled; feeds proprioceptive self-model updates."""
+        """RSV. Polled; feeds proprioceptive self-model updates."""
 ```
 
 Sensors invert the flow: `SensorPlugin.poll()` returns typed readings the engine consumes; sensors never emit intents.
@@ -841,7 +857,7 @@ class DifferentialDrive(LocomotionPlugin):
 
     async def command(self, twist: Twist) -> None:
         """Accept a desired linear/angular velocity. The plugin owns everything
-        below this line — wheel math, gait phase, balance, whatever it takes."""
+        below this line: wheel math, gait phase, balance, whatever it takes."""
 
     async def stop(self, hard: bool = False) -> None: ...
 ```
@@ -865,6 +881,55 @@ so honestly.
 - **Tier 1, declarative** (`P0`): wheels, treads, pan/tilt joints. No user code.
 - **Tier 3, recorded** (`P0`): `emet teach`. No user code.
 - **Tier 2, user Python** (`V1`): custom intent handlers for exotic bodies, behind the sandbox.
+
+### 12.2 Wake and audio plugins
+
+Six entry-point groups in total. Three are built from a manifest capability
+(`emet.actuators`, `emet.sensors`, `emet.locomotion`). Three are built from the
+manifest's `audio` block (`emet.wake`, `emet.audio`, `emet.audio_out`), because
+the hardware floor already guarantees a microphone and a speaker, so there is no
+capability to declare, only a choice of what runs on them.
+
+```python
+class PocketSphinxWake(WakePlugin):
+    engine = "pocketsphinx"            # the string matched against audio.wake.engine
+
+    def __init__(self, config, phrase):
+        """The `audio.wake` block from the body and `identity.wake_word` from
+        the soul. The one place a soul-declared value reaches a plugin
+        constructor. Principle 1 holds: the soul says which name it
+        answers to, never which engine hears it or on what device."""
+
+    def describe(self) -> WakeDescriptor:
+        """Which phrases this instance actually loaded, and the sample rate and
+        frame size it needs. Boot fails if the soul's phrase is not among them:
+        a robot that never answers to its name has nothing to degrade to."""
+
+    async def process(self, frame: bytes) -> WakeEvent | None:
+        """One frame in, an event out if the phrase was heard. Must return
+        promptly; this runs on every frame of the capture path."""
+```
+
+**The detector states the audio format and the source conforms to it.** The
+reverse silently feeds 48 kHz audio to a 16 kHz model and the robot stops
+hearing without an error.
+
+`emet.audio` sources and `emet.audio_out` sinks are not `Plugin` subclasses.
+They satisfy the `AudioSource` and `AudioSink` protocols in `emet_sdk.types`
+and are built as `cls(config, fmt)` from `audio.input` or `audio.output`. Audio
+is *pulled* from a source and *pushed* to a sink, which is why they are two
+groups and not one: `wav` means a recording to replay in the first and a file to
+write in the second.
+
+**Why wake is a category and not a dependency.** Picovoice disabled every free
+Porcupine access key on 30 June 2026. Anything that had wired one detector in
+directly stopped waking that day, and its owner could not fix it. Behind the
+seam, the fix is one line of a manifest.
+
+**Voice activity detection is deliberately not a category.** One real answer,
+permissively licensed, and its output feeds turn-taking (§13), which is
+personality rather than hardware. Adding a category later is a minor version
+bump; removing one is major.
 
 ---
 

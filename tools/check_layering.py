@@ -9,7 +9,7 @@ Under the earlier closed-engine plan this was structural: an outside
 contributor had no engine source to couple to. In a monorepo with everything
 open, the accidental-coupling path is open to everyone, so an invariant that
 used to be a property of the distribution is now a test. If this does not run
-on every push, the layering rots — and the layering is the product.
+on every change, the layering rots, and the layering is the product.
 
 Deliberately dependency-free and short enough to read in one sitting. It
 parses each file's AST and inspects static import statements only. It will not

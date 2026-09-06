@@ -42,7 +42,7 @@ persona:
     verbosity: 0.4
     curiosity: 0.9
     formality: 0.3
-  drift:                           # RSV — behaviour arrives in Afflatus
+  drift:                           # RSV. Behaviour arrives in Afflatus
     enabled: false
     rate: 0.0
     locked_traits: []
@@ -60,7 +60,7 @@ idle:
   enabled: true
   interval_s: [20, 90]
   weights: {settle: 0.4, look_around: 0.4, fidget: 0.2}
-  proactivity: 0.0                 # RSV — 0.0 = never initiates
+  proactivity: 0.0                 # RSV. 0.0 = never initiates
 
 memory:
   personalization: true

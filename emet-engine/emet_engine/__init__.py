@@ -1,4 +1,4 @@
-"""Emet engine — the part that runs, as opposed to the part that describes.
+"""Emet engine: the part that runs, as opposed to the part that describes.
 
 Layering, enforced in CI: this package imports `emet_sdk` and nothing else.
 Not for tidiness. The engine is where somebody would reach for a concrete

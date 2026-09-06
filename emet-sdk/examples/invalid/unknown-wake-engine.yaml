@@ -8,7 +8,7 @@
 # it guarded is gone.
 #
 # What replaces it is the rule `drive.kinematics` already follows. The name
-# below is legal — `audio.wake.engine` is an open enum — but it does not
+# below is legal, since `audio.wake.engine` is an open enum, but it does not
 # resolve, and that is an error rather than a warning.
 #
 # The distinction is worth holding onto. A missing `driver.plugin` is a warning

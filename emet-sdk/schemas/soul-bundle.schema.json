@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://emet.sh/schemas/0.1/soul-bundle.schema.json",
   "title": "Emet soul.yaml",
-  "description": "The portable personality. Valid on any body. The engine MUST NOT write body-specific state here — no joint trims, no calibration, no device paths.",
+  "description": "The portable personality. Valid on any body. The engine MUST NOT write body-specific state here: no joint trims, no calibration, no device paths.",
 
   "type": "object",
   "additionalProperties": false,
@@ -20,24 +20,24 @@
       "required": ["name", "wake_word", "line"],
       "properties": {
         "name": {
-          "description": "P0. What the robot is called. Free text — any name at all. Deliberately NOT the wake word.",
+          "description": "P0. What the robot is called. Free text, any name at all. Deliberately NOT the wake word.",
           "type": "string",
           "minLength": 1
         },
         "wake_word": {
-          "description": "P0. The phrase that wakes this soul. Free text: the shipped default engine is a phonetic spotter, so any phrase works given a pronunciation. Prefer three or more syllables — a wake phrase is an acoustic target, which is why it is separate from `name`. Whether a given body can hear it depends on the wake engine it installs, and is checked at boot, not here.",
+          "description": "P0. The phrase that wakes this soul. Free text: the shipped default engine is a phonetic spotter, so any phrase works given a pronunciation. Prefer three or more syllables: a wake phrase is an acoustic target, which is why it is separate from `name`. Whether a given body can hear it depends on the wake engine it installs, and is checked at boot, not here.",
           "type": "string",
           "minLength": 1
         },
         "line": {
-          "description": "P0. Which reference soul this derives from. Metadata only — the engine does not branch on it.",
+          "description": "P0. Which reference soul this derives from. Metadata only; the engine does not branch on it.",
           "enum": ["emet", "hugr", "neuma", "custom"]
         },
         "pronouns": { "type": "string" },
         "author": { "type": "string" },
         "created": { "type": "string", "format": "date" },
         "license": {
-          "description": "RSV. An SPDX licence identifier for souls published to the community registry — a soul is configuration but also prose, and a registry nobody can rely on legally is a registry nobody builds on. null is legal for a private soul.",
+          "description": "RSV. An SPDX licence identifier for souls published to the community registry: a soul is configuration but also prose, and a registry nobody can rely on legally is a registry nobody builds on. null is legal for a private soul.",
           "type": ["string", "null"]
         }
       }
@@ -79,7 +79,7 @@
           }
         },
         "drift": {
-          "description": "RSV. Behaviour arrives in release Afflatus. Fields exist now so nothing migrates later. Constraint fixed today: drift must be auditable and reversible — deltas live in an append-only table keyed to the episode that caused them, and soul.yaml is never mutated.",
+          "description": "RSV. Behaviour arrives in release Afflatus. Fields exist now so nothing migrates later. Constraint fixed today: drift must be auditable and reversible. Deltas live in an append-only table keyed to the episode that caused them, and soul.yaml is never mutated.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -170,7 +170,7 @@
     },
 
     "models": {
-      "description": "P0. BYOK — bring your own keys. Online-first: in P0 the robot fails loudly and in character when a key or the network is missing.",
+      "description": "P0. BYOK, bring your own keys. Online-first: in P0 the robot fails loudly and in character when a key or the network is missing.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

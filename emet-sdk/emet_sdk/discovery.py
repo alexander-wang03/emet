@@ -2,7 +2,7 @@
 
 Plugins are ordinary Python packages that advertise themselves through entry
 points. Nothing scans directories, nothing imports by convention, and the
-engine has no list of known drivers compiled into it — installing a package is
+engine has no list of known drivers compiled into it; installing a package is
 what makes a driver exist.
 
 Six groups:
@@ -17,7 +17,7 @@ Six groups:
 `emet.audio` exists for a reason the others do not share. The engine may import
 `emet_sdk` and nothing else, so it cannot reach into `emet_hal` for a
 microphone even though that is exactly where microphones live. Discovery is
-what carries one across the boundary — the engine asks for `microphone` and
+what carries one across the boundary: the engine asks for `microphone` and
 receives a class it never imported. Without this group the layering rule and a
 working engine are mutually exclusive.
 
@@ -35,7 +35,7 @@ detector in directly stopped waking. Here it would have been one line of a
 manifest.
 
 **Errors from this module are never schema errors.** A name that resolves to
-no installed package is a `MissingPluginError` — the document is well-formed
+no installed package is a `MissingPluginError`: the document is well-formed
 and the value is legal, the software simply is not present. Conflating that
 with a typo costs support hours, and closing the enum to avoid the ambiguity
 would make walking robots inexpressible without migrating every manifest in
@@ -252,7 +252,7 @@ def _missing(name: str, available: Iterable[str], what: str) -> Exception:
     report.error(
         "missing_plugin",
         f"no {what} provides {name!r}. Installed: {installed}. "
-        f"The value is legal — install the package that provides it, or "
+        f"The value is legal. Install the package that provides it, or "
         f"correct the name.",
     )
     return MissingPluginError(report)

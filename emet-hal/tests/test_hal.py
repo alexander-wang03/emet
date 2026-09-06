@@ -18,7 +18,7 @@ from emet_hal.differential import DifferentialDrive
 from emet_hal.mock import MockActuator, MockSensor, MockWake
 from emet_hal.tracked import TrackedDrive
 
-# r = 0.05 m, W = 0.20 m — chosen so the sums come out in round numbers.
+# r = 0.05 m, W = 0.20 m, chosen so the sums come out in round numbers.
 DRIVE_BLOCK = {
     "id": "base",
     "type": "drive",

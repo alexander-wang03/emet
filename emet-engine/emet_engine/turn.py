@@ -6,7 +6,7 @@ rude however warmly it is written, and one that waits three seconds reads as
 slow however clever the answer is.
 
 `patience_ms` is therefore a **persona trait, not engine tuning**. It lives on
-the soul, so Neuma — reflective, sparing with words — waits longer than Hugr,
+the soul, so Neuma, reflective and sparing with words, waits longer than Hugr,
 who is opinionated and interrupts. That is the whole point of putting it there:
 the same engine produces two different conversational temperaments from two
 data files.
@@ -14,7 +14,7 @@ data files.
 **On the default of 900 ms.** The numbers it trades against are measured rather
 than guessed, and they are not ours: they come from the TurnBench corpus
 analysis (Jiang et al., *TurnBench: A Multi-Domain Benchmark for Turn-Taking
-Dynamics in Spoken Dialogue*, arXiv:2608.25218, 2026 — see `CITATIONS.md`).
+Dynamics in Spoken Dialogue*, arXiv:2608.25218, 2026; see `CITATIONS.md`).
 
     floor transfer offset, median        -151 ms   (before the turn ends)
     inter-speaker gap, median             380 ms
@@ -158,7 +158,7 @@ class Endpointer:
         """The source ended mid-turn. Return whatever was captured.
 
         Always `SOURCE_ENDED`, even with nothing captured. `NO_SPEECH` means
-        something specific — the robot waited the full lead-in and nobody
+        something specific: the robot waited the full lead-in and nobody
         spoke, which is evidence of a false wake. A recording that stopped
         early is not evidence of anything, and labelling it the same way would
         make a replay look like a detector fault.

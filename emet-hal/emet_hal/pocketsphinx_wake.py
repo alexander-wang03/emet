@@ -4,15 +4,15 @@ Emet wakes on a phrase, not on a name somebody trained a model for. That is a
 deliberate reversal of how most wake word detection works, and it is what lets
 `identity.wake_word` be free text.
 
-A trained detector — openWakeWord, and Porcupine before its access keys were
-disabled on 30 June 2026 — learns one phrase from thousands of examples. It is
+A trained detector (openWakeWord, and Porcupine before its access keys were
+disabled on 30 June 2026) learns one phrase from thousands of examples. It is
 more accurate, and it means a soul can only answer to a name somebody has
 already trained. Naming your robot Barnaby would make it deaf.
 
 A phonetic spotter works the other way round. It knows how English *sounds*,
 and a phrase is a sequence of phonemes to watch for. "hey barnaby" needs no
 training at all, because `barnaby` is already in the pronunciation dictionary.
-A name that is not — `emet` is not an English word — needs one line of
+A name outside the dictionary, and `emet` is one, needs one line of
 phonemes, which is what `SHIPPED_LEXICON` below is.
 
 The tradeoff is real and worth stating plainly: this is less accurate in noise

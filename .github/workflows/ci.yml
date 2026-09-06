@@ -2,8 +2,8 @@
 #
 # Two things are checked, and the second matters more than it looks.
 #
-#   tests     — the 0.1 acceptance criteria, executable.
-#   layering  — emet_sdk imports nothing internal; emet_hal and emet_engine
+#   tests:    the 0.1 acceptance criteria, executable.
+#   layering: emet_sdk imports nothing internal; emet_hal and emet_engine
 #               import emet_sdk only.
 #
 # The layering check exists because the closed-engine plan used to enforce that
@@ -13,7 +13,7 @@ name: ci
 
 # Branch work is covered by `pull_request`; `push` only guards what lands.
 # Triggering on both for every branch ran the whole suite twice per push,
-# doubling Actions minutes — which are metered on private repositories — and
+# doubling Actions minutes, which are metered on private repositories, and
 # filling the checks list with confusing (push)/(pull_request) pairs.
 on:
   push:
@@ -88,7 +88,7 @@ jobs:
       # In a source checkout `schemas/` sits BESIDE the package; in a built
       # wheel `force-include` moves it INSIDE. An editable install keeps the
       # source layout, so every other job in this file exercises only one of
-      # those two paths — and it is the path no user of the project ever takes.
+      # those two paths, and it is the path no user of the project ever takes.
       #
       # A typo in the force-include would leave the whole suite green and break
       # the first person to run `pip install emet-sdk`. So: build a real wheel,
@@ -215,7 +215,7 @@ jobs:
         run: python -m pytest -q
 
       # Exercises the CLI against the editable install. This does NOT prove the
-      # packaged layout works — see the `wheel` job for that.
+      # packaged layout works; see the `wheel` job for that.
       - name: CLI accepts the valid examples
         working-directory: emet-sdk
         run: emet validate examples/bodiless.yaml examples/scout-01.yaml examples/emet-soul.yaml

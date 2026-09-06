@@ -2,8 +2,8 @@
 
 `MockActuator` accepts any action and records it instead of moving anything.
 That sounds like a testing convenience, and it is, but it is also the way most
-development on Emet will actually happen: the whole stack — chain resolution,
-arbitration, the choreographer, an entire conversation — can be exercised on a
+development on Emet will actually happen: the whole stack (chain resolution,
+arbitration, the choreographer, an entire conversation) can be exercised on a
 laptop with no robot attached.
 
 It matters for contributors too. Someone writing a driver for a servo board
@@ -53,7 +53,7 @@ class MockActuator(ActuatorPlugin):
     """An actuator that logs what it was asked to do and does nothing.
 
     Set `params.fail_on_start: true` to simulate hardware that is wired but
-    dead. That path is worth exercising deliberately — it is how you check
+    dead. That path is worth exercising deliberately; it is how you check
     that a chain falls through to its next rung instead of binding to
     something that will never move.
     """

@@ -1,4 +1,4 @@
-"""Emet SDK — the contract layer.
+"""Emet SDK: the contract layer.
 
 Types and contracts and almost no logic. This is the only thing the engine and
 every plugin must agree on, which is why it is small on purpose and why

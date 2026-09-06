@@ -1,4 +1,4 @@
-"""Emet HAL — the hardware abstraction layer.
+"""Emet HAL: the hardware abstraction layer.
 
 *HAL* is **hardware abstraction layer**, used in Android's sense: the
 abstraction itself lives in `emet_sdk.plugin`, and this package is the

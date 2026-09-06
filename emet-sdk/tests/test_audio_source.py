@@ -6,7 +6,7 @@ boundary the same way plugins do: the engine holds a *name* from the manifest,
 asks the registry for it, and receives a class it never imported.
 
 **Note what this file imports.** Only `emet_sdk`. Everything it exercises is
-implemented in `emet_hal`, and none of it is named here — which is exactly the
+implemented in `emet_hal`, and none of it is named here, which is exactly the
 constraint the engine works under, so these tests fail the way the engine
 would.
 """

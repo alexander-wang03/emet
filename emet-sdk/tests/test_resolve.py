@@ -2,7 +2,7 @@
 
 0.2 is done when `emet explain` prints a correct binding table for a bodiless
 manifest and for a fully-loaded one, and `kinematics: legged` still fails with
-a missing-plugin error — now from real entry-point discovery rather than a
+a missing-plugin error, now from real entry-point discovery rather than a
 hardcoded set.
 
 The tests that carry the most weight here are the ones about *falling
@@ -91,7 +91,7 @@ def test_shipped_locomotion_is_discovered():
 def test_missing_axis_falls_through_to_the_next_rung(chains):
     """scout-01's head has yaw and pitch but no roll.
 
-    express.affection wants a roll tilt first, so it must bind to the eyes —
+    express.affection wants a roll tilt first, so it must bind to the eyes,
     and the table must say why, because "my robot won't tilt affectionately"
     is otherwise an unanswerable bug report.
     """

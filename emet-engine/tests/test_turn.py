@@ -2,7 +2,7 @@
 
 Synthetic audio throughout: silence is zeroes and speech is a square wave at a
 chosen amplitude, so every threshold in these tests is an exact number rather
-than a recording somebody has to trust. That makes the failures legible — when
+than a recording somebody has to trust. That makes the failures legible: when
 one breaks it says which parameter moved, not "the audio sounds different now".
 
 The behaviours worth protecting here are the ones that read as rudeness when

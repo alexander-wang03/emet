@@ -3,7 +3,7 @@
 Outside work whose **ideas, findings, or data** shaped Emet, and what was taken
 from each.
 
-This is not a dependency list — installed packages are declared in each
+This is not a dependency list. Installed packages are declared in each
 `pyproject.toml`, and copyright notices live in [NOTICE](NOTICE). This file
 exists for the harder-to-track case: a measured result that justifies a
 default, a taxonomy that shaped a schema, a phoneme set a data file is written
@@ -11,7 +11,7 @@ in. Those leave no trace in a lockfile, and by the time somebody asks where a
 constant came from, the reasoning is usually gone.
 
 Each entry records the source, what Emet took, and **the licence of the thing
-taken** — because a non-commercially licensed corpus or a differently licensed
+taken**, because a non-commercially licensed corpus or a differently licensed
 repository is a constraint the project has to carry forward.
 
 ---
@@ -29,7 +29,7 @@ Sesame AI · Mundo AI · Carnegie Mellon University · National Taiwan Universit
 · Academia Sinica · Oto · Brno University of Technology
 
 - Project: <https://turnbench.sesame.com>
-- Scorer: <https://github.com/SesameAILabs/turnbench> — **MIT**
+- Scorer: <https://github.com/SesameAILabs/turnbench>, **MIT**
 - Corpus: **non-commercial licence, prohibits voice cloning**
 
 **What Emet took.** Three measured medians from the corpus analysis (§IV-B),
@@ -38,7 +38,7 @@ default `patience_ms`:
 
 | | |
 |---|---|
-| Floor transfer offset | −151 ms (listeners begin before the turn ends) |
+| Floor transfer offset, excluding interruptions | −151 ms (listeners begin before the turn ends) |
 | Inter-speaker gap | 380 ms |
 | Pause within one speaker's turn | 510 ms |
 
@@ -49,7 +49,7 @@ that reasoning is theirs, not ours.
 
 The paper also supplies the honest grade for what Emet currently ships: an
 RMS-energy detector is the benchmark's explicit floor. Recording that is part
-of the attribution — the finding was inconvenient, and taking the numbers while
+of the attribution: the finding was inconvenient, and taking the numbers while
 omitting the verdict would be quoting selectively.
 
 **No corpus data, model weights, or code from this work is redistributed
@@ -68,14 +68,16 @@ has not read.
 ## CMU PocketSphinx and CMUdict
 
 **Carnegie Mellon University Speech Group.** PocketSphinx.
-<https://github.com/cmusphinx/pocketsphinx> — **BSD-2-Clause (CMU)**
+<https://github.com/cmusphinx/pocketsphinx>, **BSD-2-Clause (CMU)**. The
+published wheel also carries BSD-3-Clause WebRTC VAD code (Google) and MIT
+pieces (a JSON parser, the Python VAD bindings); all permissive.
 
 The shipped wake word engine
 ([`emet_hal/pocketsphinx_wake.py`](emet-hal/emet_hal/pocketsphinx_wake.py)),
 used as a dependency rather than copied.
 
-**What is worth naming beyond the dependency**: `SHIPPED_LEXICON` — the
-pronunciations that let `emet`, `hugr` and `neuma` be heard — is written in
+**What is worth naming beyond the dependency**: `SHIPPED_LEXICON`, the
+pronunciations that let `emet`, `hugr` and `neuma` be heard, is written in
 **ARPAbet**, and is meaningful only against CMU's pronouncing dictionary, which
 supplies every other word in a wake phrase. "hey barnaby" needs no lexicon
 entry at all because CMUdict already knows the name. That property is the

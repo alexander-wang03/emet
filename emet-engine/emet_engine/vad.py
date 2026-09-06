@@ -2,8 +2,8 @@
 
 Deliberately not a plugin category. There is effectively one good answer in the
 world (Silero), it is MIT so it carries none of the rug-pull risk that made
-wake a category, and its output feeds turn-taking — `patience_ms`, the trailing
-clause — which is personality rather than hardware. A seam there would decouple
+wake a category, and its output feeds turn-taking (`patience_ms`, the trailing
+clause), which is personality rather than hardware. A seam there would decouple
 nothing. Adding a category later is a minor version bump and removing one is a
 major bump, so under uncertainty this stays a component.
 
@@ -14,7 +14,7 @@ and did not survive being checked:
   PyTorch on a Raspberry Pi to decide whether someone is speaking is not a
   trade worth making.
 * `silero-vad-lite`, the dependency-free wrapper, publishes no aarch64 Linux
-  wheel — x86_64 and macOS only — and declares no licence.
+  wheel (x86_64 Linux, macOS and Windows only) and declares no licence.
 * Running the ONNX model directly means `onnxruntime` (20.8 MB on ARM) plus a
   vendored model file.
 
@@ -30,7 +30,7 @@ which is exactly what "not a swap point" was supposed to buy.
   than any fixed threshold can span;
 * hysteresis, so one loud frame is not speech and one quiet frame is not
   silence;
-* asymmetric adaptation, because the floor should rise slowly and fall fast —
+* asymmetric adaptation, because the floor should rise slowly and fall fast:
   a fridge switching on must not be learned as speech, and a fridge switching
   off must not deafen the robot for a minute.
 """
@@ -73,7 +73,7 @@ class VadTuning:
     #: Consecutive loud frames before speech is declared. Rejects a door.
     onset_frames: int = 2
     #: Consecutive quiet frames before speech is over. At 80 ms frames this is
-    #: about a third of a second, which is roughly the gap inside a sentence —
+    #: about a third of a second, which is roughly the gap inside a sentence;
     #: shorter and the robot interrupts you mid-thought.
     hangover_frames: int = 4
     #: How fast the floor rises toward a louder room, per frame.
@@ -111,7 +111,7 @@ class EnergyVad:
 
         Exposed because the endpointer measures trailing silence from the last
         genuinely loud frame, not from when the debounced flag flipped. The
-        difference is `hangover_frames` — a third of a second that would
+        difference is `hangover_frames`, a third of a second that would
         otherwise be silently charged to the persona's `patience_ms`, making
         every soul slower than the number written in its own bundle.
         """

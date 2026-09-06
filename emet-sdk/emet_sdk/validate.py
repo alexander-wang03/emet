@@ -4,9 +4,9 @@ Two layers, deliberately kept apart:
 
 *Schema* validation answers "is this the right shape?" and is expressed in
 JSON Schema. *Semantic* validation answers "does this mean anything?" and
-lives here, because cross-field and cross-document rules — a home angle
+lives here, because cross-field and cross-document rules (a home angle
 inside its range, a capability id referenced by a camera mount, a chain that
-terminates in voice — cannot be said in JSON Schema.
+terminates in voice) cannot be said in JSON Schema.
 
 **The error taxonomy is the point of this module.** A typo in a plugin name
 and a robot that genuinely lacks a servo are different failures, and
@@ -22,8 +22,8 @@ what is installed rather than by a list compiled into the engine.
 **Validating and booting are deliberately not the same strictness.** Linting a
 manifest for hardware you have not wired yet is a normal thing to do, so an
 unrecognised driver name is a warning here by default. Booting an engine
-against that manifest is not, so `verify_drivers=True` — what `emet validate
---verify-drivers` passes, and what the engine will use — makes it an error.
+against that manifest is not, so `verify_drivers=True` (what `emet validate
+--verify-drivers` passes, and what the engine will use) makes it an error.
 `kinematics` is always strict: a body that cannot move the way it claims is a
 different class of problem from one missing an LED driver.
 """
@@ -70,7 +70,7 @@ Severity = Literal["error", "warning"]
 
 
 #: What `emet-hal` ships. Kept for documentation and for tests that must not
-#: depend on what happens to be installed — it is NOT what the validator checks
+#: depend on what happens to be installed. It is NOT what the validator checks
 #: against. `drive.kinematics` is an open enum resolved against real entry
 #: points, so a third-party `legged` package is as valid as anything here.
 BUILTIN_LOCOMOTION: frozenset[str] = frozenset({"differential", "tracked"})
@@ -185,7 +185,7 @@ class MissingPluginError(ValidationError):
 
     Its own type because it is emphatically *not* a schema error: the document
     is well-formed and the value is legal, the software just is not present.
-    Never silently degrade because of this — that is a different failure from
+    Never silently degrade because of this; it is a different failure from
     missing hardware.
     """
 
@@ -290,7 +290,7 @@ def _check_wake_engine(
 ) -> None:
     """Resolve `audio.wake.engine`, the way `drive.kinematics` resolves.
 
-    Absent is fine — a manifest that says nothing about wake takes the default,
+    Absent is fine: a manifest that says nothing about wake takes the default,
     and most will.
 
     Unconditional, unlike the `driver.plugin` check a few lines up, and the
@@ -302,8 +302,8 @@ def _check_wake_engine(
     anything: there is no half-built state in which a body moves by a
     kinematics nobody wrote, or wakes to a detector nobody installed.
 
-    Wake has the stronger claim of the two. Every other missing piece degrades
-    — a chain that cannot find a head falls through to a light ring. A robot
+    Wake has the stronger claim of the two. Every other missing piece degrades:
+    a chain that cannot find a head falls through to a light ring. A robot
     that cannot hear its own name has no next rung, so this is the last place
     a soft warning would be a kindness. It is also not hypothetical: Picovoice
     disabled every free Porcupine access key on 30 June 2026, and a manifest
@@ -316,7 +316,7 @@ def _check_wake_engine(
     report.error(
         "missing_plugin",
         f"no wake word plugin provides {engine!r}. Installed: {installed}. "
-        f"`audio.wake.engine` is an open enum — this value is legal, the "
+        f"`audio.wake.engine` is an open enum: this value is legal, the "
         f"plugin simply is not installed. Unlike a missing driver this is an "
         f"error rather than a warning, because a robot that cannot hear its "
         f"own name has nothing to fall back to.",
@@ -346,7 +346,7 @@ def _check_audio_source(
     report.error(
         "missing_plugin",
         f"no audio source provides {source!r}. Installed: {installed}. "
-        f"`audio.input.source` is an open enum — this value is legal, the "
+        f"`audio.input.source` is an open enum: this value is legal, the "
         f"plugin simply is not installed. Omit it entirely for a live "
         f"microphone, which is the default.",
         "/audio/input/source",
@@ -362,7 +362,7 @@ def _check_audio_sink(
 
     Unconditional, for the same reason: it names an implementation that has to
     exist. A body that cannot play audio has no voice rung, and every fallback
-    chain in Emet terminates in one — so this failing quietly would hollow out
+    chain in Emet terminates in one, so this failing quietly would hollow out
     the guarantee the whole abstraction rests on.
     """
     sink = ((doc.get("audio") or {}).get("output") or {}).get("sink")
@@ -372,7 +372,7 @@ def _check_audio_sink(
     report.error(
         "missing_plugin",
         f"no audio sink provides {sink!r}. Installed: {installed}. "
-        f"`audio.output.sink` is an open enum — this value is legal, the "
+        f"`audio.output.sink` is an open enum: this value is legal, the "
         f"plugin simply is not installed. Omit it entirely for a real speaker, "
         f"which is the default.",
         "/audio/output/sink",
@@ -471,7 +471,7 @@ def _check_plugins(
                     report.error(
                         "missing_plugin",
                         f"driver plugin {plugin!r} is not installed. Install the "
-                        f"package that provides it, or correct the name — a typo "
+                        f"package that provides it, or correct the name. A typo "
                         f"here is a different failure from missing hardware.",
                         f"/capabilities/{i}/driver/plugin",
                     )
@@ -485,7 +485,7 @@ def _check_plugins(
                     "missing_plugin",
                     f"no locomotion plugin provides {kinematics!r}. "
                     f"Installed: {', '.join(registry.locomotion_names) or '(none)'}. "
-                    f"`kinematics` is an open enum — this value is legal, the "
+                    f"`kinematics` is an open enum: this value is legal, the "
                     f"plugin simply is not installed.",
                     f"/capabilities/{i}/kinematics",
                 )
@@ -496,8 +496,8 @@ def _check_plugins(
         report.warn(
             "driver_not_installed",
             f"{len(unverified)} driver plugin(s) named here are not installed "
-            f"({', '.join(unverified)}). Legal in a manifest — describing hardware "
-            f"you have not wired yet is normal — but the engine will refuse to "
+            f"({', '.join(unverified)}). Legal in a manifest, since describing hardware "
+            f"you have not wired yet is normal, but the engine will refuse to "
             f"boot against it. Run with --verify-drivers to treat this as an error.",
             "/capabilities",
         )
@@ -513,7 +513,7 @@ def validate_soul(doc: Any) -> ValidationReport:
 
     Note what is *not* checked here. `identity.wake_word` is free text, and
     whether it can actually be heard depends on which engine a given body
-    installs — which this document does not know and must not care about.
+    installs, which this document does not know and must not care about.
     That check is a boot-time one against a live `WakeDescriptor`, and putting
     it here would have made a soul valid or invalid depending on the machine
     it was linted on.
@@ -599,8 +599,8 @@ def validate_motion_pack(doc: Any) -> ValidationReport:
 def validate_chain_document(doc: Any) -> ValidationReport:
     """Validate a chain file, including the terminal-voice-rung rule.
 
-    This is the mechanical enforcement of principle 2 — every intent is always
-    satisfiable — and it is the reason the SDK rejects chains at all.
+    This is the mechanical enforcement of principle 2 (every intent is always
+    satisfiable) and it is the reason the SDK rejects chains at all.
     """
     report = ValidationReport()
 

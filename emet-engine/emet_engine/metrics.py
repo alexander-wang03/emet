@@ -1,7 +1,7 @@
 """Measuring whether the loop keeps up.
 
 0.3 is not done when it works once. The acceptance bar is ten minutes without
-drift, and "without drift" is not something you can watch for — it is a number
+drift, and "without drift" is not something you can watch for. It is a number
 or it is a feeling. This module makes it a number.
 
 **The one that decides everything is the real-time factor**: processing time
@@ -9,7 +9,7 @@ divided by the audio it processed. Audio arrives at a fixed rate whatever the
 CPU is doing, so at an RTF of 1.0 the loop is exactly keeping up and has no
 margin; above 1.0 it is falling behind and frames are being dropped somewhere.
 This is the number that will decide whether a Raspberry Pi can run Emet at all,
-and it cannot be guessed from a laptop — but it can be *compared*, which is why
+and it cannot be guessed from a laptop. It can be *compared*, though, which is why
 it is worth recording on both.
 
 **Frames over budget matters more than the average.** A loop averaging 20 ms
@@ -19,7 +19,7 @@ exactly the failure that people notice, so this counts the overruns
 separately.
 
 **Drift means two different things and only one is measurable offline.**
-Processing drift — the loop failing to keep pace — shows up in the RTF and can
+Processing drift, the loop failing to keep pace, shows up in the RTF and can
 be measured against a file. Clock drift, where the sound card's idea of a
 second and the system's slowly diverge, only appears with real hardware. This
 module reports the first honestly and refuses to invent the second: for a file
@@ -137,7 +137,7 @@ class SessionStats:
         """Whether this run is evidence the loop is viable here.
 
         Three conditions, and all of them matter. Nothing was dropped, no frame
-        blew the budget, and there is real margin rather than a bare pass — a
+        blew the budget, and there is real margin rather than a bare pass. A
         run at 0.99 kept up on a quiet machine and will not on a busy one.
         """
         return self.dropped == 0 and self.over_budget == 0 and self.realtime_factor < 0.5

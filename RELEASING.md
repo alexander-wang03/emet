@@ -6,7 +6,7 @@ Each item is here because something went wrong without it, and the note under
 each says what. A checklist of plausible-sounding good practice gets skipped;
 one where every line has a scar does not.
 
-Run the mechanical half first — it is fast and it fails loudly:
+Run the mechanical half first. It is fast and it fails loudly:
 
 ```sh
 python tools/check_layering.py .
@@ -22,7 +22,7 @@ Everything below is what a script cannot check.
 **Open the roadmap. Copy the release's scope sentence. Tick each noun in it
 against a file and a test.**
 
-Not from memory. Read the written scope and check the items off one at a time,
+Read the written scope from the file and check the items off one at a time,
 even the ones you are certain about.
 
 > **The scar.** 0.3's scope read "Audio **in/out**, wake word, VAD,
@@ -43,7 +43,7 @@ The roadmap states a gate per release, phrased as an observable outcome. Answer
 it literally, not approximately.
 
 > **The scar.** 0.3's gate is "...for ten minutes without drift." Drift was
-> unmeasurable — nothing timed anything — so the claim would have been a
+> unmeasurable, since nothing timed anything, so the claim would have been a
 > feeling. `--stats` exists because a criterion you cannot produce a number for
 > is one you cannot honestly sign off.
 
@@ -52,13 +52,13 @@ reason to soften the criterion. It is the reason to stop and go get it.
 
 ## 3. Check every deferred decision
 
-**List every "not now, but when X" from this cycle. For each, has X happened?**
+**List every "later, when X" from this cycle. For each, has X happened?**
 
 Deferrals are made in conversation and lost there. Write them down as they are
 made, with the trigger, wherever you plan the release.
 
 > **The scar.** The version number lived in six places across three packages.
-> It was deferred twice with the trigger "the 0.3 release PR" — and when that
+> It was deferred twice with the trigger "the 0.3 release PR", and when that
 > PR arrived, the trigger only fired because somebody remembered. By then the
 > installed metadata said 0.1.0 while the source said 0.2.0.
 
@@ -102,7 +102,7 @@ release notes say so.
 `tools/release_check.py` catches the obvious ones. It cannot catch a paragraph
 that is merely out of date, so re-read:
 
-- `README.md` — the status section, and any sample output
+- `README.md`: the status section, and any sample output
 - each package `README.md`
 - `emet_hal/__init__.py` and friends, which list what ships
 - `CITATIONS.md`, if anything was taken from a paper or a repository
@@ -111,7 +111,7 @@ that is merely out of date, so re-read:
 ## 8. Tag
 
 - The version is bumped in all three `pyproject.toml` files and **nowhere
-  else** — `release_check.py` enforces this.
+  else**. `release_check.py` enforces this.
 - The tag message is written. Commits stay short; the tag carries the detail.
 - Every commit in the release is signed off, or the DCO check fails the PR.
 
@@ -121,7 +121,7 @@ that is merely out of date, so re-read:
 
 Every scar above is the same mistake: **checking work against a memory of the
 requirement instead of the requirement.** Memory summarises, and summaries drop
-the item you were least involved with — which is reliably the one that is
+the item you were least involved with, which is reliably the one that is
 missing.
 
 Hence the shape of this list. Open the file. Copy the sentence. Tick the nouns.

@@ -1,4 +1,4 @@
-"""`emet-listen` — bring a body up and print what it hears.
+"""`emet-listen`: bring a body up and print what it hears.
 
 The 0.3 milestone in one command. It does not understand anything yet: it
 brings up a microphone and a wake detector, and says so each time the robot

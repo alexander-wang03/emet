@@ -57,7 +57,7 @@ def body(
 
     `sink="null"` is not incidental. The default is a real speaker, so a test
     body that said nothing about output would open whatever is plugged into the
-    machine running the suite — which fails on a headless CI runner and is rude
+    machine running the suite, which fails on a headless CI runner and is rude
     on a laptop. Tests state where their audio goes.
     """
     return {

@@ -42,8 +42,8 @@ class Priority(IntEnum):
     """Arbitration order. Highest wins; ties break by recency.
 
     P0 is one intent per actuator: a higher-priority intent preempts, and the
-    lower one is dropped rather than queued. Per-actuator blending — expressing
-    curiosity with the eyes *while* attending with the head — is V1.
+    lower one is dropped rather than queued. Per-actuator blending (expressing
+    curiosity with the eyes *while* attending with the head) is V1.
     """
 
     SAFETY = 100      # thermal, estop, joint limit, brownout recovery
@@ -138,7 +138,7 @@ class Twist:
     """A desired velocity, handed to a locomotion plugin.
 
     The engine says how fast to go and how fast to turn. Everything below this
-    line — wheel arithmetic, gait phase, balance — belongs to the plugin.
+    line (wheel arithmetic, gait phase, balance) belongs to the plugin.
     """
 
     linear_mps: float = 0.0
@@ -189,7 +189,7 @@ class LocomotionDescriptor:
 class WakeDescriptor:
     """What a wake word engine can actually hear, reported after `start()`.
 
-    No chain binds against this, because there is no wake chain — but the boot
+    No chain binds against this, because there is no wake chain, but the boot
     check does. A soul asking for a phrase this instance cannot detect is a
     robot that will never answer to its own name, and unlike a missing head
     there is nothing to degrade to. That has to fail at boot, loudly.
@@ -267,7 +267,7 @@ class AudioSource(Protocol):
 
     Here rather than in `emet_hal` because it is the seam the engine sees. The
     engine may import `emet_sdk` and nothing else, so a microphone reaches it
-    as this Protocol and never as a concrete class — which is the same reason
+    as this Protocol and never as a concrete class, which is the same reason
     a servo reaches it as `ActuatorPlugin`. Put this type in the HAL and the
     engine cannot describe its own input.
 
@@ -346,7 +346,7 @@ class Reading:
     """One typed observation from a sensor.
 
     Sensors invert the flow of the rest of the system: the engine polls them
-    and consumes what comes back. A sensor never emits an intent — deciding
+    and consumes what comes back. A sensor never emits an intent: deciding
     what an observation *means* is the engine's job, and letting hardware
     push intents would put a driver author in charge of the personality.
     """
@@ -361,7 +361,7 @@ class Sensitivity(IntEnum):
     """Memory disclosure levels.
 
     OPEN and PERSONAL are left to the character's judgement. PRIVATE and
-    SEALED are enforced in the retrieval query — the soul never receives them,
+    SEALED are enforced in the retrieval query: the soul never receives them,
     so it cannot disclose them regardless of what it is talked into. A hard
     floor on the catastrophic cases, personality everywhere above it.
     """

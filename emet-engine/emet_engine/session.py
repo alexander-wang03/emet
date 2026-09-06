@@ -11,8 +11,8 @@ forbids the import and an engine that needs a microphone can both be true.
 
 **Order matters at start-up, and not the obvious way round.** The detector is
 brought up first and asked what audio it needs, and the source is then
-configured to match. Doing it the other way — opening the microphone at
-whatever rate the manifest mentions and hoping the detector agrees — is how a
+configured to match. Doing it the other way, opening the microphone at
+whatever rate the manifest mentions and hoping the detector agrees, is how a
 robot ends up running perfectly and hearing nothing, because feeding 48 kHz
 audio to a 16 kHz model does not raise anything. It just stops working.
 

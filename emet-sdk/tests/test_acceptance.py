@@ -5,7 +5,7 @@ manifests, rejects a chain whose final rung is not a voice rung, and rejects
 `kinematics: legged` with a *missing plugin* error rather than a schema error.
 
 The last two tests in this file are the ones that matter most: they are the
-evidence for claims the whole design rests on — that principle 2 is enforced
+evidence for claims the whole design rests on: that principle 2 is enforced
 mechanically, and that reserving schema now really is free later.
 """
 
@@ -90,7 +90,7 @@ def test_a_soul_may_answer_to_any_phrase():
     names could be heard and `wake_word: barnaby` was an error. The shipped
     default is a phonetic keyword spotter, which takes any phrase and a
     pronunciation. The field is free text, and whether a particular engine can
-    hear a particular phrase is answered at boot against a live descriptor —
+    hear a particular phrase is answered at boot against a live descriptor,
     not by a list in the validator, which would make a soul valid or invalid
     depending on which machine linted it.
     """
@@ -147,7 +147,7 @@ def test_chain_without_voice_rung_is_rejected():
 
     Every intent is always satisfiable because every chain terminates in a
     rung that cannot fail to bind. Nothing in the engine checks this at
-    runtime — it cannot get past the validator.
+    runtime; it cannot get past the validator.
     """
     report = validate_chain_document(
         load_yaml(EXAMPLES / "invalid" / "unterminated-chain.yaml")
@@ -210,7 +210,7 @@ def test_reserved_intents_are_legal_to_emit():
     """A soul written today may reach for an intent that lands in 2033.
 
     Because the vocabulary is closed, an unreserved name would make the whole
-    bundle *invalid* rather than merely ineffective — and bundles are the
+    bundle *invalid* rather than merely ineffective, and bundles are the
     artifact strangers publish and keep for years.
     """
     for kind in ("manipulate", "navigate", "gesture", "attend_joint"):

@@ -26,10 +26,10 @@ under Apache 2.0.
 
 Most contributors should never have to remember the flag:
 
-- **Editing on github.com** — nothing to do. Web commits are signed off for you.
-- **VS Code** — nothing to do. This repository ships a `.vscode/settings.json`
+- **Editing on github.com**: nothing to do. Web commits are signed off for you.
+- **VS Code**: nothing to do. This repository ships a `.vscode/settings.json`
   that turns on `git.alwaysSignOff`, and the built-in Git UI honours it.
-- **Command line** — use `git commit -s`. If you forget, fix it afterwards
+- **Command line**: use `git commit -s`. If you forget, fix it afterwards
   rather than redoing the work:
 
   ```sh
@@ -69,8 +69,8 @@ is the load-bearing one, and it is worth knowing which mechanism provides it.
 
 ## What is open to contribution, and what is not
 
-Not everything in this repository is equally safe to change, because not
-everything is equally cheap to get wrong.
+Some parts of this repository are safer to change than others, because some
+are cheaper to get wrong.
 
 **Welcome, and the reason the project is open:**
 
@@ -99,6 +99,14 @@ The ordering is by *reversibility*, not importance. A driver that
 turns out to be wrong is reverted in a minute. A schema field that turns out to
 be wrong is with us for years.
 
+## Installing plugins
+
+A plugin is ordinary Python loaded in-process. Installing a third-party plugin
+runs that person's code on your robot with full access to everything the robot
+has: the microphone, the memory file, the motors. There is no sandbox yet, and
+[SECURITY.md](SECURITY.md) says so. Until a reviewed, signed registry exists,
+install plugins from people you trust.
+
 ## Ground rules that are not negotiable
 
 These are design invariants, not preferences. A change that breaks one is
@@ -110,7 +118,7 @@ wrong even if it works:
    this. It is what makes "every intent is always satisfiable" mechanical
    rather than aspirational.
 3. **`emet_sdk` imports nothing internal.** `emet_hal` and `emet_engine` import
-   `emet_sdk` only. CI checks this on every push.
+   `emet_sdk` only. CI checks this on every pull request.
 4. **Memory is never namespaced by body.** Experiences travel with the soul;
    hardware conditions stay with the body.
 5. **A missing plugin is not a schema error.** Keep the two failure modes
@@ -123,7 +131,7 @@ a pull request: that conversation is usually more interesting than the patch.
 ## Citing outside work
 
 If a change takes something from a paper, a repository, a dataset, or anyone
-else's writing, credit it **in this repository** — a citation at the point of
+else's writing, credit it **in this repository**: a citation at the point of
 use and an entry in [CITATIONS.md](CITATIONS.md).
 
 **Ideas count, not only copied code.** Using a paper's measurement to choose a
@@ -144,7 +152,7 @@ This is partly courtesy and partly self-defence. Emet is Apache 2.0 and wants
 to stay cleanly licensed, and an uncredited borrowing is much harder to
 untangle a year later when nobody remembers where the number came from.
 
-Ordinary dependencies do not belong here — declare those in the relevant
+Ordinary dependencies do not belong here. Declare those in the relevant
 `pyproject.toml`. This file is for what a lockfile cannot record.
 
 ## Releasing
@@ -163,20 +171,28 @@ Both run in CI, so they cannot quietly stop working.
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]"
+.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-engine[dev]"
+.venv/bin/pip install -e "emet-hal[audio,wake]"   # optional: microphone, speaker, wake engine
 ```
 
-Install **both** packages even if you are only touching one. Plugin discovery
-reads entry points, so several SDK tests are meaningless unless something is
-registered to be discovered.
+Install **all three** packages even if you are only touching one. Plugin
+discovery reads entry points, so several SDK and engine tests are meaningless
+unless something is registered to be discovered. The suites pass with the
+optional extras absent; the tests that need them skip.
 
 Before opening a PR, run what CI runs:
 
 ```sh
 python tools/check_layering.py .
+python tools/release_check.py .
 cd emet-sdk && python -m pytest -q
 cd ../emet-hal && python -m pytest -q
+cd ../emet-engine && python -m pytest -q
 ```
+
+CI also builds the three wheels and installs them outside the source tree, so a
+packaging mistake that an editable install hides still fails the pipeline. The
+exact steps are in `.github/workflows/ci.yml`.
 
 To see what your driver actually binds to, without a robot:
 

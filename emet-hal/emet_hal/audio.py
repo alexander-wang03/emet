@@ -5,7 +5,7 @@ audio actually works. This module is what makes that true, and it is the one
 piece of hardware a body cannot decline to have.
 
 **Why this is not a plugin category.** Wake is one because engines get
-discontinued — Picovoice disabled every free Porcupine access key on 30 June
+discontinued: Picovoice disabled every free Porcupine access key on 30 June
 2026. Audio devices do not work that way: PortAudio already abstracts ALSA,
 WASAPI, and CoreAudio behind one interface, so the swap point that would
 justify a category is already inside the dependency. `AudioSource` is a plain
@@ -13,8 +13,8 @@ Protocol instead, which is enough for a wav file to stand in for a microphone
 without anything above noticing.
 
 **On sample rates, which are the thing that will bite you.** The wake engine
-needs 16 kHz mono. Almost no sound card runs at 16 kHz — they run at 44.1 or
-48 — so something must convert. Who does the converting is not uniform:
+needs 16 kHz mono. Almost no sound card runs at 16 kHz; they run at 44.1 or
+48, so something must convert. Who does the converting varies:
 
 * On Linux, an ALSA `plughw:` device converts for you. That is precisely what
   the `plug` layer is for, and it is why the manifests in this repository say
@@ -168,7 +168,7 @@ def resolve_device(spec: str | int | None, *, want_input: bool) -> int | None:
     if ":" in text or text.startswith(("hw", "plughw")):
         hint = (
             f"\n{text!r} is an ALSA name, so this manifest was written for a Linux "
-            f"body. That is not a mistake in the manifest — it is the wrong machine "
+            f"body. The manifest is fine; this is the wrong machine "
             f"for it. Set the device to one below, or run this on the body it "
             f"describes."
         )
@@ -309,7 +309,7 @@ class MicrophoneSource:
     PortAudio calls back on its own thread; frames cross into asyncio through a
     bounded queue. When the consumer falls behind the oldest frame is dropped
     and counted, because the alternative is an ever-growing backlog and a robot
-    that answers a question from a minute ago. `dropped` is not decoration —
+    that answers a question from a minute ago. `dropped` matters:
     a non-zero value means wake words were missed, and the engine should say so
     rather than let it pass as bad luck.
     """
@@ -487,7 +487,7 @@ class WavSink:
 class NullSink:
     """Accepts audio and discards it, counting what it was given.
 
-    Not only for tests, though it is essential there — a suite that plays sound
+    Useful beyond tests, though essential there: a suite that plays sound
     through whatever happens to be plugged in is as rude as one that records.
     It is also how you run the loop on a laptop at midnight, and how a body
     with no speaker attached still satisfies the contract that every chain
