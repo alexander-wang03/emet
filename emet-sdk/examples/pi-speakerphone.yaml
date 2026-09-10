@@ -1,0 +1,69 @@
+# The reference body for the 0.3 hardware run: a Raspberry Pi 5 with a USB
+# microphone and a USB speaker, and nothing else. Structurally the same body
+# as `bodiless.yaml`. The differences are the audio block, which names real
+# devices and the shipped wake engine, and the honest `aec: none`, because a
+# separate USB microphone and USB speaker cancel nothing.
+#
+# `device` is matched against the names PortAudio reports, exactly or as a
+# case-insensitive substring. List them on the body with:
+#
+#     PA_ALSA_PLUGHW=1 python -m sounddevice
+#
+# `emet-hal` sets that variable itself on Linux before PortAudio starts, so
+# cards open through ALSA's `plug` layer, which converts sample rates, and are
+# listed as "(plughw:1,0)" rather than "(hw:1,0)". Setting it on the command
+# line above makes the listing match what `emet-listen` sees. "USB" is enough
+# here when one USB device captures and one plays; if it matches more than one
+# device, `emet-listen` lists the candidates and stops. A card number from the
+# listing, such as `plughw:1,0`, is the precise alternative.
+#
+# If a card still refuses 16 kHz, define a plug device in `~/.asoundrc`:
+#
+#     pcm.emet_mic { type plug; slave.pcm "hw:1,0" }
+#
+# PortAudio lists custom pcm entries by name, so `device: emet_mic` then works.
+#
+# Validating this manifest together with the reference soul (`--pair`) fails on
+# purpose: `emet-soul.yaml` enables barge-in, which needs echo cancellation this
+# body does not have. Barge-in is 1.0 work and the 0.3 listen loop ignores it.
+
+manifest_version: "0.1"
+
+body:
+  id: pi_speakerphone
+  name: "a Raspberry Pi with a USB microphone and speaker"
+  scale: desk
+  power: plugged_in
+  description: >
+    A bare single-board computer on a desk with a microphone and a speaker
+    plugged into it. No moving parts, no lights, no screen.
+
+compute:
+  platform: raspberrypi5
+  ram_gb: 8
+  accelerator: none
+
+audio:
+  input:
+    device: "USB"
+    sample_rate: 16000
+    channels: 1
+    aec: none
+    doa: false
+  output:
+    device: "USB"
+    gain_db: -6.0
+    # Playback runs at this rate except under `--echo`, which plays captured
+    # 16 kHz audio and switches the sink to 16 kHz for that run. 48 kHz is
+    # what nearly every USB DAC does natively, so a `--stats` run never waits
+    # on a rate the card refuses.
+    sample_rate: 48000
+  wake:
+    engine: pocketsphinx
+
+capabilities: []
+
+safety:
+  estop_gpio: null
+  max_continuous_motion_s: 30
+  thermal_throttle_c: 75

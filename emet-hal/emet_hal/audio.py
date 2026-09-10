@@ -18,7 +18,10 @@ needs 16 kHz mono. Almost no sound card runs at 16 kHz; they run at 44.1 or
 
 * On Linux, an ALSA `plughw:` device converts for you. That is precisely what
   the `plug` layer is for, and it is why the manifests in this repository say
-  `plughw:1,0` rather than `hw:1,0`.
+  `plughw:1,0` rather than `hw:1,0`. PortAudio lists and opens cards as `hw:`
+  unless `PA_ALSA_PLUGHW=1` is in its environment when it starts, so `_sd()`
+  below sets that on Linux before the first import. Cards are then listed as
+  "(plughw:1,0)", which is also what makes those manifest names resolve.
 * On Windows, shared-mode host APIs (MME, DirectSound, WASAPI) convert, and
   exclusive-mode WDM-KS refuses anything but the native rate.
 
@@ -33,6 +36,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 import wave
 from array import array
 from dataclasses import dataclass
@@ -82,6 +87,17 @@ class Device:
 
 
 def _sd() -> Any:
+    # PortAudio's ALSA backend lists and opens each card as `hw:`, which
+    # converts nothing, so a 48 kHz microphone refuses the detector's 16 kHz.
+    # With PA_ALSA_PLUGHW=1 in its environment at initialisation it uses
+    # `plughw:` throughout: ALSA's plug layer converts, and the names it
+    # reports become "(plughw:1,0)", which is what the manifests in this
+    # repository say. It has to be set before the first import, because
+    # sounddevice initialises PortAudio on import. An explicit value already
+    # in the environment wins. (PortAudio, src/hostapi/alsa/pa_linux_alsa.c,
+    # BuildDeviceList.)
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("PA_ALSA_PLUGHW", "1")
     try:
         import sounddevice
     except ImportError as exc:  # pragma: no cover - depends on the environment

@@ -103,26 +103,42 @@ async def _run(args: argparse.Namespace) -> int:
         print("  (ctrl-c to stop)\n" if not args.replay else "")
 
         heard = 0
-        async for event, utterance in session.turns():
-            heard += 1
-            print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
-            if utterance.had_speech:
-                # 0.4 hands this audio to speech recognition. Until then the
-                # useful thing to show is that the turn was bounded correctly.
-                print(
-                    f"    then {utterance.duration_ms / 1000:.1f}s of speech, "
-                    f"ended on {utterance.reason.value}"
-                )
-                if args.echo:
-                    await session.say(utterance.audio)
-                    print("    played it back")
-            elif utterance.reason is EndReason.SOURCE_ENDED:
-                print("    the recording ended before anything followed.")
-            else:
-                print("    then nothing. probably a false wake.")
+        interrupted = False
+        try:
+            async for event, utterance in session.turns():
+                heard += 1
+                print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
+                if utterance.had_speech:
+                    # 0.4 hands this audio to speech recognition. Until then
+                    # the useful thing to show is that the turn was bounded
+                    # correctly.
+                    print(
+                        f"    then {utterance.duration_ms / 1000:.1f}s of speech, "
+                        f"ended on {utterance.reason.value}"
+                    )
+                    if args.echo:
+                        await session.say(utterance.audio)
+                        print("    played it back")
+                elif utterance.reason is EndReason.SOURCE_ENDED:
+                    print("    the recording ended before anything followed.")
+                else:
+                    print("    then nothing. probably a false wake.")
+        except asyncio.CancelledError:
+            # Ctrl-C. `asyncio.run` answers SIGINT by cancelling this task, and
+            # a microphone never ends on its own, so this is how every live
+            # run finishes. The numbers gathered so far are the reason the run
+            # happened, so they are reported rather than lost. A task that
+            # handles its own cancellation uncancels itself, which is what
+            # lets the session shut down cleanly below.
+            interrupted = True
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
 
-        # Only reached when the source ends, which means a replay finished.
-        print(f"\nsource ended. heard it {heard} time(s).")
+        if interrupted:
+            print(f"\nstopped. heard it {heard} time(s).")
+        else:
+            print(f"\nsource ended. heard it {heard} time(s).")
         _finish(session, args)
     return 0
 

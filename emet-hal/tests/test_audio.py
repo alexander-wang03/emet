@@ -15,6 +15,9 @@ binary blobs whose provenance nobody can check.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
+import types
 import wave
 from pathlib import Path
 
@@ -421,3 +424,54 @@ def test_output_defaults_to_a_synthesis_rate_not_the_input_rate():
     like a telephone, and the two directions have no reason to agree."""
     assert NullSink().format.sample_rate == 22050
     assert AudioFormat().sample_rate == 16000
+
+
+# --------------------------------------------------------------------------
+# PortAudio configuration
+# --------------------------------------------------------------------------
+
+
+def _fake_sounddevice(monkeypatch):
+    """Stand in for the real module so `_sd()` returns without touching
+    PortAudio, and so these tests pass with the `audio` extra absent."""
+    monkeypatch.setitem(sys.modules, "sounddevice", types.ModuleType("sounddevice"))
+
+
+def _unset(monkeypatch, name):
+    """Remove `name` from the environment for this test, restoring the
+    original state afterwards even when it was absent to begin with."""
+    monkeypatch.setenv(name, "placeholder")
+    monkeypatch.delenv(name)
+
+
+def test_on_linux_portaudio_is_told_to_use_plughw(monkeypatch):
+    """`hw:` devices convert nothing, so a 48 kHz card refuses 16 kHz. The HAL
+    asks PortAudio for `plughw:` before it starts, which also makes the
+    `plughw:1,0` names in the manifests match what PortAudio lists."""
+    from emet_hal import audio as audio_module
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    _unset(monkeypatch, "PA_ALSA_PLUGHW")
+    _fake_sounddevice(monkeypatch)
+    audio_module._sd()
+    assert os.environ["PA_ALSA_PLUGHW"] == "1"
+
+
+def test_an_explicit_plughw_setting_is_respected(monkeypatch):
+    from emet_hal import audio as audio_module
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("PA_ALSA_PLUGHW", "0")
+    _fake_sounddevice(monkeypatch)
+    audio_module._sd()
+    assert os.environ["PA_ALSA_PLUGHW"] == "0"
+
+
+def test_off_linux_the_environment_is_left_alone(monkeypatch):
+    from emet_hal import audio as audio_module
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    _unset(monkeypatch, "PA_ALSA_PLUGHW")
+    _fake_sounddevice(monkeypatch)
+    audio_module._sd()
+    assert "PA_ALSA_PLUGHW" not in os.environ
