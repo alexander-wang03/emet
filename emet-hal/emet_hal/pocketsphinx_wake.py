@@ -22,13 +22,13 @@ because wake is an open plugin category, installing one is a one-line change.
 
 **On warm-up.** The decoder is least sensitive in the seconds after it starts,
 before its cepstral mean has adapted. That is a real property, not a bug, and
-it is why `DEFAULT_THRESHOLD` is set from cold-start measurements rather than
-from a decoder that has been running comfortably for a minute.
+it is why `DEFAULT_THRESHOLD` is chosen with the cold end in view: a value
+that looks stricter on a warm recording costs wakes at boot.
 
 **On confidence.** Keyword spotting reports no calibrated score, so every
 `WakeEvent` from this engine carries `confidence=1.0`. That is honesty about
 the absence of a number rather than a claim of certainty. Tune
-`params.threshold` instead: lower is stricter.
+`params.threshold` instead: higher is stricter, lower fires more easily.
 """
 
 from __future__ import annotations
@@ -49,8 +49,10 @@ log = logging.getLogger("emet_hal.pocketsphinx")
 SAMPLE_RATE = 16000
 FRAME_SAMPLES = 1280
 
-#: Keyword spotting threshold. Lower is stricter: fewer false wakes, more
-#: missed ones.
+#: Keyword spotting threshold. Higher is stricter: fewer false wakes, more
+#: missed ones. Lower fires more easily. pocketsphinx reports a keyphrase
+#: when its score beats the background by at least log(threshold), so a
+#: smaller number is an easier bar to clear (kws_search.c).
 #:
 #: This value was measured rather than guessed, and the measurement had a
 #: wrinkle worth recording. pocketsphinx adapts its cepstral mean as audio
@@ -62,10 +64,26 @@ FRAME_SAMPLES = 1280
 #:     1e-25       clean               clean
 #:     1e-30       clean               false-fires
 #:
-#: 1e-25 is the only value clean at both ends, which is why it is the default.
-#: Measured over four phrases against six synthesised clips, so it is a
-#: defensible starting point and not a figure from a real room.
-DEFAULT_THRESHOLD = 1e-25
+#: 1e-25 was the only value clean at both ends of that table. It was measured
+#: over four phrases against six synthesised clips, and a real room then
+#: overturned it. A ten-minute recording on the reference body (Raspberry Pi 5,
+#: USB microphone, one voice, one room, 2026-09-10) holds 49 wake phrases and
+#: 9 decoys: six near-miss names ("hey emma", "hey Emily", "hey, met any"),
+#: three plain sentences with no name in them ("a mess of cables", "meant to").
+#: Replayed with the decoder warm:
+#:
+#:     threshold   wakes heard    decoys that fired
+#:     1e-25       49 of 49       8 of 9, including all three plain sentences
+#:     1e-22       48 of 49       3 of 9, all near-miss names
+#:     1e-20       48 of 49       3 of 9, the same three
+#:     1e-15       44 of 49       1 of 9
+#:
+#: 1e-22 is the default: it stops a robot waking on ordinary sentences at the
+#: cost of one wake in forty-nine, and it sits nearer the value the cold table
+#: cleared than 1e-20 does. Near-miss names fire at every threshold that keeps
+#: recall; that is the floor of a phonetic spotter with a two-syllable name,
+#: and the reason a trained model is the upgrade rather than a tweak here.
+DEFAULT_THRESHOLD = 1e-22
 
 #: Pronunciations for names that are not English words, in ARPAbet, which is
 #: what the bundled dictionary uses. Multiple entries per name are alternate
@@ -88,7 +106,7 @@ class PocketSphinxWake(WakePlugin):
 
     Params, all optional:
 
-        threshold   float, default DEFAULT_THRESHOLD. Lower is stricter.
+        threshold   float, default DEFAULT_THRESHOLD. Higher is stricter.
         lexicon     word -> pronunciation, or word -> [pronunciations].
                     Merged over SHIPPED_LEXICON, so a body can override a
                     shipped name or teach the engine an entirely new one.

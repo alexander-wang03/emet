@@ -127,9 +127,9 @@ def test_silence_does_not_wake_it():
 
 
 def test_the_threshold_is_tunable_and_has_a_measured_default():
-    """1e-25 is the only value that both wakes on a cold decoder and stays
-    quiet on a warm one. See the table in the plugin."""
-    assert DEFAULT_THRESHOLD == 1e-25
+    """1e-22 keeps 48 of 49 wakes on a real-room recording and stops the
+    detector waking on plain sentences. See the tables in the plugin."""
+    assert DEFAULT_THRESHOLD == 1e-22
     plugin = started("hey emet", threshold=1e-30)
     assert plugin.describe().healthy
 
