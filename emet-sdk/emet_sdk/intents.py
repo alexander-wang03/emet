@@ -4,7 +4,7 @@ A **closed set**. The soul may emit only these, and adding one is a minor
 version bump of the SDK.
 
 Closed also means an unrecognised intent is a *validation failure*, not a
-no-op — which is why the intents that arrive in later releases are reserved
+no-op, which is why the intents that arrive in later releases are reserved
 here from P0. A soul bundle written today that reaches for `manipulate` is
 merely ineffective; without reservation it would fail to load once the name
 was finally added. Bundles are exactly the artifact strangers publish, copy,
@@ -32,7 +32,7 @@ __all__ = [
 
 
 #: Sentinel for intents whose argument is arbitrary text rather than a
-#: member of a fixed set — `speak` carries an utterance, not a keyword.
+#: member of a fixed set; `speak` carries an utterance, not a keyword.
 FREE_ARGUMENT = frozenset({"*"})
 
 
@@ -47,7 +47,7 @@ P0_INTENTS: Mapping[str, frozenset[str]] = MappingProxyType({
 
     "attend": frozenset({"speaker", "bearing", "person", "none"}),
 
-    # The core expressive set. Deliberately small — a body renders a handful
+    # The core expressive set. Deliberately small: a body renders a handful
     # of states legibly, and a longer list would mostly collapse onto them.
     "express": frozenset({
         "curiosity", "delight", "confusion", "concern",
@@ -111,7 +111,7 @@ class UnknownIntentError(ValueError):
 
 
 def is_reserved(kind: str) -> bool:
-    """True if `kind` is reserved — accepted, but dropped by the P0 engine."""
+    """True if `kind` is reserved: accepted, but dropped by the P0 engine."""
     return kind in RESERVED_INTENTS
 
 
@@ -167,7 +167,7 @@ def make(
 ) -> Intent:
     """Construct an Intent, checking it against the closed vocabulary.
 
-    Prefer this over calling `Intent(...)` directly — the dataclass stays
+    Prefer this over calling `Intent(...)` directly. The dataclass stays
     permissive so that the engine can round-trip intents it did not create,
     but anything the soul emits should come through here.
     """

@@ -33,6 +33,15 @@ audio:
   output:
     device: "plughw:1,0"
     gain_db: -6.0
+  wake:
+    # The shipped engine. Phonetic, so it hears whatever phrase the soul
+    # names without a model trained for it. Omitting this whole block is
+    # legal; `bodiless.yaml` does, and takes the default.
+    engine: pocketsphinx
+    params:
+      # The shipped default, written out so it is visible. Higher is stricter:
+      # fewer false wakes, more missed ones. Lower fires more easily.
+      threshold: 1.0e-15
 
 capabilities:
   - id: head

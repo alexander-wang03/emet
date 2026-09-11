@@ -15,10 +15,10 @@ import pytest
 from emet_sdk.types import Action, Twist
 
 from emet_hal.differential import DifferentialDrive
-from emet_hal.mock import MockActuator, MockSensor
+from emet_hal.mock import MockActuator, MockSensor, MockWake
 from emet_hal.tracked import TrackedDrive
 
-# r = 0.05 m, W = 0.20 m — chosen so the sums come out in round numbers.
+# r = 0.05 m, W = 0.20 m, chosen so the sums come out in round numbers.
 DRIVE_BLOCK = {
     "id": "base",
     "type": "drive",
@@ -187,3 +187,54 @@ def test_mock_sensor_polls_and_can_admit_staleness():
 
     stale_block = {**block, "driver": {"plugin": "x", "params": {"values": {}, "stale": True}}}
     assert run(MockSensor(stale_block).poll()).stale
+
+
+def test_mock_wake_fires_on_the_phrase_it_was_given():
+    wake = MockWake({"engine": "mock", "params": {}}, "hey emet")
+    run(wake.start())
+    assert run(wake.process(b"nothing here")) is None
+    event = run(wake.process(b"...hey emet..."))
+    assert event is not None and event.phrase == "hey emet"
+    assert wake.frames == 2
+
+
+def test_a_wake_engine_that_failed_to_start_hears_nothing():
+    """The path with no fallback beneath it. An actuator that fails to start
+    gets bound past; a wake engine that fails just leaves the robot deaf, so
+    it has to be visible in the descriptor rather than only at runtime."""
+    wake = MockWake({"engine": "mock", "params": {"fail_on_start": True}}, "hey emet")
+    run(wake.start())
+    assert not wake.describe().healthy
+    assert not wake.describe().can_detect("hey emet")
+    assert run(wake.process(b"...hey emet...")) is None
+    assert not wake.health().ok
+
+
+def test_a_wake_engine_can_start_and_still_not_know_the_name():
+    """Distinct from a failed start, and the likelier failure in practice:
+    a healthy engine carrying models for other words."""
+    wake = MockWake({"engine": "mock", "params": {"phrases": ["hey jarvis"]}}, "hey emet")
+    run(wake.start())
+    descriptor = wake.describe()
+    assert descriptor.healthy
+    assert not descriptor.can_detect("hey emet")
+
+
+# ----------------------------------------------------------------- version
+
+
+def test_the_reported_version_matches_the_installed_distribution():
+    """One declaration, in `pyproject.toml`, read back at import time.
+
+    This test exists because the two used to be written separately and drifted:
+    the installed metadata said 0.1.0 while the source said 0.2.0, and
+    nothing noticed because nothing compared them. A version that is quietly
+    wrong is worse than no version, because it gets reported in bug reports as
+    fact.
+    """
+    from importlib.metadata import version
+
+    import emet_hal
+
+    assert emet_hal.__version__ == version("emet-hal")
+    assert emet_hal.__version__ != "0+unknown", "package is not installed"

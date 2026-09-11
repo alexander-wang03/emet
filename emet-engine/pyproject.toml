@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "emet-engine"
+version = "0.3.0"
+description = "Emet engine: the listen loop and the runtime that drives a body."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "The Emet Authors" }]
+keywords = ["emet", "robotics", "engine"]
+
+# emet-sdk only, and deliberately. Drivers, wake engines and audio sources
+# reach this package through entry points, never through an import, so
+# depending on `emet-hal` here would create exactly the coupling the layering
+# check exists to prevent. A working robot installs both.
+dependencies = ["emet-sdk>=0.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+emet-listen = "emet_engine.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["emet_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,4 +1,4 @@
-"""Differential drive — two independently driven wheels.
+"""Differential drive: two independently driven wheels.
 
 The oldest trick in mobile robotics: drive both wheels the same and you go
 straight; drive them at different speeds and you turn; drive them opposite and
@@ -6,7 +6,7 @@ you spin on the spot.
 
 This plugin ships in a release with no hardware drivers at all, which looks
 inconsistent until you see what it actually is. A locomotion plugin is
-*arithmetic* — it turns a desired velocity into per-wheel speeds and hands
+*arithmetic*: it turns a desired velocity into per-wheel speeds and hands
 those to whatever driver owns the motors. It touches no GPIO, needs no robot,
 and is fully testable against the mock. Shipping it is how the seam from the
 design spec gets proven rather than asserted: the engine says "go forward at

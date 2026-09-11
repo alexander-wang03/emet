@@ -2,8 +2,8 @@
 
 `MockActuator` accepts any action and records it instead of moving anything.
 That sounds like a testing convenience, and it is, but it is also the way most
-development on Emet will actually happen: the whole stack — chain resolution,
-arbitration, the choreographer, an entire conversation — can be exercised on a
+development on Emet will actually happen: the whole stack (chain resolution,
+arbitration, the choreographer, an entire conversation) can be exercised on a
 laptop with no robot attached.
 
 It matters for contributors too. Someone writing a driver for a servo board
@@ -20,10 +20,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping
 
-from emet_sdk.plugin import ActuatorPlugin, SensorPlugin
-from emet_sdk.types import Action, CapabilityDescriptor, Health, Reading
+from emet_sdk.plugin import ActuatorPlugin, SensorPlugin, WakePlugin
+from emet_sdk.types import (
+    Action,
+    CapabilityDescriptor,
+    Health,
+    Reading,
+    WakeDescriptor,
+    WakeEvent,
+)
 
-__all__ = ["MockActuator", "MockSensor"]
+__all__ = ["MockActuator", "MockSensor", "MockWake"]
 
 log = logging.getLogger("emet_hal.mock")
 
@@ -46,7 +53,7 @@ class MockActuator(ActuatorPlugin):
     """An actuator that logs what it was asked to do and does nothing.
 
     Set `params.fail_on_start: true` to simulate hardware that is wired but
-    dead. That path is worth exercising deliberately — it is how you check
+    dead. That path is worth exercising deliberately; it is how you check
     that a chain falls through to its next rung instead of binding to
     something that will never move.
     """
@@ -139,3 +146,67 @@ class MockSensor(SensorPlugin):
             values={str(k): float(v) for k, v in raw.items()},
             stale=bool(self.params.get("stale", False)),
         )
+
+
+class MockWake(WakePlugin):
+    """A wake detector that fires when a frame literally contains the phrase.
+
+    No audio, no model, no threshold. A frame "hears" the phrase when the
+    phrase's UTF-8 bytes appear in it, which makes every test of the wake path
+    a one-liner and keeps the whole 0.3 loop runnable on a laptop with no
+    microphone.
+
+    `params.phrases` overrides what this instance claims it loaded a model for,
+    so a test can build the case that actually matters: an engine that starts
+    perfectly well and cannot hear the name this particular soul answers to.
+    """
+
+    engine = "mock"
+
+    def __init__(self, config: Mapping[str, Any], phrase: str) -> None:
+        super().__init__(config, phrase)
+        self.frames = 0
+        self.resets = 0
+        self._started = False
+
+    async def start(self) -> None:
+        if self.params.get("fail_on_start"):
+            log.warning("mock wake: simulated engine failure")
+            return
+        self._started = True
+
+    def describe(self) -> WakeDescriptor:
+        declared = self.params.get("phrases")
+        phrases = (
+            frozenset(str(p) for p in declared)
+            if declared is not None
+            else frozenset({self.phrase})
+        )
+        return WakeDescriptor(
+            engine=self.engine,
+            phrases=phrases,
+            supports_custom_phrases=bool(self.params.get("supports_custom", False)),
+            healthy=self._started,
+        )
+
+    async def process(self, frame: bytes) -> WakeEvent | None:
+        self.frames += 1
+        if not self._started:
+            return None
+        if self.phrase.encode("utf-8") not in frame:
+            return None
+        return WakeEvent(
+            phrase=self.phrase,
+            confidence=float(self.params.get("confidence", 0.9)),
+        )
+
+    async def reset(self) -> None:
+        self.resets += 1
+
+    async def shutdown(self) -> None:
+        self._started = False
+
+    def health(self) -> Health:
+        if not self._started:
+            return Health(ok=False, detail="wake engine not started", faults=("start_failed",))
+        return Health()

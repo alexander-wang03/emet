@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://emet.sh/schemas/0.1/motion-pack.schema.json",
   "title": "Emet Motion Pack",
-  "description": "Recorded clips keyed to intents. Tier 3 of the capability model: produced by `emet teach` — relax the servos, pose the robot by hand, capture keyframes on a keypress. No code, no math, works on bodies nobody has seen. Deliberately declarative data so that cloud motion generation (V1) needs no schema change.",
+  "description": "Recorded clips keyed to intents. Tier 3 of the capability model: produced by `emet teach`. Relax the servos, pose the robot by hand, capture keyframes on a keypress. No code, no math, works on bodies nobody has seen. Deliberately declarative data so that cloud motion generation (V1) needs no schema change.",
 
   "type": "object",
   "additionalProperties": false,
@@ -16,7 +16,7 @@
     "name": { "type": "string", "minLength": 1 },
 
     "requires": {
-      "description": "Matched against the manifest. A pack whose requirements are unmet is skipped, and the fallback chain falls through to its next rung — it is not an error.",
+      "description": "Matched against the manifest. A pack whose requirements are unmet is skipped, and the fallback chain falls through to its next rung. It is not an error.",
       "type": "array",
       "items": {
         "type": "object",
@@ -47,7 +47,7 @@
       "required": ["intent", "keyframes"],
       "properties": {
         "intent": {
-          "description": "The intent this clip renders, as 'kind.argument' — e.g. express.curiosity. Membership in the closed vocabulary is a semantic rule.",
+          "description": "The intent this clip renders, as 'kind.argument', e.g. express.curiosity. Membership in the closed vocabulary is a semantic rule.",
           "type": "string",
           "pattern": "^[a-z_]+(\\.[a-z_]+)?$"
         },

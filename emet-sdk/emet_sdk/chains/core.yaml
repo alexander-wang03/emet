@@ -2,11 +2,11 @@
 #
 # Two voice actions carry weight here:
 #
-#   `silence` — a voice rung that produces no sound. It still *binds*, which
+#   `silence`: a voice rung that produces no sound. It still *binds*, which
 #   is what the terminal-rung rule requires. An idle timer on a bodiless robot
 #   must be a silent no-op, not a robot that mutters every twenty seconds.
 #
-#   `explain` — a voice rung that says why the body cannot do the thing. This
+#   `explain`: a voice rung that says why the body cannot do the thing. This
 #   is principle 6 at the chain level: asked to come closer, a robot with no
 #   wheels says so rather than failing quietly.
 

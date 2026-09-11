@@ -1,0 +1,50 @@
+# INVALID under --verify-drivers: a wake engine that is not installed.
+#
+# This replaces the old `unknown-wake-word.yaml`, whose rule no longer exists.
+# That fixture rejected `wake_word: barnaby` because P0 assumed wake detection
+# meant a pretrained model, so only a fixed set of names could ever be heard.
+# The shipped default is now a phonetic keyword spotter, which takes any phrase
+# and a pronunciation, so `identity.wake_word` is free text and the constraint
+# it guarded is gone.
+#
+# What replaces it is the rule `drive.kinematics` already follows. The name
+# below is legal, since `audio.wake.engine` is an open enum, but it does not
+# resolve, and that is an error rather than a warning.
+#
+# The distinction is worth holding onto. A missing `driver.plugin` is a warning
+# because it names a physical device you may not have wired yet, and describing
+# a half-built body is normal. `kinematics` and `wake.engine` name software
+# that has to exist for the document to mean anything. Wake has the stronger
+# claim of the two: everything else degrades, and a robot that cannot hear its
+# own name has no next rung to fall through to.
+#
+# The value is not a strawman. Picovoice disabled every free Porcupine access
+# key on 30 June 2026, which turned working manifests into this exact case
+# overnight, and is the reason wake is a plugin category at all.
+#
+# Expected: missing_plugin, /audio/wake/engine
+
+manifest_version: "0.1"
+
+body:
+  id: deaf
+  name: "a body whose ears were discontinued"
+  scale: desk
+  power: plugged_in
+
+audio:
+  input:
+    device: "plughw:1,0"
+    sample_rate: 16000
+    channels: 1
+    aec: hardware
+    doa: false
+  output:
+    device: "plughw:1,0"
+    gain_db: -6.0
+  wake:
+    engine: porcupine
+    params:
+      sensitivity: 0.6
+
+capabilities: []

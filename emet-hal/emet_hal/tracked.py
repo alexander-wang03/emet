@@ -1,4 +1,4 @@
-"""Tracked drive — treads instead of wheels.
+"""Tracked drive: treads instead of wheels.
 
 Shares its arithmetic with differential drive entirely, and differs in one
 physical fact: **tracks scrub when they turn.** A wheel turning follows an arc
@@ -42,7 +42,7 @@ class TrackedDrive(DifferentialDrive):
 
     def describe(self) -> LocomotionDescriptor:
         base = super().describe()
-        # Tracks turn in place happily — that is what they are good at — but
+        # Tracks turn in place happily, that is what they are good at, but
         # the achievable rate is lower than the geometry alone predicts, and
         # the self-model should not promise what the treads cannot deliver.
         return LocomotionDescriptor(

@@ -1,7 +1,7 @@
 # INVALID: two drive capabilities.
 #
-# P0 permits at most one. Hybrid locomotion — wheels that retract into legs,
-# a tracked base with an omni turret — is V1, and needs arbitration between
+# P0 permits at most one. Hybrid locomotion (wheels that retract into legs,
+# a tracked base with an omni turret) is V1, and needs arbitration between
 # drives that does not exist yet.
 #
 # Expected: multiple_drives, /capabilities/1

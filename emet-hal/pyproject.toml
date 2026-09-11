@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-hal"
-version = "0.2.0"
-description = "Emet HAL — hardware abstraction layer: drivers and locomotion plugins."
+version = "0.3.0"
+description = "Emet HAL: hardware abstraction layer. Drivers, locomotion, wake, and audio plugins."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -15,13 +15,20 @@ keywords = ["emet", "robotics", "hal", "drivers"]
 dependencies = ["emet-sdk>=0.1"]
 
 [project.optional-dependencies]
+# The shipped wake engine. Optional because a body that never wakes (a test
+# rig, a CI run resolving chains) should not pull an acoustic model down.
+wake = ["pocketsphinx>=5.0"]
+# Microphone and speaker. Optional for the same reason, and because on Linux
+# it needs the system PortAudio (`apt install libportaudio2`) that a headless
+# build has no use for.
+audio = ["sounddevice>=0.4"]
 dev = ["pytest>=8.0"]
 
 # Installing a package is what makes a driver exist. Nothing scans directories
 # and the engine has no compiled-in list of known hardware.
 #
 # For actuators and sensors the entry-point name is the string a manifest puts
-# in `driver.plugin`. For locomotion it is the value of `drive.kinematics` —
+# in `driver.plugin`. For locomotion it is the value of `drive.kinematics`,
 # which is what keeps that enum genuinely open.
 
 [project.entry-points."emet.actuators"]
@@ -29,6 +36,19 @@ dev = ["pytest>=8.0"]
 
 [project.entry-points."emet.sensors"]
 "emet_hal.mock_sensor" = "emet_hal.mock:MockSensor"
+
+[project.entry-points."emet.audio"]
+"microphone" = "emet_hal.audio:MicrophoneSource"
+"wav" = "emet_hal.audio:WavSource"
+
+[project.entry-points."emet.audio_out"]
+"speaker" = "emet_hal.audio:Speaker"
+"wav" = "emet_hal.audio:WavSink"
+"null" = "emet_hal.audio:NullSink"
+
+[project.entry-points."emet.wake"]
+"pocketsphinx" = "emet_hal.pocketsphinx_wake:PocketSphinxWake"
+"mock" = "emet_hal.mock:MockWake"
 
 [project.entry-points."emet.locomotion"]
 "differential" = "emet_hal.differential:DifferentialDrive"

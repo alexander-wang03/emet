@@ -1,4 +1,4 @@
-# Fallback chains for `express` — the core expressive set.
+# Fallback chains for `express`: the core expressive set.
 #
 # Ordered most expressive first. The engine binds the first rung whose
 # selector matches the manifest; the final voice rung always binds, so a
@@ -55,7 +55,7 @@ express.confusion:
       params: {hue: 35, period_ms: 1600}
     - actuator: {voice: true}
       action: inflect
-      params: {preset: rising, filler: ["hm?", "wait —"]}
+      params: {preset: rising, filler: ["hm?", "wait..."]}
 
 express.concern:
   mode: first
