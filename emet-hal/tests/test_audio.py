@@ -437,7 +437,6 @@ def test_a_frame_arriving_after_stop_is_discarded():
     assert src.dropped == 0
 
 
-
 # --------------------------------------------------------------------------
 # PortAudio configuration
 # --------------------------------------------------------------------------
@@ -487,7 +486,6 @@ def test_off_linux_the_environment_is_left_alone(monkeypatch):
     _fake_sounddevice(monkeypatch)
     audio_module._sd()
     assert "PA_ALSA_PLUGHW" not in os.environ
-
 
 
 # --------------------------------------------------------------------------
@@ -576,3 +574,16 @@ def test_a_cancelled_play_ends_early_and_aborts():
     assert len(stream.writes) == 2
     assert stream.aborted and stream.closed
     assert not stream.stopped
+
+
+def test_card_overflows_are_counted_from_the_callback():
+    """PortAudio flags an input overflow when its own buffer filled before the
+    callback ran. That audio is gone before the queue exists, so it is counted
+    apart from `dropped`, and it is the first thing to check when a live run's
+    clock skew looks like drift."""
+    src = MicrophoneSource({"channels": 1})
+    src._on_audio(bytes(2 * 1280), 1280, None, types.SimpleNamespace(input_overflow=True))
+    src._on_audio(bytes(2 * 1280), 1280, None, types.SimpleNamespace(input_overflow=False))
+    src._on_audio(bytes(2 * 1280), 1280, None, None)
+    assert src.overflows == 1
+    assert src.dropped == 0

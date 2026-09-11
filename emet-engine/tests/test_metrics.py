@@ -195,3 +195,10 @@ def test_the_stopwatch_measures_elapsed_time():
 
 def test_the_stopwatch_reports_zero_before_it_is_used():
     assert Stopwatch().elapsed_ms == 0.0
+
+
+def test_card_overflows_appear_beside_dropped_frames():
+    s = stats()
+    s.record_frame(1.0)
+    s.overflows = 4
+    assert "card overflows 4" in s.report(live=True)

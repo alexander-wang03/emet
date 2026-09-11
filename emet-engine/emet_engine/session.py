@@ -284,6 +284,13 @@ class ListenSession:
         # Pulled from the source each frame rather than read once at the end:
         # a run that is killed part way through should still say what it lost.
         self.stats.dropped = self.dropped
+        self.stats.overflows = self.overflows
+
+    @property
+    def overflows(self) -> int:
+        """Frames the sound card lost before the loop saw them. Read
+        defensively, like `dropped`: a file has no card to overflow."""
+        return int(getattr(self._audio, "overflows", 0) or 0)
 
     @property
     def dropped(self) -> int:

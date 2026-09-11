@@ -150,7 +150,13 @@ def _finish(session: ListenSession, args: argparse.Namespace) -> None:
         # real sound card can drift, and claiming otherwise for a file would
         # be inventing a measurement.
         print("\n" + session.stats.report(live=session.source_name != "wav"))
-    if session.dropped:
+    if session.dropped and args.echo:
+        print(
+            f"\nnote: {session.dropped} frame(s) were dropped while the robot was "
+            f"speaking. The loop does not read the microphone during playback; "
+            f"barge-in, in 1.0, is what changes that."
+        )
+    elif session.dropped:
         print(
             f"\nwarning: {session.dropped} frame(s) were dropped, so wake words "
             f"may have been missed. The loop is not keeping up with the audio."

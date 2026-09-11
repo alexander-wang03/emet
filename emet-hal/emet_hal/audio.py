@@ -346,6 +346,9 @@ class MicrophoneSource:
         self.config = dict(config or {})
         self.format = fmt or AudioFormat()
         self.dropped = 0
+        #: Frames the card lost before this code saw them: PortAudio reported
+        #: an input overflow. A different cause from `dropped`, the same loss.
+        self.overflows = 0
         # A mic array is downmixed here so nothing downstream counts capsules.
         # Channel 0 by default rather than an average: on a ReSpeaker-style
         # array that channel carries the hardware-processed output, and
@@ -364,11 +367,6 @@ class MicrophoneSource:
         self._loop = asyncio.get_running_loop()
         self._queue = asyncio.Queue(maxsize=self.QUEUE_FRAMES)
 
-        def callback(indata, frames, time_info, status) -> None:  # PortAudio thread
-            if status:
-                log.debug("audio input status: %s", status)
-            self._loop.call_soon_threadsafe(self._offer, bytes(indata))
-
         try:
             self._stream = sd.RawInputStream(
                 samplerate=self.format.sample_rate,
@@ -376,11 +374,29 @@ class MicrophoneSource:
                 device=device,
                 channels=self._channels,
                 dtype="int16",
-                callback=callback,
+                callback=self._on_audio,
             )
             self._stream.start()
         except Exception as exc:
             raise AudioError(f"could not open the microphone: {exc}") from exc
+
+    def _on_audio(self, indata, frames, time_info, status) -> None:
+        """PortAudio's thread. Hands the frame to the event loop and counts
+        what the card says it lost.
+
+        `input_overflow` means PortAudio's own buffer filled before this
+        callback ran, so audio was gone before the queue ever saw it. It is
+        counted apart from `dropped` because the cause differs: a stalled
+        thread rather than a slow loop. Either way the audio clock falls
+        behind the wall clock, so a live run's skew has to be read against
+        this number before it is called drift.
+        """
+        if status:
+            log.debug("audio input status: %s", status)
+            if getattr(status, "input_overflow", False):
+                self.overflows += 1
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._offer, bytes(indata))
 
     def _offer(self, raw: bytes) -> None:
         """On the event loop thread. Never blocks; drops the oldest instead.

@@ -116,3 +116,27 @@ def test_an_interrupted_live_run_still_reports(tmp_path, monkeypatch, capsys):
     assert "stopped. heard it 1 time(s)." in out
     assert "source ended" not in out
     assert "realtime" in out and "verdict" in out
+
+
+def test_frames_dropped_during_echo_are_explained_not_blamed(tmp_path, monkeypatch, capsys):
+    """The loop does not read the microphone while it plays audio back, so an
+    echo run always drops frames during playback. Calling that "not keeping
+    up" would be wrong; the reference body's first echo run said so."""
+    wav = write_wav(tmp_path / "e.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    monkeypatch.setattr(ListenSession, "dropped", property(lambda self: 32))
+
+    rc = asyncio.run(cli._run(args(echo=True)))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "while the robot was speaking" in out
+    assert "not keeping up" not in out
+
+
+def test_frames_dropped_while_listening_are_a_warning(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "w.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    monkeypatch.setattr(ListenSession, "dropped", property(lambda self: 32))
+
+    asyncio.run(cli._run(args()))
+    assert "not keeping up" in capsys.readouterr().out

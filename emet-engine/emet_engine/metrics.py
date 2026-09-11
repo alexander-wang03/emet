@@ -72,6 +72,10 @@ class SessionStats:
     #: Frames the source discarded because the loop fell behind. Not the same
     #: as being slow: this is audio that was never seen at all.
     dropped: int = 0
+    #: Frames the sound card lost before the source saw them: PortAudio
+    #: reported an input overflow. A different cause, the same loss, and the
+    #: first thing to check when a live run's clock skew looks like drift.
+    overflows: int = 0
 
     process_ms_total: float = 0.0
     process_ms_max: float = 0.0
@@ -170,7 +174,7 @@ class SessionStats:
             f"{self.over_budget} frame(s) over",
             f"  realtime      {self.realtime_factor:.4f}  "
             f"({self.headroom:.0f}x faster than realtime)",
-            f"  dropped       {self.dropped}",
+            f"  dropped       {self.dropped}   (card overflows {self.overflows})",
         ]
         if live:
             skew = self.wall_ms - self.audio_ms

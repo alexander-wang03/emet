@@ -66,24 +66,31 @@ FRAME_SAMPLES = 1280
 #:
 #: 1e-25 was the only value clean at both ends of that table. It was measured
 #: over four phrases against six synthesised clips, and a real room then
-#: overturned it. A ten-minute recording on the reference body (Raspberry Pi 5,
-#: USB microphone, one voice, one room, 2026-09-10) holds 49 wake phrases and
-#: 9 decoys: six near-miss names ("hey emma", "hey Emily", "hey, met any"),
-#: three plain sentences with no name in them ("a mess of cables", "meant to").
-#: Replayed with the decoder warm:
+#: overturned it. Two recordings on the reference body (Raspberry Pi 5, USB
+#: microphone, one voice, one room, 2026-09-10), replayed with the decoder
+#: warm: ten minutes holding 49 wake phrases and 9 decoys (six near-miss names
+#: such as "hey emma", three plain sentences such as "a mess of cables"), and
+#: five minutes of ordinary talk, typing, humming and an air conditioner with
+#: no wake phrase in it at all.
 #:
-#:     threshold   wakes heard    decoys that fired
-#:     1e-25       49 of 49       8 of 9, including all three plain sentences
-#:     1e-22       48 of 49       3 of 9, all near-miss names
-#:     1e-20       48 of 49       3 of 9, the same three
-#:     1e-15       44 of 49       1 of 9
+#:     threshold   wakes heard   decoys fired   false wakes in 5 min of talk
+#:     1e-25       49 of 49      8 of 9         15  (3.0 a minute)
+#:     1e-22       48 of 49      3 of 9         11  (2.2 a minute)
+#:     1e-20       48 of 49      3 of 9          8  (1.6 a minute)
+#:     1e-18       46 of 49      3 of 9          7
+#:     1e-15       44 of 49      1 of 9          2  (0.4 a minute)
+#:     1e-12       42 of 49      1 of 9          1
+#:     1e-10       40 of 49      1 of 9          0
 #:
-#: 1e-22 is the default: it stops a robot waking on ordinary sentences at the
-#: cost of one wake in forty-nine, and it sits nearer the value the cold table
-#: cleared than 1e-20 does. Near-miss names fire at every threshold that keeps
-#: recall; that is the floor of a phonetic spotter with a two-syllable name,
-#: and the reason a trained model is the upgrade rather than a tweak here.
-DEFAULT_THRESHOLD = 1e-22
+#: No value is clean at both ends. 1e-15 is the default: it sits at the knee
+#: of the false-wake curve, where the robot stops answering to typing and
+#: humming every minute or two, at the cost of one wake in ten. A live run on
+#: the reference body at 1e-22 showed the other side of that trade: 54 false
+#: wakes in eleven minutes against two real ones. Near-miss names fire at
+#: every threshold that keeps recall. That is the floor of a phonetic spotter
+#: with a two-syllable name, and the reason a trained model is the upgrade
+#: rather than a tweak here. Cold-start behaviour at 1e-15 is unmeasured.
+DEFAULT_THRESHOLD = 1e-15
 
 #: Pronunciations for names that are not English words, in ARPAbet, which is
 #: what the bundled dictionary uses. Multiple entries per name are alternate

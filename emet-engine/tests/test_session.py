@@ -341,3 +341,14 @@ def test_the_reported_version_matches_the_installed_distribution():
 
     assert emet_engine.__version__ == version("emet-engine")
     assert emet_engine.__version__ != "0+unknown", "package is not installed"
+
+
+def test_a_file_overflows_nothing(tmp_path):
+    """`overflows` is read defensively like `dropped`: a file has no card."""
+    session = ListenSession(body(write_wav(tmp_path / "o.wav", silence(1280))), soul())
+
+    async def scenario():
+        async with session:
+            return session.overflows
+
+    assert run(scenario()) == 0

@@ -127,9 +127,10 @@ def test_silence_does_not_wake_it():
 
 
 def test_the_threshold_is_tunable_and_has_a_measured_default():
-    """1e-22 keeps 48 of 49 wakes on a real-room recording and stops the
-    detector waking on plain sentences. See the tables in the plugin."""
-    assert DEFAULT_THRESHOLD == 1e-22
+    """1e-15 keeps 44 of 49 wakes on a real-room recording and cuts false
+    wakes on ordinary talk from three a minute to one every two and a half.
+    See the tables in the plugin."""
+    assert DEFAULT_THRESHOLD == 1e-15
     plugin = started("hey emet", threshold=1e-30)
     assert plugin.describe().healthy
 

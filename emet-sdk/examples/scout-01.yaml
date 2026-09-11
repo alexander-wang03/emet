@@ -41,7 +41,7 @@ audio:
     params:
       # The shipped default, written out so it is visible. Higher is stricter:
       # fewer false wakes, more missed ones. Lower fires more easily.
-      threshold: 1.0e-22
+      threshold: 1.0e-15
 
 capabilities:
   - id: head
