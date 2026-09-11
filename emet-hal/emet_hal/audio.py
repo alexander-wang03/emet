@@ -382,8 +382,14 @@ class MicrophoneSource:
             raise AudioError(f"could not open the microphone: {exc}") from exc
 
     def _offer(self, raw: bytes) -> None:
-        """On the event loop thread. Never blocks; drops the oldest instead."""
-        assert self._queue is not None
+        """On the event loop thread. Never blocks; drops the oldest instead.
+
+        A frame can arrive after `stop()`: PortAudio's thread schedules this
+        call before the stream closes and the loop runs it afterwards. That
+        frame belongs to nobody, so it is discarded rather than asserted on.
+        """
+        if self._queue is None:
+            return
         if self._queue.full():
             try:
                 self._queue.get_nowait()

@@ -426,6 +426,18 @@ def test_output_defaults_to_a_synthesis_rate_not_the_input_rate():
     assert AudioFormat().sample_rate == 16000
 
 
+def test_a_frame_arriving_after_stop_is_discarded():
+    """PortAudio's thread can schedule one last `_offer` before the stream
+    closes, and the loop runs it after `stop()` has cleared the queue. Ctrl-C
+    on a live run used to end with an AssertionError traceback from exactly
+    that. Before `start()` the queue is equally absent, so this is the same
+    branch without a microphone."""
+    src = MicrophoneSource({"channels": 1})
+    src._offer(bytes(2 * 1280))
+    assert src.dropped == 0
+
+
+
 # --------------------------------------------------------------------------
 # PortAudio configuration
 # --------------------------------------------------------------------------
