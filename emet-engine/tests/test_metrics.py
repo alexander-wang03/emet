@@ -164,6 +164,17 @@ def test_a_live_run_reports_the_clock():
     assert "skew" in report
 
 
+def test_the_wall_clock_starts_at_the_first_frame():
+    """The first live run on the reference body reported +1.69 s of skew
+    over eleven minutes. That was the acoustic model loading before the
+    first frame, not the sound card drifting. Start-up is not drift."""
+    s = stats()
+    assert s.wall_ms == 0.0
+    time.sleep(0.05)
+    s.record_frame(1.0)
+    assert s.wall_ms < 30.0
+
+
 def test_the_verdict_appears_in_the_report():
     s = stats()
     for _ in range(10):

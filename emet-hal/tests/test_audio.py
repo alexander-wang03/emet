@@ -487,3 +487,92 @@ def test_off_linux_the_environment_is_left_alone(monkeypatch):
     _fake_sounddevice(monkeypatch)
     audio_module._sd()
     assert "PA_ALSA_PLUGHW" not in os.environ
+
+
+
+# --------------------------------------------------------------------------
+# Speaker playback, against a fake PortAudio
+# --------------------------------------------------------------------------
+
+
+class FakeOutputStream:
+    """Records what a RawOutputStream would have been asked to do."""
+
+    instances: list["FakeOutputStream"] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.writes: list[bytes] = []
+        self.started = self.stopped = self.aborted = self.closed = False
+        FakeOutputStream.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def write(self, data):
+        self.writes.append(bytes(data))
+
+    def stop(self, ignore_errors=True):
+        self.stopped = True
+
+    def abort(self, ignore_errors=True):
+        self.aborted = True
+
+    def close(self, ignore_errors=True):
+        self.closed = True
+
+
+def speaker_with_fake_portaudio(rate: int = 16000) -> Speaker:
+    FakeOutputStream.instances.clear()
+    spk = Speaker({"device": "USB"}, AudioFormat(sample_rate=rate))
+    spk._sd = types.SimpleNamespace(RawOutputStream=FakeOutputStream)
+    spk._device = 2
+    return spk
+
+
+def test_playback_writes_the_whole_buffer_in_order_without_numpy():
+    """`--echo` on the Pi was the first machine to reach this code, and it
+    failed twice over: a memoryview cast that CPython refuses, and
+    `sounddevice.play()` underneath, which needs numpy the HAL does not
+    have. A raw stream written in chunks needs neither."""
+    spk = speaker_with_fake_portaudio()
+    pcm = bytes(range(256)) * 40  # 10240 bytes: four 2560-byte chunks at 16 kHz
+    run(spk.play(pcm))
+    (stream,) = FakeOutputStream.instances
+    assert b"".join(stream.writes) == pcm
+    assert len(stream.writes) == 4
+    assert stream.kwargs == {"samplerate": 16000, "channels": 1, "dtype": "int16", "device": 2}
+    assert stream.started and stream.stopped and stream.closed
+    assert not stream.aborted
+
+
+def test_playback_refuses_a_half_sample():
+    spk = speaker_with_fake_portaudio()
+    with pytest.raises(AudioError):
+        run(spk.play(bytes(3)))
+
+
+def test_cancel_aborts_the_stream_that_is_playing():
+    spk = speaker_with_fake_portaudio()
+    stream = FakeOutputStream()
+    spk._stream = stream
+    run(spk.cancel())
+    assert stream.aborted
+
+
+def test_a_cancelled_play_ends_early_and_aborts():
+    spk = speaker_with_fake_portaudio()
+    pcm = bytes(2 * 1280 * 4)
+
+    class CancelOnSecondWrite(FakeOutputStream):
+        def write(self, data):
+            super().write(data)
+            if len(self.writes) == 2:
+                spk._cancelled.set()
+
+    spk._sd = types.SimpleNamespace(RawOutputStream=CancelOnSecondWrite)
+    run(spk.play(pcm))
+    (stream,) = FakeOutputStream.instances
+    assert len(stream.writes) == 2
+    assert stream.aborted and stream.closed
+    assert not stream.stopped

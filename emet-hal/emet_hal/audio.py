@@ -38,6 +38,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 import wave
 from array import array
 from dataclasses import dataclass
@@ -429,6 +430,8 @@ class Speaker:
         self.format = fmt or AudioFormat(sample_rate=22050)
         self._device: int | None = None
         self._sd: Any = None
+        self._stream: Any = None
+        self._cancelled = threading.Event()
 
     @property
     def sample_rate(self) -> int:
@@ -440,23 +443,64 @@ class Speaker:
         _check_rate(self._device, self.sample_rate, 1, want_input=False)
 
     async def play(self, pcm: bytes) -> None:
-        """Play mono int16 PCM, returning when it has finished."""
+        """Play mono int16 PCM, returning when it has finished.
+
+        Through a raw output stream, written in chunks from a worker thread.
+        `sounddevice.play()` needs numpy, which the HAL does not depend on,
+        and chunked writes are what let `cancel()` interrupt mid-word.
+        """
         if self._sd is None:
             raise AudioError("speaker was not started")
-        samples = array("h")
-        samples.frombytes(pcm)
-        self._sd.play(
-            memoryview(samples).cast("h"),
-            samplerate=self.sample_rate,
-            device=self._device,
-            blocking=False,
-        )
-        await asyncio.to_thread(self._sd.wait)
+        if len(pcm) % SAMPLE_BYTES:
+            raise AudioError("int16 audio has an even number of bytes")
+        self._cancelled.clear()
+        sd = self._sd
+        chunk = max(SAMPLE_BYTES, self.format.frame_bytes)
+
+        def blocking() -> None:
+            try:
+                stream = sd.RawOutputStream(
+                    samplerate=self.sample_rate,
+                    channels=1,
+                    dtype="int16",
+                    device=self._device,
+                )
+            except Exception as exc:
+                raise AudioError(f"could not open the speaker: {exc}") from exc
+            self._stream = stream
+            try:
+                stream.start()
+                for i in range(0, len(pcm), chunk):
+                    if self._cancelled.is_set():
+                        break
+                    stream.write(pcm[i : i + chunk])
+            except Exception as exc:
+                # An aborted stream makes the pending write raise. That is
+                # the cancel working, so it is only an error when nobody
+                # asked for it.
+                if not self._cancelled.is_set():
+                    raise AudioError(f"playback failed: {exc}") from exc
+            finally:
+                try:
+                    if self._cancelled.is_set():
+                        stream.abort()
+                    else:
+                        stream.stop()
+                finally:
+                    stream.close()
+                    self._stream = None
+
+        await asyncio.to_thread(blocking)
 
     async def cancel(self) -> None:
         """Stop mid-word. This is what barge-in is made of."""
-        if self._sd is not None:
-            self._sd.stop()
+        self._cancelled.set()
+        stream = self._stream
+        if stream is not None:
+            try:
+                stream.abort()
+            except Exception:  # pragma: no cover - the stream may already be closed
+                pass
 
     async def stop(self) -> None:
         await self.cancel()

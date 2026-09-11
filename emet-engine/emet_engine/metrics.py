@@ -78,11 +78,16 @@ class SessionStats:
     over_budget: int = 0
 
     _samples: deque[float] = field(default_factory=lambda: deque(maxlen=SAMPLE_CAP))
-    _started: float = field(default_factory=time.perf_counter)
+    #: Set by the first frame, so that loading the acoustic model and opening
+    #: the card are left out. What remains is the card's clock against the
+    #: system's, which is what drift means.
+    _started: float | None = None
 
     # ----------------------------------------------------------- recording
 
     def record_frame(self, process_ms: float) -> None:
+        if self._started is None:
+            self._started = time.perf_counter()
         self.frames += 1
         self.process_ms_total += process_ms
         self.process_ms_max = max(self.process_ms_max, process_ms)
@@ -99,6 +104,9 @@ class SessionStats:
 
     @property
     def wall_ms(self) -> float:
+        """Time since the first frame. Zero before any frame has arrived."""
+        if self._started is None:
+            return 0.0
         return (time.perf_counter() - self._started) * 1000.0
 
     @property
