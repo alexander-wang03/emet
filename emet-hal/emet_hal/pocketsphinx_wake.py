@@ -23,7 +23,11 @@ because wake is an open plugin category, installing one is a one-line change.
 **On warm-up.** The decoder is least sensitive in the seconds after it starts,
 before its cepstral mean has adapted. That is a real property, not a bug, and
 it is why `DEFAULT_THRESHOLD` is chosen with the cold end in view: a value
-that looks stricter on a warm recording costs wakes at boot.
+that looks stricter on a warm recording costs wakes at boot. The mean is
+body-local calibration in the sense of `DESIGN.md` 4.1, so it can be carried
+over: `warm_start_hint()` reports the adapted mean at the end of a run, and
+`params.cmninit` hands it to the next one, which then starts as sensitive as
+the last one ended.
 
 **On confidence.** Keyword spotting reports no calibrated score, so every
 `WakeEvent` from this engine carries `confidence=1.0`. That is honesty about
@@ -89,7 +93,9 @@ FRAME_SAMPLES = 1280
 #: wakes in eleven minutes against two real ones. Near-miss names fire at
 #: every threshold that keeps recall. That is the floor of a phonetic spotter
 #: with a two-syllable name, and the reason a trained model is the upgrade
-#: rather than a tweak here. Cold-start behaviour at 1e-15 is unmeasured.
+#: rather than a tweak here. Cold, in the first ten seconds after boot, the
+#: reference body woke two times in three at 1e-15 (2026-09-12); that is what
+#: `params.cmninit` is for.
 DEFAULT_THRESHOLD = 1e-15
 
 #: Pronunciations for names that are not English words, in ARPAbet, which is
@@ -114,6 +120,10 @@ class PocketSphinxWake(WakePlugin):
     Params, all optional:
 
         threshold   float, default DEFAULT_THRESHOLD. Higher is stricter.
+        cmninit     str, the cepstral mean to start from, as pocketsphinx
+                    prints it: comma-separated numbers. A run's warm mean is
+                    reported by `warm_start_hint()`; starting the next run
+                    from it removes the cold-start misses.
         lexicon     word -> pronunciation, or word -> [pronunciations].
                     Merged over SHIPPED_LEXICON, so a body can override a
                     shipped name or teach the engine an entirely new one.
@@ -158,6 +168,8 @@ class PocketSphinxWake(WakePlugin):
         }
         if self.params.get("model"):
             settings["hmm"] = str(self.params["model"])
+        if self.params.get("cmninit"):
+            settings["cmninit"] = str(self.params["cmninit"])
 
         try:
             self._decoder = Decoder(Config(**settings))
@@ -213,6 +225,25 @@ class PocketSphinxWake(WakePlugin):
         if self._listening and self._decoder is not None:
             self._decoder.end_utt()
         self._listening = False
+
+    def warm_start_hint(self) -> str | None:
+        """The adapted cepstral mean, and where to put it.
+
+        Called by `emet-listen` at the end of a run, before shutdown. The
+        engine knows nothing about pocketsphinx; it asks any wake plugin that
+        has this method and prints whatever comes back.
+        """
+        if not self._listening or self._decoder is None:
+            return None
+        try:
+            mean = str(self._decoder.get_cmn(False))
+        except Exception:  # pragma: no cover - depends on the decoder build
+            return None
+        return (
+            f"warm start: this run's adapted cepstral mean is {mean!r}. Put it "
+            f"under audio.wake.params.cmninit in the manifest and the next boot "
+            f"starts as sensitive as this run ended."
+        )
 
     # ------------------------------------------------------------ reporting
 

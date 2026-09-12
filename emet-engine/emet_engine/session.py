@@ -286,6 +286,18 @@ class ListenSession:
         self.stats.dropped = self.dropped
         self.stats.overflows = self.overflows
 
+    def warm_start_hint(self) -> str | None:
+        """Whatever the wake plugin wants remembered for the next boot.
+
+        Duck-typed on purpose: the engine names no engine. A plugin that has
+        nothing to say, or no such method, yields None.
+        """
+        hint = getattr(self._wake, "warm_start_hint", None)
+        if not callable(hint):
+            return None
+        text = hint()
+        return str(text) if text else None
+
     @property
     def overflows(self) -> int:
         """Frames the sound card lost before the loop saw them. Read

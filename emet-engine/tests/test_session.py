@@ -352,3 +352,17 @@ def test_a_file_overflows_nothing(tmp_path):
             return session.overflows
 
     assert run(scenario()) == 0
+
+
+
+def test_a_plugin_with_nothing_to_remember_yields_no_hint(tmp_path):
+    """The mock has no warm state and no method for it. The session asks by
+    duck typing and gets None, which is the whole layering rule in miniature:
+    the engine never names an engine."""
+    session = ListenSession(body(write_wav(tmp_path / "h.wav", silence(1280))), soul())
+
+    async def scenario():
+        async with session:
+            return session.warm_start_hint()
+
+    assert run(scenario()) is None

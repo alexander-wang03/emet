@@ -141,3 +141,21 @@ def test_shutdown_stops_listening():
     run(plugin.shutdown())
     assert not plugin.describe().healthy
     assert run(plugin.process(b"\x00\x00" * 1280)) is None
+
+
+
+def test_a_started_engine_offers_its_warm_mean_for_the_next_boot():
+    """Cold, the reference body woke two times in three in the first ten
+    seconds. The adapted cepstral mean is what a warm decoder has that a cold
+    one lacks, so a run hands it on and the next boot starts from it."""
+    plugin = started("hey emet")
+    hint = plugin.warm_start_hint()
+    assert hint is not None
+    assert "cmninit" in hint
+    run(plugin.shutdown())
+    assert plugin.warm_start_hint() is None
+
+
+def test_a_warm_mean_can_be_handed_to_the_next_boot():
+    plugin = started("hey emet", cmninit="40,3,-1")
+    assert plugin.describe().healthy

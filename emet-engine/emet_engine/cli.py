@@ -150,6 +150,9 @@ def _finish(session: ListenSession, args: argparse.Namespace) -> None:
         # real sound card can drift, and claiming otherwise for a file would
         # be inventing a measurement.
         print("\n" + session.stats.report(live=session.source_name != "wav"))
+    hint = session.warm_start_hint()
+    if hint:
+        print("\n" + hint)
     if session.dropped and args.echo:
         print(
             f"\nnote: {session.dropped} frame(s) were dropped while the robot was "
