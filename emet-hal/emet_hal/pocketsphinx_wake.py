@@ -94,8 +94,8 @@ FRAME_SAMPLES = 1280
 #: every threshold that keeps recall. That is the floor of a phonetic spotter
 #: with a two-syllable name, and the reason a trained model is the upgrade
 #: rather than a tweak here. Cold, in the first ten seconds after boot, the
-#: reference body woke two times in three at 1e-15 (2026-09-12); that is what
-#: `params.cmninit` is for.
+#: reference body woke two times in three at 1e-15, and three times in three
+#: once `params.cmninit` carried the previous run's mean over (2026-09-12).
 DEFAULT_THRESHOLD = 1e-15
 
 #: Pronunciations for names that are not English words, in ARPAbet, which is

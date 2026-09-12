@@ -60,6 +60,14 @@ audio:
     sample_rate: 48000
   wake:
     engine: pocketsphinx
+    # The decoder is least sensitive in its first seconds, before its
+    # cepstral mean has adapted to the room. `emet-listen` prints the adapted
+    # mean at the end of every run; paste it here and the next boot starts
+    # warm. It is a property of this microphone in this room, which is why the
+    # example ships without one. On the reference body it took cold-start
+    # wakes from two in three to three in three.
+    # params:
+    #   cmninit: "43.0,6.0,5.6,8.1,-5.9,-1.9,-8.2,-0.5,-0.9,3.4,7.6,-1.3,-0.4"
 
 capabilities: []
 
