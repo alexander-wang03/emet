@@ -115,7 +115,7 @@ that is merely out of date, so re-read:
 
 ## 8. Tag
 
-- The version is bumped in all three `pyproject.toml` files and **nowhere
+- The version is bumped in all four `pyproject.toml` files and **nowhere
   else**. `release_check.py` enforces this.
 - The tag message is written. Commits stay short; the tag carries the detail.
 - Every commit in the release is signed off, or the DCO check fails the PR.

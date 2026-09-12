@@ -1,8 +1,10 @@
 """`emet-listen`: bring a body up and print what it hears.
 
-The 0.3 milestone in one command. It does not understand anything yet: it
+The 0.3 milestone in one command, and the first step of 0.4 behind a flag. It
 brings up a microphone and a wake detector, and says so each time the robot
-hears its name. Speech recognition arrives in 0.4.
+hears its name. With `--transcribe` it also hands what follows to the speech
+recognition provider the soul names and prints what was said, partials as
+they arrive and then the final.
 
 Useful before that, though. `--replay` points the same path at a recording
 instead of a microphone, so a wake failure somebody reports can be reproduced
@@ -19,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from emet_sdk.discovery import PluginRegistry
+from emet_sdk.types import Transcript, WakeEvent
 from emet_sdk.validate import (
     MissingPluginError,
     ValidationError,
@@ -63,6 +66,16 @@ def _replay(manifest: dict[str, Any], wav: str) -> dict[str, Any]:
     return manifest
 
 
+def _on_wake(event: WakeEvent) -> None:
+    """Printed the moment the name is heard, not when the turn ends: on a live
+    run that is the difference between feedback and a second of doubt."""
+    print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
+
+
+def _on_partial(transcript: Transcript) -> None:
+    print(f"    hearing {transcript.text!r}")
+
+
 async def _run(args: argparse.Namespace) -> int:
     registry = PluginRegistry.discover()
     if not registry:
@@ -89,17 +102,29 @@ async def _run(args: argparse.Namespace) -> int:
             (manifest["audio"].get("input") or {}).get("sample_rate") or 16000
         )
 
-    session = ListenSession(manifest, soul, registry=registry)
+    session = ListenSession(
+        manifest,
+        soul,
+        registry=registry,
+        transcribe=args.transcribe,
+        on_wake=_on_wake,
+        on_partial=_on_partial if args.transcribe else None,
+    )
     async with session:
         assert session.descriptor is not None and session.format is not None
-        print(
-            f"listening for {session.phrase!r}\n"
-            f"  engine   {session.engine_name}\n"
-            f"  source   {session.source_name}\n"
-            f"  audio    {session.format.sample_rate} Hz, "
-            f"{session.format.frame_ms:.0f} ms frames\n"
-            f"  patience {session.patience_ms} ms"
-        )
+        lines = [
+            f"listening for {session.phrase!r}",
+            f"  engine   {session.engine_name}",
+            f"  source   {session.source_name}",
+            f"  audio    {session.format.sample_rate} Hz, {session.format.frame_ms:.0f} ms frames",
+            f"  patience {session.patience_ms} ms",
+        ]
+        if args.transcribe:
+            described = session.stt_descriptor
+            model = f", model {described.model}" if described and described.model else ""
+            mode = "streaming" if described and described.streaming else "batch"
+            lines.append(f"  stt      {session.stt_name}{model} ({mode})")
+        print("\n".join(lines))
         print("  (ctrl-c to stop)\n" if not args.replay else "")
 
         heard = 0
@@ -107,11 +132,7 @@ async def _run(args: argparse.Namespace) -> int:
         try:
             async for event, utterance in session.turns():
                 heard += 1
-                print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
                 if utterance.had_speech:
-                    # 0.4 hands this audio to speech recognition. Until then
-                    # the useful thing to show is that the turn was bounded
-                    # correctly.
                     print(
                         f"    then {utterance.duration_ms / 1000:.1f}s of speech, "
                         f"ended on {utterance.reason.value}"
@@ -123,6 +144,11 @@ async def _run(args: argparse.Namespace) -> int:
                     print("    the recording ended before anything followed.")
                 else:
                     print("    then nothing. probably a false wake.")
+                if utterance.transcript is not None:
+                    if utterance.transcript.text:
+                        print(f"    said {utterance.transcript.text!r}")
+                    else:
+                        print("    said nothing the provider could make out")
         except asyncio.CancelledError:
             # Ctrl-C. `asyncio.run` answers SIGINT by cancelling this task, and
             # a microphone never ends on its own, so this is how every live
@@ -185,6 +211,16 @@ def main(argv: list[str] | None = None) -> int:
         help="play each captured utterance back through the output. There is "
         "no speech synthesis yet, so this is what proves the whole duplex path "
         "works: audio in, wake, endpoint, audio out",
+    )
+    parser.add_argument(
+        "--transcribe",
+        action="store_true",
+        help="hand the speech after each wake to the speech recognition provider "
+        "the soul names under models.stt (or the body takes over under "
+        "audio.stt), and print what was said: partials as they arrive, then the "
+        "final. The only provider that ships today is `mock`, which reads words "
+        "out of the bytes it is given; the first real one arrives through this "
+        "same seam",
     )
     parser.add_argument(
         "--stats",

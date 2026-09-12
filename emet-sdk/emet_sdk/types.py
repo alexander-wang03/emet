@@ -27,6 +27,8 @@ __all__ = [
     "LocomotionDescriptor",
     "WakeDescriptor",
     "WakeEvent",
+    "Transcript",
+    "TranscriberDescriptor",
     "AudioFormat",
     "AudioSource",
     "AudioSink",
@@ -234,6 +236,57 @@ class WakeEvent:
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+@dataclass(frozen=True, slots=True)
+class Transcript:
+    """What speech recognition heard, so far or in full.
+
+    A streaming recogniser sends words back while the person is still talking,
+    and revises them: "what time" becomes "what time is it" becomes "what time
+    is it in Tokyo". Each revision arrives as a partial carrying the whole text
+    heard so far in this utterance, and `final=False`. When the turn ends, one
+    more arrives with `final=True`, and that is the text the engine acts on.
+
+    Cumulative rather than incremental on purpose. A caller showing a live
+    caption replaces the line; it does not have to splice fragments, and a
+    provider that reorders or retracts a word cannot leave a stale fragment
+    behind. A recogniser that does not stream sends no partials and one final.
+    """
+
+    text: str
+    final: bool = False
+    #: Advisory. Providers that report no calibrated score say 1.0, which is
+    #: honesty about the absence of a number rather than a claim of certainty.
+    confidence: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriberDescriptor:
+    """What a speech recogniser can actually do, reported after `start()`.
+
+    The boot check reads `healthy` and `sample_rate`. A recogniser is built
+    with the audio format the wake engine already fixed, because one
+    microphone feeds both, and it echoes back the rate it will actually run
+    at. If the two differ the engine refuses to start rather than letting a
+    16 kHz stream be heard at 8 kHz, which does not fail, it just produces
+    nonsense. Same rule as the detector: the consumer states the format, and
+    a mismatch is loud.
+    """
+
+    provider: str
+    #: The model this instance loaded, if the provider has such a thing. What
+    #: was asked for is in the config; this is what answered.
+    model: str | None = None
+    #: Whether partial transcripts arrive while the person is still speaking.
+    #: A batch recogniser says False and sends one final per utterance.
+    streaming: bool = False
+    sample_rate: int = 16000
+    healthy: bool = True
 
 
 #: Audio is int16 throughout. Two bytes a sample, everywhere.

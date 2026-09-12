@@ -58,8 +58,11 @@ def body(path: str) -> dict:
     }
 
 
-def soul() -> dict:
-    return {"identity": {"name": "Emet", "wake_word": PHRASE}}
+def soul(**stt) -> dict:
+    doc = {"identity": {"name": "Emet", "wake_word": PHRASE}}
+    if stt:
+        doc["models"] = {"stt": stt}
+    return doc
 
 
 def stub_loaders(monkeypatch, manifest: dict, soul_doc: dict) -> None:
@@ -69,7 +72,14 @@ def stub_loaders(monkeypatch, manifest: dict, soul_doc: dict) -> None:
 
 
 def args(**overrides) -> argparse.Namespace:
-    base = {"manifest": "body.yaml", "soul": "soul.yaml", "replay": None, "echo": False, "stats": True}
+    base = {
+        "manifest": "body.yaml",
+        "soul": "soul.yaml",
+        "replay": None,
+        "echo": False,
+        "stats": True,
+        "transcribe": False,
+    }
     base.update(overrides)
     return argparse.Namespace(**base)
 
@@ -140,3 +150,87 @@ def test_frames_dropped_while_listening_are_a_warning(tmp_path, monkeypatch, cap
 
     asyncio.run(cli._run(args()))
     assert "not keeping up" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------- --transcribe
+
+
+def spoken(*words: bytes) -> bytes:
+    """A turn: the phrase, then frames that spell words, then silence.
+
+    The mock transcriber reads a frame's leading text; the energy detector
+    hears those same bytes as loud, so the endpointer captures them as speech
+    and closes the turn on the silence after.
+    """
+    def frame(payload: bytes = b"") -> bytes:
+        return payload + bytes(2 * FRAME - len(payload))
+
+    return frame() + frame(PHRASE.encode()) + b"".join(frame(w) for w in words) + frame() * 20
+
+
+def test_transcribe_prints_partials_as_they_arrive_and_then_what_was_said(
+    tmp_path, monkeypatch, capsys
+):
+    wav = write_wav(tmp_path / "said.wav", spoken(b"what", b"time", b"is it"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+
+    rc = asyncio.run(cli._run(args(transcribe=True)))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "  stt      mock (streaming)" in out
+    assert "    hearing 'what time'" in out
+    assert "    said 'what time is it'" in out
+    # The wake prints when it is heard, before the words that follow it.
+    assert out.index("heard 'hey emet'") < out.index("hearing 'what'")
+
+
+def test_without_the_flag_nothing_is_transcribed(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "quiet.wav", spoken(b"what", b"time"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+
+    asyncio.run(cli._run(args()))
+
+    out = capsys.readouterr().out
+    assert "said" not in out and "hearing" not in out and "stt" not in out
+
+
+def test_transcribe_with_no_provider_configured_says_which_field_to_set(
+    tmp_path, monkeypatch, capsys
+):
+    wav = write_wav(tmp_path / "none.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--transcribe"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "models.stt.provider" in err
+    assert "audio.stt.provider" in err
+
+
+def test_transcribe_with_an_uninstalled_provider_is_a_missing_plugin(
+    tmp_path, monkeypatch, capsys
+):
+    """The reference soul names deepgram, and nothing ships it yet. That has
+    to be the plain missing-plugin message, not a stack trace."""
+    wav = write_wav(tmp_path / "dg.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="deepgram", key_env="EMET_DEEPGRAM_KEY"))
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--transcribe"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "deepgram" in err and "missing_plugin" in err
+
+
+def test_a_false_wake_under_transcribe_reports_an_empty_final(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "false.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+
+    rc = asyncio.run(cli._run(args(transcribe=True)))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "probably a false wake" in out
+    assert "said nothing the provider could make out" in out

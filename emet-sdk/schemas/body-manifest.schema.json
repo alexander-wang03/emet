@@ -129,6 +129,23 @@
               "type": "object"
             }
           }
+        },
+        "stt": {
+          "description": "P0, optional. Speech recognition on this body. The soul chooses the provider through models.stt, because the key is the owner's and travels with the soul. This block lets the body take that choice over (set provider, with its own model and key_env, and the soul's three are ignored together) or tune whichever provider runs (params, passed through untouched). provider resolves against installed emet.stt plugins, so it is an open enum: an unknown value is a missing plugin, never a schema error. There is no default provider.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": "string", "minLength": 1 },
+            "model": { "type": "string" },
+            "key_env": {
+              "description": "Name of the environment variable holding the key. The key itself is never written into a manifest.",
+              "type": "string"
+            },
+            "params": {
+              "description": "Passed to the provider untouched. Emet never inspects these.",
+              "type": "object"
+            }
+          }
         }
       }
     },

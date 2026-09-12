@@ -1,6 +1,6 @@
 """The plugin contract. Breaking it is a major version bump.
 
-Four categories, and the split is not arbitrary:
+Five categories, and the split is not arbitrary:
 
 * **Actuators** receive `Action`s and do something physical. The engine tells
   them what should happen; how is theirs.
@@ -12,9 +12,14 @@ Four categories, and the split is not arbitrary:
   Wheels solve it with arithmetic, treads with the same arithmetic and
   different slip assumptions, and a legged plugin with a gait generator. The
   engine above them does not know or care.
-* **Wake** plugins listen for the robot's name and nothing else. They are the
-  only category configured jointly by a body and a soul, and the only one with
+* **Wake** plugins listen for the robot's name and nothing else. They are
+  configured jointly by a body and a soul, and they are the only category with
   no fallback beneath it.
+* **Transcriber** plugins turn the speech after a wake into text. The soul
+  chooses the provider, because the keys are the owner's and travel with the
+  soul; the body may take the choice over, and tunes it. The engine feeds
+  frames in and reads partial and final transcripts out, so a streaming
+  provider and a batch one satisfy the same contract.
 
 **Why there is no VAD category.** Voice activity detection looks like it
 belongs beside wake, and does not. It is not a swap point: there is one real
@@ -45,10 +50,13 @@ from typing import Any, ClassVar, Mapping
 
 from emet_sdk.types import (
     Action,
+    AudioFormat,
     CapabilityDescriptor,
     Health,
     LocomotionDescriptor,
     Reading,
+    Transcript,
+    TranscriberDescriptor,
     Twist,
     WakeDescriptor,
     WakeEvent,
@@ -61,6 +69,7 @@ __all__ = [
     "SensorPlugin",
     "LocomotionPlugin",
     "WakePlugin",
+    "TranscriberPlugin",
     "PluginError",
 ]
 
@@ -80,10 +89,11 @@ class Plugin(ABC):
 
     Every category starts, shuts down, and reports health the same way. What a
     plugin is *constructed from* differs: three categories are built from one
-    entry in a manifest's `capabilities` list, and wake is built from
-    `audio.wake` plus a phrase the soul supplies. Construction therefore
-    belongs to the subclasses, so that no category inherits a signature it has
-    to contradict.
+    entry in a manifest's `capabilities` list, wake is built from `audio.wake`
+    plus a phrase the soul supplies, and a transcriber from the provider
+    reference the soul and the body agree on. Construction therefore belongs
+    to the subclasses, so that no category inherits a signature it has to
+    contradict.
     """
 
     async def start(self) -> None:
@@ -286,4 +296,98 @@ class WakePlugin(Plugin):
 
         Default is a no-op. Streaming detectors holding a rolling buffer
         override it so that one utterance cannot trigger twice.
+        """
+
+
+class TranscriberPlugin(Plugin):
+    """What turns the speech after a wake into text.
+
+    The seam between Emet and a speech recognition vendor, and it exists
+    before any vendor does. There are credits enough at one provider to build
+    the whole of a release against its client library without noticing, and
+    the result would be an engine that speaks one company's dialect. Behind
+    this contract, the provider is one line of a soul.
+
+    **Who chooses.** The soul, through `models.stt`: the provider, the model,
+    and the name of the environment variable holding the key. Keys are the
+    owner's (BYOK) and travel with the soul, so this is a soul field without
+    breaching principle 1: a cloud account is not hardware. The body may take
+    the choice over through `audio.stt.provider` (a test rig running the
+    mock, an owner whose key is for a different provider), and it tunes
+    whichever provider runs through `audio.stt.params`. The merged result is
+    what this constructor receives; `emet_sdk.models.stt_selection` is the
+    one place the merge is written down.
+
+    **Streaming.** Frames go in one at a time, as they are captured. A
+    provider that streams answers with partial transcripts while the person
+    is still talking, and every partial carries the whole text heard so far.
+    `finish()` closes the utterance and returns the final. A provider that
+    does not stream returns None from every `feed()` and does its work in
+    `finish()`. Same contract, and the engine above cannot tell them apart
+    except by latency and by `describe().streaming`.
+
+    **Format.** The wake engine fixed the audio format before this plugin was
+    built, and one microphone feeds both, so the transcriber receives the
+    format rather than stating one. It reports the rate it will actually run
+    at in `describe()`, and the engine refuses a mismatch rather than letting
+    speech be heard at the wrong speed.
+    """
+
+    #: The string matched against `models.stt.provider` in the soul (or
+    #: `audio.stt.provider` in the body), and the entry-point name this
+    #: plugin registers under.
+    provider: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any], fmt: AudioFormat) -> None:
+        """Receive the merged provider reference and the audio format.
+
+        `config` has the shape of the soul's `models.stt` block plus the
+        body's `params`: `provider`, `model`, `key_env`, `params`. The key
+        itself is never in it. A plugin that needs one reads the environment
+        variable `key_env` names, in `start()`, and reports `healthy=False`
+        with a detail naming the variable when it is absent. The robot then
+        fails loudly and in the owner's terms, which is what P0 promises.
+        """
+        self.config: Mapping[str, Any] = config
+        self.model: str | None = (
+            str(config["model"]) if config.get("model") is not None else None
+        )
+        self.key_env: str | None = (
+            str(config["key_env"]) if config.get("key_env") is not None else None
+        )
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+        #: The audio the engine will feed: mono int16 at this rate and frame
+        #: size, fixed by the wake engine before this plugin was built.
+        self.format = fmt
+
+    @abstractmethod
+    def describe(self) -> TranscriberDescriptor:
+        """Report what this instance can actually do, after `start()`.
+
+        Report narrowly. A provider whose key is missing or whose network is
+        down says `healthy=False` and puts the reason in `health().detail`;
+        the boot check prints it. Claiming health and returning empty
+        transcripts forever is the silent failure this contract exists to
+        prevent.
+        """
+
+    @abstractmethod
+    async def feed(self, frame: bytes) -> Transcript | None:
+        """Consume one frame of the utterance. Return a partial if the text
+        heard so far changed, else None.
+
+        Frames arrive at the rate and size in `self.format`, in order, for one
+        utterance at a time. Return promptly: this runs inside the capture
+        loop, and a provider that blocks here on the network drops audio. Hand
+        the frame off and report whatever results have already come back.
+        """
+
+    @abstractmethod
+    async def finish(self) -> Transcript:
+        """The turn has ended. Flush, and return the final transcript.
+
+        Always returns one, with `final=True`, even when nothing was heard:
+        an empty final is a real answer (they said nothing the provider could
+        make out) and the engine treats it as one. After this the plugin is
+        ready for the next utterance's first `feed()`.
         """

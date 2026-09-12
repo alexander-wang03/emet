@@ -6,8 +6,8 @@ changes here are versioned carefully.
 
     from emet_sdk import Intent, Action, CapabilityDescriptor
 
-Layering, enforced in CI: `emet_sdk` imports nothing internal. `emet_hal`
-imports `emet_sdk` only. `emet_engine` imports `emet_sdk` only.
+Layering, enforced in CI: `emet_sdk` imports nothing internal. `emet_hal`,
+`emet_providers` and `emet_engine` import `emet_sdk` only.
 """
 
 from importlib import metadata as _metadata
@@ -18,6 +18,7 @@ from emet_sdk.plugin import (
     LocomotionPlugin,
     PluginError,
     SensorPlugin,
+    TranscriberPlugin,
     WakePlugin,
 )
 from emet_sdk.types import (
@@ -35,6 +36,8 @@ from emet_sdk.types import (
     Sensitivity,
     Target,
     TargetKind,
+    Transcript,
+    TranscriberDescriptor,
     Twist,
     WakeDescriptor,
     WakeEvent,
@@ -68,6 +71,7 @@ __all__ = [
     "PluginError",
     "Reading",
     "SensorPlugin",
+    "TranscriberPlugin",
     "WakePlugin",
     "CapabilityDescriptor",
     "Health",
@@ -79,6 +83,8 @@ __all__ = [
     "Sensitivity",
     "Target",
     "TargetKind",
+    "Transcript",
+    "TranscriberDescriptor",
     "Twist",
     "WakeDescriptor",
     "WakeEvent",
