@@ -185,10 +185,18 @@ Before opening a PR, run what CI runs:
 ```sh
 python tools/check_layering.py .
 python tools/release_check.py .
+python tools/check_style.py .
 cd emet-sdk && python -m pytest -q
 cd ../emet-hal && python -m pytest -q
 cd ../emet-engine && python -m pytest -q
 ```
+
+## House style
+
+Plain declarative sentences, in code comments and docs alike. No em-dashes:
+a comma, a colon, or two sentences. None of the six words that read as a
+press release; `tools/check_style.py` lists them, enforces both rules, and
+runs in CI, so a stray dash fails the build rather than a review.
 
 CI also builds the three wheels and installs them outside the source tree, so a
 packaging mistake that an editable install hides still fails the pipeline. The
