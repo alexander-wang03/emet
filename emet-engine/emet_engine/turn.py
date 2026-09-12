@@ -94,7 +94,7 @@ class Endpointer:
         *,
         patience_ms: int = DEFAULT_PATIENCE_MS,
         lead_in_ms: int = 2500,
-        max_utterance_ms: int = 15000,
+        max_utterance_ms: int = 30000,
         preroll_frames: int = 4,
         vad: EnergyVad | None = None,
         tuning: VadTuning | None = None,
