@@ -202,3 +202,12 @@ def test_card_overflows_appear_beside_dropped_frames():
     s.record_frame(1.0)
     s.overflows = 4
     assert "card overflows 4" in s.report(live=True)
+
+
+def test_the_clock_line_gives_the_skew_as_a_percentage_too():
+    """The reference body's microphone runs about 0.2% slow against the
+    system clock, measured with arecord alone. Seconds of skew depend on how
+    long the run was; the percentage is the number that identifies the card."""
+    s = stats()
+    s.record_frame(1.0)
+    assert "%)" in s.report(live=True)

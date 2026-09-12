@@ -178,9 +178,13 @@ class SessionStats:
         ]
         if live:
             skew = self.wall_ms - self.audio_ms
+            pct = (skew / self.audio_ms * 100.0) if self.audio_ms else 0.0
+            # A steady percentage across runs is the card's clock against the
+            # system's, a property of the hardware. A growing offset with
+            # overflows or drops beside it is audio being lost.
             lines.append(
                 f"  clock         wall {self.wall_ms / 1000:.1f}s vs audio "
-                f"{self.audio_ms / 1000:.1f}s   skew {skew / 1000:+.2f}s"
+                f"{self.audio_ms / 1000:.1f}s   skew {skew / 1000:+.2f}s ({pct:+.2f}%)"
             )
         else:
             lines.append(
