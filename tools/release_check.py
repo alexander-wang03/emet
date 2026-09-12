@@ -13,6 +13,7 @@ It checks the *cross-cutting* invariants:
     versions      all three packages agree
     plugins       every discovery group has a shipped implementation
     docs          nothing advertises a version the code no longer is
+    hal readme    every shipped entry point is named in emet-hal/README.md
     markers       no TODO or FIXME left in shipped source
 
 **Why this exists.** 0.3's scope was "audio in/out, wake word, VAD,
@@ -133,6 +134,28 @@ def check_groups(root: Path) -> None:
         notes.append(f"{total} entry points across {len(provided)} groups")
 
 
+def check_hal_readme(root: Path) -> None:
+    """Every entry point emet-hal registers is named in its README.
+
+    0.3 shipped seven new plugins and the README's "what ships" table kept
+    listing the four from 0.2, through several rounds of "what is left".
+    A newcomer reads that table before anything else.
+    """
+    pyproject = root / "emet-hal" / "pyproject.toml"
+    readme = root / "emet-hal" / "README.md"
+    if not pyproject.exists() or not readme.exists():
+        return
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    text = readme.read_text(encoding="utf-8")
+    for group, entries in (data.get("project", {}).get("entry-points") or {}).items():
+        for name in entries:
+            if f"`{name}`" not in text:
+                problem(
+                    f"emet-hal/README.md does not name the {group} entry point `{name}`. "
+                    f"The 'what ships' table is the first thing a contributor reads."
+                )
+
+
 def check_docs(root: Path, version: str | None) -> None:
     """Nothing should advertise a version the code no longer is."""
     if not version:
@@ -178,6 +201,7 @@ def main(argv: list[str]) -> int:
     check_single_declaration(root)
     check_groups(root)
     check_docs(root, version)
+    check_hal_readme(root)
     check_markers(root)
 
     for note in notes:
