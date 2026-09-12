@@ -11,7 +11,12 @@ Run the mechanical half first. It is fast and it fails loudly:
 ```sh
 python tools/check_layering.py .
 python tools/release_check.py .
+python tools/check_style.py .
 ```
+
+The tag itself is made by `tools/tag_release.py`, which runs those three
+again and refuses a dirty tree, a branch other than master, a version the
+packages do not declare, an unsigned key, or a tag that already exists.
 
 Everything below is what a script cannot check.
 
