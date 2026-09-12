@@ -6,9 +6,9 @@ quietly does not:
 
     manifest  →  discovery  →  plugins  →  describe()  →  resolve  →  apply()
 
-Nothing above this exists yet — there is no engine and no choreographer — so
-this is the first and only place the whole path runs. Until 0.3 builds a real
-loop, it is the test that says the architecture actually fits together.
+Nothing above this drives a body yet (the engine is a listen loop, and there
+is no choreographer), so this is the only place the whole path runs. It is
+the test that says the architecture actually fits together.
 
 The other thing checked here is **agreement**. `emet explain` resolves against
 a static projection of the manifest, because it has to work on a laptop with
@@ -123,7 +123,7 @@ def test_live_descriptors_agree_with_the_static_projection(manifest, chains):
 
     It resolves against a projection of the manifest so that it works with no
     hardware attached. The engine resolves against live plugins. For a plugin
-    that reports honestly, those must produce the same binding table — or the
+    that reports honestly, those must produce the same binding table, or the
     tool people reach for when debugging shows them something the robot will
     not do.
     """
@@ -152,7 +152,7 @@ def test_live_descriptors_agree_with_the_static_projection(manifest, chains):
 def test_a_broken_part_changes_the_answer_at_boot(manifest, chains):
     """The one thing the static projection CANNOT know.
 
-    `emet explain` is optimistic by construction — it assumes every declared
+    `emet explain` is optimistic by construction: it assumes every declared
     part works. A servo board that does not answer is exactly the case where
     the engine's table diverges, and it must diverge in the safe direction:
     past the dead part, not into it.

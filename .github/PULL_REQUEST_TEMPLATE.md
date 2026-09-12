@@ -12,9 +12,11 @@
 ### Checklist
 
 - [ ] Commits are signed off (`git commit -s`). See CONTRIBUTING.md.
-- [ ] `python tools/check_layering.py .` passes.
-- [ ] `pytest` passes in `emet-sdk` and `emet-hal`.
-- [ ] New behaviour has a test.
+- [ ] `python tools/check_layering.py .` and `python tools/release_check.py .` pass.
+- [ ] `pytest` passes in `emet-sdk`, `emet-hal` and `emet-engine`.
+- [ ] New behaviour has a test and a caller.
+- [ ] Anything taken from a paper or repository is cited at the point of use
+      and in CITATIONS.md.
 
 ### If this touches the contract layer
 
@@ -32,6 +34,7 @@ even when it works. See DESIGN.md section 2.
 
 - [ ] The soul names no hardware.
 - [ ] Every fallback chain still terminates in a voice rung.
-- [ ] `emet_sdk` imports nothing internal; `emet_hal` imports `emet_sdk` only.
+- [ ] `emet_sdk` imports nothing internal; `emet_hal` and `emet_engine`
+      import `emet_sdk` only.
 - [ ] Memory is not namespaced by body.
 - [ ] A missing plugin is still distinct from a schema error.

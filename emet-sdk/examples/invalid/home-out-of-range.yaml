@@ -1,7 +1,7 @@
 # INVALID: home_deg lies outside range_deg.
 #
 # The tilt joint travels [-30, 45] but homes to 60. Homing would drive the
-# joint into its own limit — a mechanical failure, on first boot, before
+# joint into its own limit: a mechanical failure, on first boot, before
 # anyone has said a word to it.
 #
 # JSON Schema cannot express this: it is a comparison between two sibling

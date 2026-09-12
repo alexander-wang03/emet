@@ -4,9 +4,9 @@ Two layers, deliberately kept apart:
 
 *Schema* validation answers "is this the right shape?" and is expressed in
 JSON Schema. *Semantic* validation answers "does this mean anything?" and
-lives here, because cross-field and cross-document rules — a home angle
+lives here, because cross-field and cross-document rules (a home angle
 inside its range, a capability id referenced by a camera mount, a chain that
-terminates in voice — cannot be said in JSON Schema.
+terminates in voice) cannot be said in JSON Schema.
 
 **The error taxonomy is the point of this module.** A typo in a plugin name
 and a robot that genuinely lacks a servo are different failures, and
@@ -22,8 +22,8 @@ what is installed rather than by a list compiled into the engine.
 **Validating and booting are deliberately not the same strictness.** Linting a
 manifest for hardware you have not wired yet is a normal thing to do, so an
 unrecognised driver name is a warning here by default. Booting an engine
-against that manifest is not, so `verify_drivers=True` — what `emet validate
---verify-drivers` passes, and what the engine will use — makes it an error.
+against that manifest is not, so `verify_drivers=True` (what `emet validate
+--verify-drivers` passes, and what the engine will use) makes it an error.
 `kinematics` is always strict: a body that cannot move the way it claims is a
 different class of problem from one missing an LED driver.
 """
@@ -34,7 +34,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import json
 
@@ -49,8 +49,13 @@ __all__ = [
     "ValidationError",
     "MissingPluginError",
     "PluginRegistry",
-    "SHIPPED_WAKE_WORDS",
     "BUILTIN_LOCOMOTION",
+    "BUILTIN_WAKE",
+    "BUILTIN_AUDIO",
+    "DEFAULT_WAKE_ENGINE",
+    "DEFAULT_AUDIO_SOURCE",
+    "BUILTIN_AUDIO_OUT",
+    "DEFAULT_AUDIO_SINK",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -65,16 +70,49 @@ Severity = Literal["error", "warning"]
 
 
 #: What `emet-hal` ships. Kept for documentation and for tests that must not
-#: depend on what happens to be installed — it is NOT what the validator checks
+#: depend on what happens to be installed. It is NOT what the validator checks
 #: against. `drive.kinematics` is an open enum resolved against real entry
 #: points, so a third-party `legged` package is as valid as anything here.
 BUILTIN_LOCOMOTION: frozenset[str] = frozenset({"differential", "tracked"})
 
 
-#: Provisional. Which pretrained wake words ship is not settled yet. What is
-#: settled is that `identity.wake_word` is a separate field from
-#: `identity.name`, so that the set can grow without a schema change.
-SHIPPED_WAKE_WORDS: frozenset[str] = frozenset({"emet", "hugr", "neuma"})
+#: What `emet-hal` ships today. Same status as `BUILTIN_LOCOMOTION`: not what
+#: the validator checks against, because `audio.wake.engine` is an open enum
+#: resolved against real entry points.
+#:
+#: `identity.wake_word` used to be checked against a fixed set of pretrained
+#: names, on the assumption that a wake engine can only hear words somebody
+#: trained a model for. That assumption belonged to one class of engine. A
+#: phonetic keyword spotter takes any phrase and a pronunciation, so the
+#: shipped default is `pocketsphinx` (0.3) and the field is free text: a soul
+#: may answer to whatever it likes, and whether a given engine can actually
+#: hear it is answered by `WakeDescriptor.can_detect` after `start()`, not by
+#: a list in this file.
+BUILTIN_WAKE: frozenset[str] = frozenset({"mock"})
+
+#: What `emet-hal` ships as audio sources. Same status again: documentation,
+#: not what the validator checks against.
+#:
+#: `microphone` is the default and needs no manifest entry. `wav` replays a
+#: recording through the identical path, which is how a wake failure reported
+#: by somebody else gets reproduced without their room.
+BUILTIN_AUDIO: frozenset[str] = frozenset({"microphone", "wav"})
+
+#: What an omitted field means. Most manifests will mention neither, so these
+#: are the values the engine actually runs with most of the time.
+#:
+#: They live here rather than in the engine because "what an absent field
+#: means" is part of the document's meaning, and a validator and an engine
+#: quietly disagreeing about a default is the kind of bug that only ever
+#: appears on somebody else's robot.
+DEFAULT_WAKE_ENGINE = "pocketsphinx"
+DEFAULT_AUDIO_SOURCE = "microphone"
+
+#: Audio sinks `emet-hal` ships, and the default. `null` exists so the loop can
+#: run without making a sound, which is what you want on a laptop at midnight
+#: and in any test that would otherwise play through whatever is plugged in.
+BUILTIN_AUDIO_OUT: frozenset[str] = frozenset({"speaker", "wav", "null"})
+DEFAULT_AUDIO_SINK = "speaker"
 
 
 # --------------------------------------------------------------------------
@@ -147,7 +185,7 @@ class MissingPluginError(ValidationError):
 
     Its own type because it is emphatically *not* a schema error: the document
     is well-formed and the value is legal, the software just is not present.
-    Never silently degrade because of this — that is a different failure from
+    Never silently degrade because of this; it is a different failure from
     missing hardware.
     """
 
@@ -238,8 +276,107 @@ def validate_manifest(
     _check_single_drive(capabilities, report)
     _check_mount_references(capabilities, doc, report)
     _check_plugins(capabilities, registry, report)
+    _check_wake_engine(doc, registry, report)
+    _check_audio_source(doc, registry, report)
+    _check_audio_sink(doc, registry, report)
 
     return report
+
+
+def _check_wake_engine(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.wake.engine`, the way `drive.kinematics` resolves.
+
+    Absent is fine: a manifest that says nothing about wake takes the default,
+    and most will.
+
+    Unconditional, unlike the `driver.plugin` check a few lines up, and the
+    difference is worth stating because both are open enums resolved against
+    entry points. `driver.plugin` names a driver for *a physical device*, and
+    describing a body you have not finished wiring is an ordinary thing to do,
+    so an absent one is a warning. `drive.kinematics` and `audio.wake.engine`
+    name an *implementation that has to exist* for the document to mean
+    anything: there is no half-built state in which a body moves by a
+    kinematics nobody wrote, or wakes to a detector nobody installed.
+
+    Wake has the stronger claim of the two. Every other missing piece degrades:
+    a chain that cannot find a head falls through to a light ring. A robot
+    that cannot hear its own name has no next rung, so this is the last place
+    a soft warning would be a kindness. It is also not hypothetical: Picovoice
+    disabled every free Porcupine access key on 30 June 2026, and a manifest
+    naming one went from working to unbindable overnight.
+    """
+    engine = ((doc.get("audio") or {}).get("wake") or {}).get("engine")
+    if not isinstance(engine, str) or registry.has_wake(engine):
+        return
+    installed = ", ".join(registry.wake_names) or "(none)"
+    report.error(
+        "missing_plugin",
+        f"no wake word plugin provides {engine!r}. Installed: {installed}. "
+        f"`audio.wake.engine` is an open enum: this value is legal, the "
+        f"plugin simply is not installed. Unlike a missing driver this is an "
+        f"error rather than a warning, because a robot that cannot hear its "
+        f"own name has nothing to fall back to.",
+        "/audio/wake/engine",
+    )
+
+
+def _check_audio_source(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.input.source`, on the same terms as the wake engine.
+
+    Absent is the common case and means a live microphone.
+
+    Unconditional, like `kinematics` and `wake.engine` and unlike
+    `driver.plugin`: this names an implementation that has to exist, not a
+    device you might not have wired. A body whose audio source does not resolve
+    produces no frames at all, which takes the wake engine and every voice rung
+    with it.
+    """
+    source = ((doc.get("audio") or {}).get("input") or {}).get("source")
+    if not isinstance(source, str) or registry.has_audio(source):
+        return
+    installed = ", ".join(registry.audio_names) or "(none)"
+    report.error(
+        "missing_plugin",
+        f"no audio source provides {source!r}. Installed: {installed}. "
+        f"`audio.input.source` is an open enum: this value is legal, the "
+        f"plugin simply is not installed. Omit it entirely for a live "
+        f"microphone, which is the default.",
+        "/audio/input/source",
+    )
+
+
+def _check_audio_sink(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.output.sink`, on the same terms as the input source.
+
+    Unconditional, for the same reason: it names an implementation that has to
+    exist. A body that cannot play audio has no voice rung, and every fallback
+    chain in Emet terminates in one, so this failing quietly would hollow out
+    the guarantee the whole abstraction rests on.
+    """
+    sink = ((doc.get("audio") or {}).get("output") or {}).get("sink")
+    if not isinstance(sink, str) or registry.has_audio_out(sink):
+        return
+    installed = ", ".join(registry.audio_out_names) or "(none)"
+    report.error(
+        "missing_plugin",
+        f"no audio sink provides {sink!r}. Installed: {installed}. "
+        f"`audio.output.sink` is an open enum: this value is legal, the "
+        f"plugin simply is not installed. Omit it entirely for a real speaker, "
+        f"which is the default.",
+        "/audio/output/sink",
+    )
 
 
 def _check_unique_ids(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:
@@ -334,7 +471,7 @@ def _check_plugins(
                     report.error(
                         "missing_plugin",
                         f"driver plugin {plugin!r} is not installed. Install the "
-                        f"package that provides it, or correct the name — a typo "
+                        f"package that provides it, or correct the name. A typo "
                         f"here is a different failure from missing hardware.",
                         f"/capabilities/{i}/driver/plugin",
                     )
@@ -348,7 +485,7 @@ def _check_plugins(
                     "missing_plugin",
                     f"no locomotion plugin provides {kinematics!r}. "
                     f"Installed: {', '.join(registry.locomotion_names) or '(none)'}. "
-                    f"`kinematics` is an open enum — this value is legal, the "
+                    f"`kinematics` is an open enum: this value is legal, the "
                     f"plugin simply is not installed.",
                     f"/capabilities/{i}/kinematics",
                 )
@@ -359,8 +496,8 @@ def _check_plugins(
         report.warn(
             "driver_not_installed",
             f"{len(unverified)} driver plugin(s) named here are not installed "
-            f"({', '.join(unverified)}). Legal in a manifest — describing hardware "
-            f"you have not wired yet is normal — but the engine will refuse to "
+            f"({', '.join(unverified)}). Legal in a manifest, since describing hardware "
+            f"you have not wired yet is normal, but the engine will refuse to "
             f"boot against it. Run with --verify-drivers to treat this as an error.",
             "/capabilities",
         )
@@ -371,27 +508,19 @@ def _check_plugins(
 # --------------------------------------------------------------------------
 
 
-def validate_soul(
-    doc: Any,
-    *,
-    wake_words: Iterable[str] | None = None,
-) -> ValidationReport:
+def validate_soul(doc: Any) -> ValidationReport:
+    """Validate a soul bundle.
+
+    Note what is *not* checked here. `identity.wake_word` is free text, and
+    whether it can actually be heard depends on which engine a given body
+    installs, which this document does not know and must not care about.
+    That check is a boot-time one against a live `WakeDescriptor`, and putting
+    it here would have made a soul valid or invalid depending on the machine
+    it was linted on.
+    """
     report = ValidationReport()
     if not _check_schema(doc, "soul-bundle", report):
         return report
-
-    allowed = frozenset(wake_words) if wake_words is not None else SHIPPED_WAKE_WORDS
-    identity = doc.get("identity") or {}
-    wake = identity.get("wake_word")
-    if isinstance(wake, str) and wake not in allowed:
-        report.error(
-            "unknown_wake_word",
-            f"wake_word {wake!r} is not in the shipped set: "
-            f"{', '.join(sorted(allowed))}. Custom wake words are RSV, pending "
-            f"licensing. `identity.name` is unconstrained — a soul may be called "
-            f"anything and still answer to one of these.",
-            "/identity/wake_word",
-        )
 
     weights = ((doc.get("idle") or {}).get("weights")) or {}
     if weights:
@@ -470,8 +599,8 @@ def validate_motion_pack(doc: Any) -> ValidationReport:
 def validate_chain_document(doc: Any) -> ValidationReport:
     """Validate a chain file, including the terminal-voice-rung rule.
 
-    This is the mechanical enforcement of principle 2 — every intent is always
-    satisfiable — and it is the reason the SDK rejects chains at all.
+    This is the mechanical enforcement of principle 2 (every intent is always
+    satisfiable) and it is the reason the SDK rejects chains at all.
     """
     report = ValidationReport()
 

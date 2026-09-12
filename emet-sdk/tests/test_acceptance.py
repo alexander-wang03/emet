@@ -5,7 +5,7 @@ manifests, rejects a chain whose final rung is not a voice rung, and rejects
 `kinematics: legged` with a *missing plugin* error rather than a schema error.
 
 The last two tests in this file are the ones that matter most: they are the
-evidence for claims the whole design rests on — that principle 2 is enforced
+evidence for claims the whole design rests on: that principle 2 is enforced
 mechanically, and that reserving schema now really is free later.
 """
 
@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from emet_sdk import chains, intents
+from emet_sdk.discovery import PluginRegistry
 from emet_sdk.validate import (
     load_yaml,
     validate_chain_document,
@@ -31,6 +32,10 @@ CHAINS = Path(__file__).resolve().parent.parent / "emet_sdk" / "chains"
 
 def codes(report) -> set[str]:
     return {f.code for f in report.errors}
+
+
+def warnings(report) -> set[str]:
+    return {f.code for f in report.warnings}
 
 
 # ---------------------------------------------------------------- valid
@@ -78,19 +83,60 @@ def test_invalid_manifests_are_rejected(fixture: str, expected: str):
     assert expected in codes(report), report.errors
 
 
-def test_unknown_wake_word_is_rejected():
-    report = validate_soul(load_yaml(EXAMPLES / "invalid" / "unknown-wake-word.yaml"))
-    assert not report.ok
-    assert "unknown_wake_word" in codes(report)
+def test_a_soul_may_answer_to_any_phrase():
+    """This used to be rejected, and the rule was wrong rather than strict.
 
-
-def test_name_is_unconstrained_when_wake_word_is_legal():
-    """A soul may be called anything and answer to a shipped wake word."""
-    doc = load_yaml(EXAMPLES / "invalid" / "unknown-wake-word.yaml")
-    doc["identity"]["wake_word"] = "emet"
+    P0 assumed wake detection meant a pretrained model, so only a fixed set of
+    names could be heard and `wake_word: barnaby` was an error. The shipped
+    default is a phonetic keyword spotter, which takes any phrase and a
+    pronunciation. The field is free text, and whether a particular engine can
+    hear a particular phrase is answered at boot against a live descriptor,
+    not by a list in the validator, which would make a soul valid or invalid
+    depending on which machine linted it.
+    """
+    doc = load_yaml(EXAMPLES / "emet-soul.yaml")
+    doc["identity"]["name"] = "Barnaby"
+    doc["identity"]["wake_word"] = "hey barnaby"
     report = validate_soul(doc)
     assert report.ok, report.errors
-    assert doc["identity"]["name"] == "Barnaby"
+
+
+def test_an_uninstalled_wake_engine_is_an_error():
+    """Not a warning, unlike a missing driver. `audio.wake.engine` names an
+    implementation that has to exist rather than hardware you might not have
+    wired yet, and wake is the one thing with no rung beneath it."""
+    report = validate_manifest(load_yaml(EXAMPLES / "invalid" / "unknown-wake-engine.yaml"))
+    assert not report.ok
+    assert "missing_plugin" in codes(report)
+
+
+def test_an_uninstalled_driver_is_still_only_a_warning():
+    """The other half of that distinction, pinned so the two do not drift
+    together. Describing a body you have not finished building is normal."""
+    doc = load_yaml(EXAMPLES / "scout-01.yaml")
+    doc["capabilities"][0]["driver"]["plugin"] = "nobody.ships.this"
+    report = validate_manifest(doc)
+    assert report.ok, report.errors
+    assert "driver_not_installed" in warnings(report)
+
+
+def test_every_invalid_fixture_is_actually_rejected():
+    """The contract of `examples/invalid/`: plain `emet validate` rejects all
+    of it.
+
+    That rule lived only in the CI workflow, so a fixture that merely warned
+    could be added, pass every test here, and turn the pipeline red afterwards.
+    Which is exactly what happened. Sweeping the directory keeps the rule and
+    the fixtures in the same place.
+    """
+    from emet_sdk.cli import _validate_path
+
+    registry = PluginRegistry.discover()
+    fixtures = sorted((EXAMPLES / "invalid").glob("*.yaml"))
+    assert fixtures, "no invalid fixtures found; the glob or the path is wrong"
+    for path in fixtures:
+        kind, report = _validate_path(path, registry)
+        assert not report.ok, f"{path.name} validated clean as {kind!r}"
 
 
 # ------------------------------------------- the two that carry the design
@@ -101,7 +147,7 @@ def test_chain_without_voice_rung_is_rejected():
 
     Every intent is always satisfiable because every chain terminates in a
     rung that cannot fail to bind. Nothing in the engine checks this at
-    runtime — it cannot get past the validator.
+    runtime; it cannot get past the validator.
     """
     report = validate_chain_document(
         load_yaml(EXAMPLES / "invalid" / "unterminated-chain.yaml")
@@ -164,7 +210,7 @@ def test_reserved_intents_are_legal_to_emit():
     """A soul written today may reach for an intent that lands in 2033.
 
     Because the vocabulary is closed, an unreserved name would make the whole
-    bundle *invalid* rather than merely ineffective — and bundles are the
+    bundle *invalid* rather than merely ineffective, and bundles are the
     artifact strangers publish and keep for years.
     """
     for kind in ("manipulate", "navigate", "gesture", "attend_joint"):
@@ -238,3 +284,23 @@ def test_motion_pack_rejects_unknown_intent():
     report = validate_motion_pack(pack)
     assert not report.ok
     assert "unknown_intent" in codes(report)
+
+
+# ----------------------------------------------------------------- version
+
+
+def test_the_reported_version_matches_the_installed_distribution():
+    """One declaration, in `pyproject.toml`, read back at import time.
+
+    This test exists because the two used to be written separately and drifted:
+    the installed metadata said 0.1.0 while the source said 0.2.0, and
+    nothing noticed because nothing compared them. A version that is quietly
+    wrong is worse than no version, because it gets reported in bug reports as
+    fact.
+    """
+    from importlib.metadata import version
+
+    import emet_sdk
+
+    assert emet_sdk.__version__ == version("emet-sdk")
+    assert emet_sdk.__version__ != "0+unknown", "package is not installed"

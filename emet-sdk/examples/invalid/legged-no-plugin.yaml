@@ -3,7 +3,7 @@
 # This is the most important fixture in the set. It proves two things at once:
 #
 #   1. `kinematics` is an OPEN enum. `legged` is not rejected as a schema
-#      violation — it is a perfectly legal value naming a plugin that has not
+#      violation; it is a perfectly legal value naming a plugin that has not
 #      been written yet. If this file produced a schema error, the enum would
 #      be closed and bipeds would be unexpressible.
 #
@@ -15,7 +15,7 @@
 # legs, low centre of mass, large feet, static gait. It walks by shifting its
 # weight fully onto one foot at a time and never enters a falling phase.
 #
-# Expected: exactly one error — missing_plugin, /capabilities/0/kinematics
+# Expected: exactly one error, missing_plugin, /capabilities/0/kinematics
 
 manifest_version: "0.1"
 
@@ -45,7 +45,7 @@ capabilities:
       max_angular_rps: 0.5
       accel_limit_mps2: 0.2
     odometry: none
-    legs:                          # RSV — reserved, ignored by the P0 engine
+    legs:                          # RSV  reserved, ignored by the P0 engine
       count: 2
       dof_per_leg: 3
       gait: static

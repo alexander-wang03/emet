@@ -5,7 +5,7 @@
 
 `explain` is the one to reach for when a robot is not doing what you expected.
 It prints the binding table: for every intent, which part of *this* body
-performs it, and — for anything that fell short of its best option — which
+performs it, and, for anything that fell short of its best option, which
 rungs were skipped and why.
 
 Exit codes: 0 clean, 1 validation errors, 2 usage or IO failure.
@@ -36,7 +36,7 @@ from emet_sdk.validate import (
 )
 
 # ASCII on purpose. This runs over SSH on a Pi, under cron, and in CI, where
-# the console encoding is not ours to assume — a status line that raises
+# the console encoding is not ours to assume; a status line that raises
 # UnicodeEncodeError is worse than a plain one.
 _MARKS = {"error": "x", "warning": "!"}
 
@@ -139,7 +139,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
             continue
         try:
             kind, report = _validate_path(path, registry)
-        except Exception as exc:  # noqa: BLE001 — surfaced to the user, not swallowed
+        except Exception as exc:  # noqa: BLE001  # surfaced to the user, not swallowed
             report = ValidationReport()
             report.error("read_error", f"{type(exc).__name__}: {exc}")
             kind = "unknown"
@@ -192,7 +192,7 @@ def _shipped_chain_files() -> list[Path]:
 
 
 def _load_chains(extra: list[str] | None) -> dict:
-    """SDK defaults first, then any override file — later wins.
+    """SDK defaults first, then any override file; later wins.
 
     That ordering is how per-soul chain overrides are meant to work: a bundle
     ships only the ladders it wants to change.
@@ -222,7 +222,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     # the wrong file should be told which file and why, not shown a stack.
     try:
         manifest = load_yaml(manifest_path)
-    except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+    except Exception as exc:  # noqa: BLE001  # reported, not swallowed
         print(f"FAIL {manifest_path}  (unreadable)")
         print(f"     x read_error")
         for line in f"{type(exc).__name__}: {exc}".splitlines():
@@ -232,7 +232,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     if not isinstance(manifest, Mapping) or "manifest_version" not in manifest:
         print(f"FAIL {manifest_path}  (not a manifest)")
         print("     x unknown_document")
-        print("       `emet explain` needs a body manifest — a document with a")
+        print("       `emet explain` needs a body manifest, a document with a")
         print("       top-level `manifest_version` key. For soul bundles and")
         print("       motion packs, use `emet validate`.")
         return 1
@@ -263,7 +263,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     table = resolve(chains, caps)
 
     body = (manifest.get("body") or {}).get("id", "?")
-    print(f"BINDING TABLE  —  {manifest_path}   (body: {body})")
+    print(f"BINDING TABLE  {manifest_path}   (body: {body})")
     print(f"{len(caps)} capabilities, {len(table)} intents, "
           f"{len(table.hardware_bound)} bound to hardware, "
           f"{len(table.voice_bound)} to voice")
@@ -291,7 +291,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         print()
         print("  Actuators no intent binds to:")
         for cap_id in unused:
-            print(f"    {cap_id} — {reasons.get(cap_id, 'bound by nothing')}")
+            print(f"    {cap_id}: {reasons.get(cap_id, 'bound by nothing')}")
 
     if args.why and not degraded:
         # Silence here would read as "the flag did nothing" rather than as the
@@ -310,7 +310,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="emet",
-        description="Emet — validate body manifests, soul bundles, motion packs, and chains.",
+        description="Emet: validate body manifests, soul bundles, motion packs, and chains.",
     )
     parser.add_argument("--version", action="version", version=f"emet-sdk {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -328,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument(
         "--verify-drivers",
         action="store_true",
-        help="require every driver plugin to be installed — what the engine does at "
+        help="require every driver plugin to be installed, which is what the engine does at "
              "boot. Off by default, because describing hardware you have not wired "
              "yet is a normal thing to do.",
     )

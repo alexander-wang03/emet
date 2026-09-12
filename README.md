@@ -13,26 +13,45 @@ is a promise: the thing you are talking to is honest about what it is.
 
 ---
 
-## Status: 0.2 (early)
+## Status: 0.3 (early)
 
-Emet does not yet listen, speak, remember, or move. Nothing here drives a servo.
+Emet listens. It does not yet understand, remember, or move, and nothing here
+drives a servo.
 
-What it does today is answer one question: **given a robot, what would each
-intent mean on it?** That question turns out to be the whole product in
-miniature.
+What it does today is two things. It hears its own name and works out when you
+have finished speaking:
+
+```sh
+$ emet-listen examples/scout-01.yaml examples/emet-soul.yaml
+listening for 'hey emet'
+  engine   pocketsphinx
+  source   microphone
+  audio    16000 Hz, 80 ms frames
+  patience 900 ms
+  (ctrl-c to stop)
+
+  heard 'hey emet'  (confidence 1.00)
+    then 4.0s of speech, ended on silence
+```
+
+There is no speech recognition yet, so it cannot tell you *what* you said. That
+arrives in 0.4.
+
+And it answers the question the whole design rests on: **given a robot, what
+would each intent mean on it?**
 
 ```sh
 $ emet explain examples/bodiless.yaml
-BINDING TABLE  —  examples/bodiless.yaml   (body: bodiless)
+BINDING TABLE  examples/bodiless.yaml   (body: bodiless)
 0 capabilities, 31 intents, 0 bound to hardware, 31 to voice
 
-    express.curiosity  voice   inflect   preset=rising filler=['hm?', 'hmm.']
+  ~ express.curiosity  voice        inflect      filler=['hm?', 'hmm.'] preset=rising
 
 $ emet explain examples/mock-scout.yaml
-BINDING TABLE  —  examples/mock-scout.yaml   (body: mock_scout)
+BINDING TABLE  examples/mock-scout.yaml   (body: mock_scout)
 5 capabilities, 31 intents, 30 bound to hardware, 1 to voice
 
-    express.curiosity  head    tilt      angle_deg=12 speed=0.4 hold_ms=700
+    express.curiosity  head         tilt         angle_deg=12 hold_ms=700 speed=0.4
 ```
 
 Same personality, same configuration, two bodies. Nobody wrote an `if`
@@ -71,11 +90,20 @@ from a promise someone has to remember into something the software enforces.
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]"   # Windows: .venv\Scripts\pip
+.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-engine[dev]"   # Windows: .venv\Scripts\pip
 
 cd emet-sdk
 emet validate examples/mock-scout.yaml --verify-drivers
 emet explain  examples/scout-01.yaml --why
+```
+
+To hear it wake, add the optional microphone and wake-engine extras and run the
+listen loop. On Linux the `audio` extra needs the system PortAudio
+(`apt install libportaudio2`).
+
+```sh
+pip install -e "emet-hal[audio,wake]"
+emet-listen examples/scout-01.yaml examples/emet-soul.yaml
 ```
 
 `--why` is the one to remember. When a robot is not doing what you expected, it
@@ -92,7 +120,7 @@ tells you which rungs were skipped and what was wrong with each:
 |---|---|
 | `emet-sdk/` | Types, schemas, the intent vocabulary, chain resolution. The contract everything agrees on. |
 | `emet-hal/` | Drivers and locomotion plugins. Where hardware support goes. |
-| `emet-engine/` | Personality, memory, arbitration. Does not exist yet. |
+| `emet-engine/` | The listen loop: wake, endpointing, audio in and out. Personality, memory and arbitration arrive from 0.4. |
 
 ## Documentation
 
@@ -101,6 +129,10 @@ tells you which rungs were skipped and what was wrong with each:
   it did.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)**: what is open to contribution, the
   design rules that are not negotiable, and how to run what CI runs.
+- **[RELEASING.md](RELEASING.md)**: the checklist every release goes through,
+  and what went wrong to put each item on it.
+- **[CITATIONS.md](CITATIONS.md)**: outside work whose ideas, findings, or data
+  shaped Emet, and the licence attached to each.
 - **[TRADEMARK.md](TRADEMARK.md)**: the code is yours to fork; the name is not.
 
 ## Licence

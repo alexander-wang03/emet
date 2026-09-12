@@ -2,8 +2,8 @@
 #
 # Two things are checked, and the second matters more than it looks.
 #
-#   tests     — the 0.1 acceptance criteria, executable.
-#   layering  — emet_sdk imports nothing internal; emet_hal and emet_engine
+#   tests:    the 0.1 acceptance criteria, executable.
+#   layering: emet_sdk imports nothing internal; emet_hal and emet_engine
 #               import emet_sdk only.
 #
 # The layering check exists because the closed-engine plan used to enforce that
@@ -13,7 +13,7 @@ name: ci
 
 # Branch work is covered by `pull_request`; `push` only guards what lands.
 # Triggering on both for every branch ran the whole suite twice per push,
-# doubling Actions minutes — which are metered on private repositories — and
+# doubling Actions minutes, which are metered on private repositories, and
 # filling the checks list with confusing (push)/(pull_request) pairs.
 on:
   push:
@@ -39,6 +39,12 @@ jobs:
           python-version: "3.13"
       - name: Check package layering
         run: python tools/check_layering.py .
+
+      # Cross-package invariants no single suite can see: the three packages
+      # agreeing about the version, every discovery group having something
+      # behind it, and no document advertising a version the code is not.
+      - name: Check release invariants
+        run: python tools/release_check.py .
 
   dco:
     name: dco sign-off
@@ -82,7 +88,7 @@ jobs:
       # In a source checkout `schemas/` sits BESIDE the package; in a built
       # wheel `force-include` moves it INSIDE. An editable install keeps the
       # source layout, so every other job in this file exercises only one of
-      # those two paths — and it is the path no user of the project ever takes.
+      # those two paths, and it is the path no user of the project ever takes.
       #
       # A typo in the force-include would leave the whole suite green and break
       # the first person to run `pip install emet-sdk`. So: build a real wheel,
@@ -93,6 +99,7 @@ jobs:
           python -m pip install --upgrade build
           python -m build --wheel emet-sdk
           python -m build --wheel emet-hal
+          python -m build --wheel emet-engine
 
       - name: Data files are actually inside the wheel
         run: |
@@ -118,7 +125,7 @@ jobs:
 
       - name: Install the wheels, not the source
         run: |
-          python -m pip install emet-sdk/dist/*.whl emet-hal/dist/*.whl
+          python -m pip install emet-sdk/dist/*.whl emet-hal/dist/*.whl emet-engine/dist/*.whl
 
       # `cd /tmp` is the point of this step: from here the source checkout is
       # not on the path, so anything that resolves must be coming out of the
@@ -127,6 +134,7 @@ jobs:
         run: |
           cd /tmp
           emet --version
+          emet-listen --help > /dev/null
           emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/bodiless.yaml"
           emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --verify-drivers
           emet explain  "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --why
@@ -135,12 +143,27 @@ jobs:
         run: |
           cd /tmp
           python - <<'PY'
+          from importlib.metadata import version
           from emet_sdk.discovery import PluginRegistry
+
           r = PluginRegistry.discover()
           assert r.has_locomotion("differential"), "entry points did not survive packaging"
           assert r.has_locomotion("tracked")
           assert r.has_driver("emet_hal.mock")
+          assert r.has_wake("pocketsphinx"), "wake group did not survive packaging"
+          assert r.has_audio("microphone"), "audio group did not survive packaging"
+          assert r.has_audio_out("speaker"), "audio_out group did not survive packaging"
           print("discovered:", [f"{g}:{n}" for g, n in r])
+
+          # The version is declared once, in pyproject.toml, and read back
+          # through importlib.metadata. From a wheel that resolution path is
+          # different from an editable install, so it is worth checking here
+          # rather than only in the test suite.
+          import emet_sdk, emet_hal, emet_engine
+          for dist, mod in (("emet-sdk", emet_sdk), ("emet-hal", emet_hal), ("emet-engine", emet_engine)):
+              assert mod.__version__ == version(dist), f"{dist} version drifted"
+              assert mod.__version__ != "0+unknown", f"{dist} reports no version"
+          print("versions:", emet_sdk.__version__)
           PY
 
   test:
@@ -164,6 +187,17 @@ jobs:
         run: |
           python -m pip install -e "emet-sdk[dev]"
           python -m pip install -e "emet-hal[dev]"
+          python -m pip install -e "emet-engine[dev]"
+
+      # The shipped wake engine, which is an optional extra rather than a hard
+      # dependency. pocketsphinx publishes cp311 and cp313 wheels and no cp312
+      # one, so installing it everywhere would make the 3.12 job compile a
+      # speech decoder from source. The wake tests `importorskip`, so 3.12 runs
+      # the rest of the suite and skips them, and the engine is still exercised
+      # on two of the three versions.
+      - name: Install the wake engine where a wheel exists
+        if: matrix.python-version != '3.12'
+        run: python -m pip install -e "emet-hal[wake]"
 
       - name: Test emet-sdk
         working-directory: emet-sdk
@@ -173,8 +207,15 @@ jobs:
         working-directory: emet-hal
         run: python -m pytest -q
 
+      # Runs without a microphone or an acoustic model: the loop is exercised
+      # through a wav file and the mock detector, both reached by the same
+      # entry-point discovery the real ones use.
+      - name: Test emet-engine
+        working-directory: emet-engine
+        run: python -m pytest -q
+
       # Exercises the CLI against the editable install. This does NOT prove the
-      # packaged layout works — see the `wheel` job for that.
+      # packaged layout works; see the `wheel` job for that.
       - name: CLI accepts the valid examples
         working-directory: emet-sdk
         run: emet validate examples/bodiless.yaml examples/scout-01.yaml examples/emet-soul.yaml

@@ -6,7 +6,7 @@
 # treaded scout without modification.
 #
 # This manifest must stay valid forever. It is the proof that the
-# abstraction is real — if a plain box that remembers you and tells you the
+# abstraction is real: if a plain box that remembers you and tells you the
 # truth about itself is charming, everything else is addition.
 
 manifest_version: "0.1"
@@ -17,7 +17,7 @@ body:
   scale: desk
   power: plugged_in
   description: >
-    A small grey speakerphone. No moving parts, no lights, no screen —
+    A small grey speakerphone. No moving parts, no lights, no screen,
     just a microphone, a speaker, and whatever is listening through them.
 
 compute:

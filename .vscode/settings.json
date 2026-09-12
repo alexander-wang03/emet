@@ -1,0 +1,11 @@
+{
+  // Emet uses a DCO, so every commit needs a Signed-off-by line and CI
+  // rejects pull requests without one. This makes the built-in Git UI add it
+  // for you, so contributing never involves learning what a DCO is.
+  //
+  // There is no git config that does this. `commit.signoff` is not a real
+  // option and git ignores it silently; `format.signoff` applies only to
+  // `git format-patch`. The flag has to come from the client, which is why
+  // this setting is checked in rather than left to each person to discover.
+  "git.alwaysSignOff": true
+}

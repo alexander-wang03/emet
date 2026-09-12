@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 __all__ = [
     "Priority",
@@ -25,6 +25,12 @@ __all__ = [
     "Twist",
     "CapabilityDescriptor",
     "LocomotionDescriptor",
+    "WakeDescriptor",
+    "WakeEvent",
+    "AudioFormat",
+    "AudioSource",
+    "AudioSink",
+    "SAMPLE_BYTES",
     "Health",
     "Reading",
     "Sensitivity",
@@ -36,8 +42,8 @@ class Priority(IntEnum):
     """Arbitration order. Highest wins; ties break by recency.
 
     P0 is one intent per actuator: a higher-priority intent preempts, and the
-    lower one is dropped rather than queued. Per-actuator blending — expressing
-    curiosity with the eyes *while* attending with the head — is V1.
+    lower one is dropped rather than queued. Per-actuator blending (expressing
+    curiosity with the eyes *while* attending with the head) is V1.
     """
 
     SAFETY = 100      # thermal, estop, joint limit, brownout recovery
@@ -132,7 +138,7 @@ class Twist:
     """A desired velocity, handed to a locomotion plugin.
 
     The engine says how fast to go and how fast to turn. Everything below this
-    line — wheel arithmetic, gait phase, balance — belongs to the plugin.
+    line (wheel arithmetic, gait phase, balance) belongs to the plugin.
     """
 
     linear_mps: float = 0.0
@@ -180,6 +186,150 @@ class LocomotionDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class WakeDescriptor:
+    """What a wake word engine can actually hear, reported after `start()`.
+
+    No chain binds against this, because there is no wake chain, but the boot
+    check does. A soul asking for a phrase this instance cannot detect is a
+    robot that will never answer to its own name, and unlike a missing head
+    there is nothing to degrade to. That has to fail at boot, loudly.
+    """
+
+    engine: str
+    #: Phrases this instance loaded a model for. Empty is legal and honest for
+    #: an engine that failed to load one; it is not the same as `healthy=False`,
+    #: which means the engine itself is broken.
+    phrases: frozenset[str] = frozenset()
+    #: Advisory, and deliberately NOT consulted by `can_detect`. Whether this
+    #: *engine* can be pointed at an arbitrary phrase given a pronunciation, as
+    #: a phonetic spotter can and a trained classifier cannot. Tooling uses it
+    #: to explain the options; it says nothing about what this instance is
+    #: currently listening for, which is `phrases`.
+    supports_custom_phrases: bool = False
+    #: The audio contract. The engine feeds frames at this rate and size; a
+    #: plugin that needs something else says so here rather than resampling
+    #: quietly and drifting.
+    sample_rate: int = 16000
+    frame_samples: int = 1280
+    healthy: bool = True
+
+    def can_detect(self, phrase: str) -> bool:
+        """Whether this instance, as configured and started, would hear `phrase`.
+
+        Does not consult `supports_custom_phrases`. An engine that *could* be
+        configured for any phrase is still only listening for what it actually
+        loaded, and conflating the two would let a healthy engine claim it
+        hears a name nobody ever gave it.
+        """
+        return self.healthy and phrase in self.phrases
+
+
+@dataclass(frozen=True, slots=True)
+class WakeEvent:
+    """The robot heard its name."""
+
+    phrase: str
+    confidence: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+#: Audio is int16 throughout. Two bytes a sample, everywhere.
+SAMPLE_BYTES = 2
+
+
+@dataclass(frozen=True, slots=True)
+class AudioFormat:
+    """The shape of the audio crossing the boundary. Mono int16, always.
+
+    Defaults are what the shipped wake engine asks for. A body with a
+    four-capsule array downmixes before this point, so nothing above the HAL
+    counts microphones.
+    """
+
+    sample_rate: int = 16000
+    frame_samples: int = 1280
+
+    @property
+    def frame_bytes(self) -> int:
+        return self.frame_samples * SAMPLE_BYTES
+
+    @property
+    def frame_ms(self) -> float:
+        return 1000.0 * self.frame_samples / self.sample_rate
+
+
+@runtime_checkable
+class AudioSource(Protocol):
+    """Something producing mono int16 frames at a known rate.
+
+    Here rather than in `emet_hal` because it is the seam the engine sees. The
+    engine may import `emet_sdk` and nothing else, so a microphone reaches it
+    as this Protocol and never as a concrete class, which is the same reason
+    a servo reaches it as `ActuatorPlugin`. Put this type in the HAL and the
+    engine cannot describe its own input.
+
+    `read()` returns exactly `format.frame_bytes` bytes, or None when the
+    source has ended: a file always does, a microphone never should.
+
+    **Construction.** Implementations discovered through the `emet.audio`
+    entry-point group are built as `cls(config, fmt)`, where `config` is the
+    manifest's `audio.input` block and `fmt` the format the consumer needs.
+    Same shape as a plugin receiving its capability block, and for the same
+    reason: the caller has a name and a mapping, never a class it imported.
+    """
+
+    format: AudioFormat
+
+    async def start(self) -> None: ...
+
+    async def read(self) -> bytes | None: ...
+
+    async def stop(self) -> None: ...
+
+
+@runtime_checkable
+class AudioSink(Protocol):
+    """Somewhere mono int16 audio goes. The other half of the hardware floor.
+
+    Deliberately shaped the opposite way round from `AudioSource`, and kept a
+    separate group for that reason: audio is *pushed* into a sink and *pulled*
+    from a source. Forcing both into one contract would give every microphone a
+    `play` it cannot honour.
+
+    Splitting them also lets the two be chosen independently, which is how a
+    wake failure gets debugged: read from a recording, play to a real speaker,
+    or read from a microphone and write what was said to a file.
+
+    **Construction** matches sources exactly. Implementations discovered
+    through the `emet.audio_out` entry-point group are built as
+    `cls(config, fmt)`, where `config` is the manifest's `audio.output` block.
+    """
+
+    format: AudioFormat
+
+    async def start(self) -> None: ...
+
+    async def play(self, pcm: bytes) -> None:
+        """Play a whole buffer, returning when it has finished."""
+        ...
+
+    async def cancel(self) -> None:
+        """Stop immediately, mid-word if need be.
+
+        Barge-in depends on this: `DESIGN.md` §13 requires that speech during
+        playback stops the audio rather than queueing behind it. A sink that
+        cannot be interrupted makes the robot talk over the person correcting
+        it, which is the single rudest thing it could do.
+        """
+        ...
+
+    async def stop(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
 class Health:
     """RSV. Polled by the engine; feeds proprioceptive self-model updates so
     that "my left wheel isn't responding" can enter context and the character
@@ -196,7 +346,7 @@ class Reading:
     """One typed observation from a sensor.
 
     Sensors invert the flow of the rest of the system: the engine polls them
-    and consumes what comes back. A sensor never emits an intent — deciding
+    and consumes what comes back. A sensor never emits an intent: deciding
     what an observation *means* is the engine's job, and letting hardware
     push intents would put a driver author in charge of the personality.
     """
@@ -211,7 +361,7 @@ class Sensitivity(IntEnum):
     """Memory disclosure levels.
 
     OPEN and PERSONAL are left to the character's judgement. PRIVATE and
-    SEALED are enforced in the retrieval query — the soul never receives them,
+    SEALED are enforced in the retrieval query: the soul never receives them,
     so it cannot disclose them regardless of what it is talked into. A hard
     floor on the catastrophic cases, personality everywhere above it.
     """

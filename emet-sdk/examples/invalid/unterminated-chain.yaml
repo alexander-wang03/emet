@@ -1,6 +1,6 @@
 # INVALID: a chain that does not end in a voice rung.
 #
-# This is the fixture that guards principle 2 — every intent is always
+# This is the fixture that guards principle 2: every intent is always
 # satisfiable. The chain below is entirely reasonable on a robot with a head
 # and eyes, and completely unbindable on the bodiless manifest that must keep
 # working forever.
