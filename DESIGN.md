@@ -953,7 +953,8 @@ bump; removing one is major.
 ### 12.3 Speech recognition plugins
 
 `emet.stt` is the seventh group, the first whose name comes from the soul, and
-the first to exist before anything real implements it.
+the first to have existed before anything real implemented it: the mock
+shipped, then Deepgram, through the same seam.
 
 ```python
 class DeepgramTranscriber(TranscriberPlugin):
@@ -1003,12 +1004,15 @@ account, so an absent provider means no transcription, and asking for it anyway
 (`emet-listen --transcribe`) is an error that names the field to set. Choosing a
 vendor quietly would spend somebody's credits without asking.
 
-**Why a category, before any provider exists.** The same reason wake is one,
+**Why a category, before any provider existed.** The same reason wake is one,
 arrived at in advance rather than after a shutdown. A vendor's client library
 is the easiest possible thing to build a release around, and there are credits
-enough at one of them to do so without noticing. The seam is built first so
-that the first real call is made through it. Behind the seam, the provider is
+enough at one of them to do so without noticing. The seam was built first so
+that the first real call was made through it. Behind the seam, the provider is
 one line of a soul; in front of it, it would have been the shape of the engine.
+The shipped Deepgram plugin speaks the wire protocol directly and depends on a
+WebSocket client alone, for the same reason: a vendor SDK is the vendor's shape
+arriving by another door.
 
 **Streaming is the contract; batch is the degenerate case.** Frames go in as
 they are captured. A streaming provider answers with partials while the person

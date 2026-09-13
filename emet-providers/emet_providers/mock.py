@@ -20,7 +20,10 @@ Params, all optional:
                     frame as partials, then the whole line as the final. For
                     a live microphone or a replay of a real recording, whose
                     bytes spell nothing on purpose and the odd short word by
-                    accident.
+                    accident. It says its line after a false wake too, since
+                    it hears no speech to wait for; the engine reports the
+                    turn as a false wake beside it, and a real provider
+                    returns an empty final there.
     fail_on_start   bool. Pretend the service is unreachable. `start()`
                     completes and `describe()` reports unhealthy, which is
                     how a real provider reports a dead network.

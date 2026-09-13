@@ -470,7 +470,7 @@ def test_asking_with_no_provider_anywhere_names_the_fields_to_set(tmp_path):
 
 
 def test_an_uninstalled_provider_is_a_missing_plugin(tmp_path):
-    session = transcribing(tmp_path, "d.wav", frame(), soul_doc=soul(provider="deepgram"))
+    session = transcribing(tmp_path, "d.wav", frame(), soul_doc=soul(provider="whisper"))
     with pytest.raises(MissingPluginError):
         run(session.start())
     run(session.stop())

@@ -181,6 +181,7 @@ def test_transcribe_prints_partials_as_they_arrive_and_then_what_was_said(
     assert "  stt      mock (streaming)" in out
     assert "    hearing 'what time'" in out
     assert "    said 'what time is it'" in out
+    assert "stt final" in out, "the time to the final transcript is part of --stats"
     # The wake prints when it is heard, before the words that follow it.
     assert out.index("heard 'hey emet'") < out.index("hearing 'what'")
 
@@ -212,16 +213,33 @@ def test_transcribe_with_no_provider_configured_says_which_field_to_set(
 def test_transcribe_with_an_uninstalled_provider_is_a_missing_plugin(
     tmp_path, monkeypatch, capsys
 ):
-    """The reference soul names deepgram, and nothing ships it yet. That has
-    to be the plain missing-plugin message, not a stack trace."""
+    """A provider nobody has packaged has to be the plain missing-plugin
+    message, not a stack trace."""
     wav = write_wav(tmp_path / "dg.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="whisper", key_env="EMET_OPENAI_KEY"))
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--transcribe"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "whisper" in err and "missing_plugin" in err
+
+
+def test_transcribe_with_the_reference_provider_and_no_key_names_the_variable(
+    tmp_path, monkeypatch, capsys
+):
+    """The reference soul names deepgram. Without the key, the run must stop
+    before any network is touched and say which variable to export."""
+    monkeypatch.delenv("EMET_DEEPGRAM_KEY", raising=False)
+    wav = write_wav(tmp_path / "nokey.wav", saying(1))
     stub_loaders(monkeypatch, body(wav), soul(provider="deepgram", key_env="EMET_DEEPGRAM_KEY"))
 
     rc = cli.main(["body.yaml", "soul.yaml", "--transcribe"])
 
     err = capsys.readouterr().err
     assert rc == 1
-    assert "deepgram" in err and "missing_plugin" in err
+    assert "EMET_DEEPGRAM_KEY" in err
+    assert "will not run" in err
 
 
 def test_a_false_wake_under_transcribe_reports_an_empty_final(tmp_path, monkeypatch, capsys):

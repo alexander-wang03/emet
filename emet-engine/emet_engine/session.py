@@ -382,10 +382,17 @@ class ListenSession:
                 pending = None
 
     async def _transcribed(self, utterance: Utterance) -> Utterance:
-        """Close the transcriber's utterance and attach what it heard."""
+        """Close the transcriber's utterance and attach what it heard.
+
+        Timed, and kept apart from the per-frame budget: this is the wait
+        between the person stopping and the words existing, which is the
+        first latency 0.4 has to answer for.
+        """
         if self._stt is None:
             return utterance
-        final = await self._stt.finish()
+        with Stopwatch() as watch:
+            final = await self._stt.finish()
+        self.stats.record_final(watch.elapsed_ms)
         return replace(utterance, transcript=final)
 
     # -------------------------------------------------------------- honesty

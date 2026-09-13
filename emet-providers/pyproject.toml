@@ -19,6 +19,12 @@ keywords = ["emet", "robotics", "stt", "providers"]
 dependencies = ["emet-sdk>=0.1"]
 
 [project.optional-dependencies]
+# The Deepgram transcriber speaks the wire protocol itself and needs only a
+# WebSocket client. Optional because a body with no key, or no network, has
+# no use for it. websockets is BSD-3-Clause and ships cp311 to cp313 wheels
+# for aarch64 Linux (PyPI, 2026-09-12); 13 is where its asyncio client took
+# `additional_headers`.
+deepgram = ["websockets>=13"]
 dev = ["pytest>=8.0"]
 
 # Installing a package is what makes a provider exist. The entry-point name is
@@ -26,6 +32,7 @@ dev = ["pytest>=8.0"]
 # `audio.stt.provider` to take the choice over.
 [project.entry-points."emet.stt"]
 "mock" = "emet_providers.mock:MockTranscriber"
+"deepgram" = "emet_providers.deepgram:DeepgramTranscriber"
 
 [tool.hatch.build.targets.wheel]
 packages = ["emet_providers"]

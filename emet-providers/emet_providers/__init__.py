@@ -15,10 +15,11 @@ Layering, enforced in CI: this package imports `emet_sdk` and nothing else.
 
 Shipped:
 
-    mock    a transcriber that reads words out of the bytes it is given
+    mock        a transcriber that reads words out of the bytes it is given
+    deepgram    streaming recognition through Deepgram      (extra: deepgram)
 
-No real provider yet. The seam exists first, so that the first call to a
-vendor is made through it rather than around it.
+The mock came first, so that the first real provider was written against the
+contract rather than the contract against the provider.
 """
 
 from importlib import metadata as _metadata

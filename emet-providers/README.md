@@ -15,10 +15,28 @@ wakes should not install them. So they live here.
 | Entry point | Group | What it is |
 |---|---|---|
 | `mock` | `emet.stt` | Reads words out of the bytes it is given, one partial a frame, then a final |
+| `deepgram` | `emet.stt` | Streaming recognition through Deepgram, `nova-3` unless the soul says otherwise. Extra: `deepgram` |
 
-**No real provider yet.** The seam shipped first, so that the first call to a
-vendor is made through it. `DESIGN.md` section 12.3 has the contract and the
-reasoning.
+The mock shipped first, so that the first real provider was written against
+the seam rather than the seam around it. `DESIGN.md` section 12.3 has the
+contract and the reasoning.
+
+## Keys
+
+Bring your own. The soul names the environment variable (`key_env`, and the
+reference soul says `EMET_DEEPGRAM_KEY`); the key itself is never written
+into a soul or a manifest. Export it in the shell that runs the robot:
+
+```sh
+export EMET_DEEPGRAM_KEY=...        # from console.deepgram.com
+pip install -e "emet-providers[deepgram]"
+```
+
+At boot the plugin opens and closes one connection, so a missing key, a
+rejected key (HTTP 401) or an unreachable network is reported in those words
+before the first question, and the robot refuses to run half-deaf. Keys for
+speech recognition come from the vendor; Emet never sees them except to send
+them in the handshake.
 
 ## How a provider is chosen
 
@@ -26,7 +44,7 @@ The soul names it, under `models.stt`:
 
 ```yaml
 models:
-  stt: {provider: deepgram, model: "nova-2", key_env: "EMET_DEEPGRAM_KEY"}
+  stt: {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}
 ```
 
 The key is the owner's and travels with the soul, so the choice is a soul

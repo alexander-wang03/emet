@@ -68,12 +68,12 @@ audio:
     # wakes from two in three to three in three.
     # params:
     #   cmninit: "43.0,6.0,5.6,8.1,-5.9,-1.9,-8.2,-0.5,-0.9,3.4,7.6,-1.3,-0.4"
-  # Speech recognition. The reference soul names a real provider under
-  # `models.stt`, and until one ships `--transcribe` on this body needs the
-  # mock, which reads nothing out of a real microphone: give it a line to say
-  # and it streams that, one word a frame, after every wake. Uncomment to run
-  # the seam on the body; leave commented so the shipped example stays honest
-  # about what this body understands, which is nothing yet.
+  # Speech recognition. The reference soul names deepgram under `models.stt`;
+  # with `emet-providers[deepgram]` installed and the key exported as
+  # EMET_DEEPGRAM_KEY, `--transcribe` runs against it and this block stays
+  # commented. Without a key, or offline, uncomment it and the body takes the
+  # choice over with the mock, which reads nothing out of a real microphone
+  # and so is given a line to say, one word a frame, after every wake.
   # stt:
   #   provider: mock
   #   params: {transcript: "testing the seam"}

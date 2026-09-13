@@ -123,7 +123,7 @@ DEFAULT_AUDIO_SINK = "speaker"
 #: account with a key the owner brings, and nobody can be assumed to hold one,
 #: so an absent provider means "no transcription", and asking for it anyway is
 #: an error that names the field to set. See `emet_sdk.models.stt_selection`.
-BUILTIN_STT: frozenset[str] = frozenset({"mock"})
+BUILTIN_STT: frozenset[str] = frozenset({"mock", "deepgram"})
 
 
 # --------------------------------------------------------------------------

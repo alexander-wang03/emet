@@ -70,6 +70,6 @@ memory:
 
 models:
   chat:  {provider: openai,   model: "gpt-4o", key_env: "EMET_OPENAI_KEY"}
-  stt:   {provider: deepgram, model: "nova-2", key_env: "EMET_DEEPGRAM_KEY"}
+  stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}
   tts:   {provider: local_piper}
   micro: {provider: local,    model: "qwen3-0.6b-q4"}

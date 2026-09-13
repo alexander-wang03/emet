@@ -14,6 +14,7 @@ fail the way the engine would.
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -103,12 +104,12 @@ def test_stt_appears_in_the_registry_listing():
 
 
 def test_an_uninstalled_provider_is_a_missing_plugin_not_a_schema_error():
-    """`provider: deepgram` is a legal value the day before anyone packages
-    it, and today is that day."""
+    """`provider: whisper` is a legal value the day before anyone packages
+    it, exactly as `provider: deepgram` was the day before it shipped."""
     registry = PluginRegistry.discover()
     with pytest.raises(MissingPluginError) as exc:
-        registry.load_stt("deepgram")
-    assert "deepgram" in str(exc.value.report)
+        registry.load_stt("whisper")
+    assert "whisper" in str(exc.value.report)
     assert "speech recognition provider" in str(exc.value.report)
 
 
@@ -256,13 +257,19 @@ def test_no_provider_anywhere_means_no_transcription_and_no_default():
     assert stt_selection({}, {}) is None
 
 
-def test_the_reference_soul_names_a_provider_nobody_has_packaged_yet():
-    """Pinned so that the day a Deepgram plugin lands, this test asks whether
-    the example should still be the thing that names it."""
+def test_the_reference_soul_names_a_provider_that_ships():
+    """The reference soul is what newcomers copy, so it names a real
+    provider, and that provider is installed. Its model is the one the plugin
+    would use unasked, so the example and the default cannot drift apart."""
     doc = load_yaml(EXAMPLES / "emet-soul.yaml")
     chosen = stt_selection(load_yaml(EXAMPLES / "bodiless.yaml"), doc)
     assert chosen is not None and chosen["provider"] == "deepgram"
-    assert not PluginRegistry.discover().has_stt("deepgram")
+    assert chosen["key_env"] == "EMET_DEEPGRAM_KEY"
+    registry = PluginRegistry.discover()
+    assert registry.has_stt("deepgram")
+    cls = registry.load_stt("deepgram")
+    assert cls.__module__.startswith("emet_providers")
+    assert chosen["model"] == getattr(sys.modules[cls.__module__], "DEFAULT_MODEL")
 
 
 # --------------------------------------------------------------- validation
