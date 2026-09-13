@@ -75,6 +75,7 @@ def test_shipped_chain_files_are_valid():
         ("home-out-of-range.yaml", "home_out_of_range"),
         ("two-drives.yaml", "multiple_drives"),
         ("unknown-mount.yaml", "unknown_reference"),
+        ("unknown-stt-provider.yaml", "missing_plugin"),
     ],
 )
 def test_invalid_manifests_are_rejected(fixture: str, expected: str):

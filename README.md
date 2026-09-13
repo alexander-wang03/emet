@@ -90,7 +90,7 @@ from a promise someone has to remember into something the software enforces.
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-engine[dev]"   # Windows: .venv\Scripts\pip
+.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-providers[dev]" -e "emet-engine[dev]"   # Windows: .venv\Scripts\pip
 
 cd emet-sdk
 emet validate examples/mock-scout.yaml --verify-drivers
@@ -120,6 +120,7 @@ tells you which rungs were skipped and what was wrong with each:
 |---|---|
 | `emet-sdk/` | Types, schemas, the intent vocabulary, chain resolution. The contract everything agrees on. |
 | `emet-hal/` | Drivers and locomotion plugins. Where hardware support goes. |
+| `emet-providers/` | The plugins that reach a service: speech recognition, and later language models and voices. |
 | `emet-engine/` | The listen loop: wake, endpointing, audio in and out. Personality, memory and arbitration arrive from 0.4. |
 
 ## Documentation

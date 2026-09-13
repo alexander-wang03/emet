@@ -76,6 +76,9 @@ are cheaper to get wrong.
 
 - **Drivers** in `emet-hal`: servos, displays, LEDs, sensors, motor drivers.
   None are written yet; `emet_hal.mock` shows the shape one takes.
+- **Providers** in `emet-providers`: speech recognition today, language
+  models and voices later. `emet_providers.mock` shows the shape, and
+  `DESIGN.md` section 12.3 says who chooses one.
 - **Locomotion plugins**: new kinematics. `drive.kinematics` is an open enum
   precisely so that `legged`, `omni`, and things nobody has thought of can
   arrive as packages rather than as schema changes.
@@ -117,8 +120,8 @@ wrong even if it works:
 2. **Every fallback chain terminates in a voice rung.** The validator enforces
    this. It is what makes "every intent is always satisfiable" mechanical
    rather than aspirational.
-3. **`emet_sdk` imports nothing internal.** `emet_hal` and `emet_engine` import
-   `emet_sdk` only. CI checks this on every pull request.
+3. **`emet_sdk` imports nothing internal.** `emet_hal`, `emet_providers` and
+   `emet_engine` import `emet_sdk` only. CI checks this on every pull request.
 4. **Memory is never namespaced by body.** Experiences travel with the soul;
    hardware conditions stay with the body.
 5. **A missing plugin is not a schema error.** Keep the two failure modes
@@ -171,11 +174,11 @@ Both run in CI, so they cannot quietly stop working.
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-engine[dev]"
+.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-providers[dev]" -e "emet-engine[dev]"
 .venv/bin/pip install -e "emet-hal[audio,wake]"   # optional: microphone, speaker, wake engine
 ```
 
-Install **all three** packages even if you are only touching one. Plugin
+Install **all four** packages even if you are only touching one. Plugin
 discovery reads entry points, so several SDK and engine tests are meaningless
 unless something is registered to be discovered. The suites pass with the
 optional extras absent; the tests that need them skip.
@@ -188,6 +191,7 @@ python tools/release_check.py .
 python tools/check_style.py .
 cd emet-sdk && python -m pytest -q
 cd ../emet-hal && python -m pytest -q
+cd ../emet-providers && python -m pytest -q
 cd ../emet-engine && python -m pytest -q
 ```
 
@@ -198,7 +202,7 @@ a comma, a colon, or two sentences. None of the six words that read as a
 press release; `tools/check_style.py` lists them, enforces both rules, and
 runs in CI, so a stray dash fails the build rather than a review.
 
-CI also builds the three wheels and installs them outside the source tree, so a
+CI also builds the four wheels and installs them outside the source tree, so a
 packaging mistake that an editable install hides still fails the pipeline. The
 exact steps are in `.github/workflows/ci.yml`.
 

@@ -81,6 +81,12 @@ class SessionStats:
     process_ms_max: float = 0.0
     over_budget: int = 0
 
+    #: Milliseconds from the endpoint to the final transcript, one per
+    #: transcribed turn. The first number a person feels in 0.4: the robot
+    #: cannot start thinking until this has elapsed, so it is measured on
+    #: every turn rather than guessed from a vendor's page.
+    final_ms: list[float] = field(default_factory=list)
+
     _samples: deque[float] = field(default_factory=lambda: deque(maxlen=SAMPLE_CAP))
     #: Set by the first frame, so that loading the acoustic model and opening
     #: the card are left out. What remains is the card's clock against the
@@ -98,6 +104,9 @@ class SessionStats:
         if process_ms > self.frame_ms:
             self.over_budget += 1
         self._samples.append(process_ms)
+
+    def record_final(self, wait_ms: float) -> None:
+        self.final_ms.append(wait_ms)
 
     # ------------------------------------------------------------ readings
 
@@ -176,6 +185,12 @@ class SessionStats:
             f"({self.headroom:.0f}x faster than realtime)",
             f"  dropped       {self.dropped}   (card overflows {self.overflows})",
         ]
+        if self.final_ms:
+            lines.append(
+                f"  stt final     mean {sum(self.final_ms) / len(self.final_ms):.0f} ms   "
+                f"max {max(self.final_ms):.0f}   ({len(self.final_ms)} turn(s), "
+                f"endpoint to final transcript)"
+            )
         if live:
             skew = self.wall_ms - self.audio_ms
             pct = (skew / self.audio_ms * 100.0) if self.audio_ms else 0.0

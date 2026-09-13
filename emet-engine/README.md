@@ -8,10 +8,29 @@ discovery, never by import. See the layering check in `tools/check_layering.py`.
 ```sh
 emet-listen path/to/manifest.yaml path/to/soul.yaml
 emet-listen path/to/manifest.yaml path/to/soul.yaml --replay recording.wav
+emet-listen path/to/manifest.yaml path/to/soul.yaml --transcribe
 ```
 
 Needs `emet-hal[audio,wake]` installed alongside for a microphone and a
-detector to exist.
+detector to exist, and `emet-providers` for `--transcribe` to have a speech
+recognition provider to hand the speech to. The soul names the provider under
+`models.stt`; a body may take the choice over under `audio.stt`. The reference
+soul names `deepgram`, which needs `emet-providers[deepgram]` and a key
+exported as `EMET_DEEPGRAM_KEY`. Without a key, or offline, the body can take
+over with `mock`, which reads words out of the bytes it is given, so on a real
+microphone give it a line to say:
+
+```yaml
+audio:
+  stt:
+    provider: mock
+    params: {transcript: "testing the seam"}
+```
+
+Partials print as they arrive, one word a frame from the mock, and the final
+prints as `said`. With `--stats`, an `stt final` line reports the wait from
+the endpoint to the final transcript, which is the first latency a person
+feels.
 
 ## Checking that it keeps up
 

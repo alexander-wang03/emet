@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "emet-providers"
+version = "0.3.0"
+description = "Emet providers: speech recognition, and later language model and speech synthesis, plugins that reach a service."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "The Emet Authors" }]
+keywords = ["emet", "robotics", "stt", "providers"]
+
+# emet-sdk only, like emet-hal. A provider is a plugin that talks to a service
+# instead of a chip; the contract it satisfies is the same kind of thing and
+# lives in the same place. The engine never imports this package either: a
+# transcriber reaches it by name through the `emet.stt` entry-point group.
+dependencies = ["emet-sdk>=0.1"]
+
+[project.optional-dependencies]
+# The Deepgram transcriber speaks the wire protocol itself and needs only a
+# WebSocket client. Optional because a body with no key, or no network, has
+# no use for it. websockets is BSD-3-Clause and ships cp311 to cp313 wheels
+# for aarch64 Linux (PyPI, 2026-09-12); 13 is where its asyncio client took
+# `additional_headers`.
+deepgram = ["websockets>=13"]
+dev = ["pytest>=8.0"]
+
+# Installing a package is what makes a provider exist. The entry-point name is
+# the string a soul puts in `models.stt.provider`, or a body puts in
+# `audio.stt.provider` to take the choice over.
+[project.entry-points."emet.stt"]
+"mock" = "emet_providers.mock:MockTranscriber"
+"deepgram" = "emet_providers.deepgram:DeepgramTranscriber"
+
+[tool.hatch.build.targets.wheel]
+packages = ["emet_providers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

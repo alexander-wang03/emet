@@ -83,7 +83,7 @@ The invariants. If an implementation decision violates one of these, the decisio
 
 ## 3. Package layout
 
-**Emet is open source, in full.** One monorepo, three packages, one permissive license.
+**Emet is open source, in full.** One monorepo, four packages, one permissive license.
 The boundary between the packages is a product surface; changes to it are breaking changes.
 See `CONTRIBUTING.md` for what is open to contribution and what is not.
 
@@ -109,12 +109,18 @@ emet/                         one repository, Apache 2.0 throughout
     audio.py          microphone and speaker through PortAudio; wav and null
     ...               pca9685, tb6612, gc9a01, ws2812: not yet written
 
+  emet-providers/   the plugins that reach a service (§12.3)
+    mock.py           a transcriber that reads words out of the bytes it is given
+    ...               deepgram, and later language models and voices: not yet written
+
   emet-engine/      the listen loop today (wake, VAD, endpointing, §13);
                     personality synthesis, memory, arbitration, choreography,
                     prompting, safety and consolidation as releases arrive.
 ```
 
 **HAL** is *hardware abstraction layer*: the standard embedded and OS term for the layer separating generic upper software from specific silicon. Emet uses it in Android's sense: the abstraction itself is `emet_sdk.plugin` (the ABCs and capability descriptors), and `emet-hal` is the collection of per-device *implementations* that satisfy it. Spell the acronym out on first use in any document a newcomer might read first; not every contributor arrives from embedded work.
+
+**`emet-providers`** is the HAL's counterpart for what a robot borrows from a computer somewhere else: speech recognition, and in later releases language models and speech synthesis. A provider is a plugin in exactly the HAL's sense, satisfying a contract in `emet_sdk.plugin` and reaching the engine by name, and it is a separate package because the HAL is named for hardware, a client for a speech service is not hardware, and provider client libraries are heavy and networked in a way a body that only ever wakes should not have to install.
 
 The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic, targeting under ~3,500 lines. The original target of 2,000 predates the wake and audio contracts, which added about 800 lines; the rest is headroom for the speech-to-text seam. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
 
@@ -126,9 +132,9 @@ The consequence to hold onto: **anyone may fork Emet, close their fork, and ship
 
 **`P0`**: everything public from the first commit, under its final license. Open is a one-way door: once published, it is published, and a permissive release can never be walked back for code already out.
 
-**Layering is enforced by CI, not by a license wall.** An import linter asserts that `emet-sdk` imports nothing internal, `emet-hal` imports only `emet-sdk`, and `emet-engine` imports only `emet-sdk`. Previously this invariant was maintained by the engine being a separate closed artifact; that structural guarantee is now a test, and it must actually run in CI or it will rot.
+**Layering is enforced by CI, not by a license wall.** An import linter asserts that `emet-sdk` imports nothing internal, and that `emet-hal`, `emet-providers` and `emet-engine` each import only `emet-sdk`. Previously this invariant was maintained by the engine being a separate closed artifact; that structural guarantee is now a test, and it must actually run in CI or it will rot.
 
-Python import namespaces: `emet_sdk`, `emet_hal`, `emet_engine`. CLI binaries: `emet` and `emet-listen`. Config root: `/etc/emet/`. Soul bundles: `*.emet` directories.
+Python import namespaces: `emet_sdk`, `emet_hal`, `emet_providers`, `emet_engine`. CLI binaries: `emet` and `emet-listen`. Config root: `/etc/emet/`. Soul bundles: `*.emet` directories.
 
 ---
 
@@ -179,6 +185,13 @@ audio:                           # P0  required: this is the hardware floor
     engine: pocketsphinx         #     OPEN ENUM naming an installed emet.wake
                                  #     plugin. The PHRASE is on the soul (§8.1).
     params: {}                   #     passed to the engine untouched
+  stt:                           # P0  optional. Speech recognition on THIS body.
+    provider: mock               #     OPEN ENUM naming an installed emet.stt
+                                 #     plugin. Set it and the body takes the
+                                 #     choice over from the soul's models.stt,
+                                 #     with its own model and key_env (§12.3).
+    params: {}                   #     passed to the provider untouched, with
+                                 #     whichever provider runs
 
 capabilities: []                 # P0  see 4.2
 
@@ -367,6 +380,7 @@ Enforced by `emet_sdk.validate`, run at boot and by the CLI:
 - `drive.kinematics` must be a **string that resolves to an installed locomotion plugin**, not a member of a frozen list. An unrecognized value fails boot with "no locomotion plugin provides `legged`; install one or change `kinematics`", which is a *missing plugin* error, not a *schema* error. This is what keeps the enum open.
 - Every referenced `driver.plugin` resolves to an installed plugin, or boot fails loudly with the missing package name. Never silently degrade because of a typo: that is a *different* failure from missing hardware, and conflating them costs support hours.
 - `audio.wake.engine`, `audio.input.source` and `audio.output.sink` resolve to installed plugins, or validation fails. `driver.plugin` may name hardware not yet wired and so only warns outside `--verify-drivers`; these name software that has to exist for the robot to hear or speak at all.
+- `audio.stt.provider`, when a body sets it, resolves to an installed `emet.stt` plugin on the same terms. The soul's `models.stt.provider` is never checked against what is installed: a soul is valid on every machine or on none, and that question is answered at boot (§12.3).
 
 ---
 
@@ -659,6 +673,9 @@ memory:
 models:                          # P0  BYOK
   chat:  {provider: openai,   model: "...", key_env: "EMET_OPENAI_KEY"}
   stt:   {provider: deepgram, model: "...", key_env: "EMET_DEEPGRAM_KEY"}
+                                 #     provider names an installed emet.stt
+                                 #     plugin, resolved at boot. A body may take
+                                 #     the choice over with audio.stt (§12.3).
   tts:   {provider: local_piper}
   micro: {provider: local, model: "qwen3-0.6b-q4"}   # backchannel only
 ```
@@ -884,11 +901,13 @@ so honestly.
 
 ### 12.2 Wake and audio plugins
 
-Six entry-point groups in total. Three are built from a manifest capability
+Seven entry-point groups in total. Three are built from a manifest capability
 (`emet.actuators`, `emet.sensors`, `emet.locomotion`). Three are built from the
 manifest's `audio` block (`emet.wake`, `emet.audio`, `emet.audio_out`), because
 the hardware floor already guarantees a microphone and a speaker, so there is no
-capability to declare, only a choice of what runs on them.
+capability to declare, only a choice of what runs on them. The seventh,
+`emet.stt`, is built from the soul's `models` block and the body's `audio.stt`
+together (§12.3).
 
 ```python
 class PocketSphinxWake(WakePlugin):
@@ -931,6 +950,89 @@ permissively licensed, and its output feeds turn-taking (§13), which is
 personality rather than hardware. Adding a category later is a minor version
 bump; removing one is major.
 
+### 12.3 Speech recognition plugins
+
+`emet.stt` is the seventh group, the first whose name comes from the soul, and
+the first to have existed before anything real implemented it: the mock
+shipped, then Deepgram, through the same seam.
+
+```python
+class DeepgramTranscriber(TranscriberPlugin):
+    provider = "deepgram"              # the string matched against models.stt.provider
+
+    def __init__(self, config, fmt):
+        """The merged provider reference (provider, model, key_env, params)
+        and the audio format the wake engine already fixed. The key itself is
+        never in the config: read the environment variable `key_env` names,
+        in start(), and report unhealthy naming it when it is absent."""
+
+    def describe(self) -> TranscriberDescriptor:
+        """The model that answered, whether partials will arrive, and the
+        rate this instance will actually run at. Boot refuses a rate other
+        than the wake engine's: one microphone feeds both."""
+
+    async def feed(self, frame: bytes) -> Transcript | None:
+        """One frame in; the newest partial out if the text so far changed.
+        Every partial carries the whole utterance heard so far."""
+
+    async def finish(self) -> Transcript:
+        """The turn ended. Flush and return the final, empty if need be."""
+```
+
+**Who chooses, and why it is the soul.** `models.stt` on the soul names the
+provider, the model, and the environment variable holding the key. Keys are the
+owner's (BYOK) and travel with the soul, and a cloud account is not hardware, so
+principle 1 holds. The body may take the choice over with `audio.stt.provider`,
+carrying its own `model` and `key_env`: a test rig running `mock`, or an owner
+whose key is for a different vendor than the soul's author had. The override is
+whole or nothing, because a provider from one document with a model and a key
+from the other is a broken reference. Whichever provider runs, the body's
+`audio.stt.params` ride along untouched: an endpoint, a timeout, tuning for
+this deployment. `emet_sdk.models.stt_selection` is the rule in code, and the
+engine uses it rather than restating it.
+
+A soul's provider is never checked against what is installed. A soul is valid
+on every machine or on none, and a validator that asked would make the same
+bundle valid on one laptop and invalid on the next. A body's `audio.stt.provider`
+is checked, and fails as `missing_plugin` like `audio.wake.engine`. Whether the
+soul's provider is present is answered at boot, the way `identity.wake_word` is
+answered against a live `WakeDescriptor`.
+
+**There is no default provider.** The other audio defaults name the hardware
+floor, which every body has. Nobody can be assumed to hold a speech recognition
+account, so an absent provider means no transcription, and asking for it anyway
+(`emet-listen --transcribe`) is an error that names the field to set. Choosing a
+vendor quietly would spend somebody's credits without asking.
+
+**Why a category, before any provider existed.** The same reason wake is one,
+arrived at in advance rather than after a shutdown. A vendor's client library
+is the easiest possible thing to build a release around, and there are credits
+enough at one of them to do so without noticing. The seam was built first so
+that the first real call was made through it. Behind the seam, the provider is
+one line of a soul; in front of it, it would have been the shape of the engine.
+The shipped Deepgram plugin speaks the wire protocol directly and depends on a
+WebSocket client alone, for the same reason: a vendor SDK is the vendor's shape
+arriving by another door.
+
+**Streaming is the contract; batch is the degenerate case.** Frames go in as
+they are captured. A streaming provider answers with partials while the person
+is still talking, each carrying the whole text so far, so a live caption
+replaces its line rather than splicing fragments and a retracted word leaves
+nothing behind. `finish()` returns the final. A batch provider returns nothing
+from `feed()` and does its work in `finish()`, and the engine cannot tell the
+two apart except by latency and by `describe().streaming`.
+
+**The transcriber hears everything after the wake**, lead-in silence included,
+rather than only what the energy detector marked as speech. A quiet speaker the
+detector missed is still transcribed. A false wake costs a provider a few
+seconds of silence, which is the cheaper mistake.
+
+**Format.** The wake engine fixed the audio format before the transcriber was
+built, and one microphone feeds both, so the transcriber receives the format
+rather than stating one, and reports in `describe()` the rate it will actually
+run at. The engine refuses a mismatch before it opens the microphone. A
+recogniser hearing 16 kHz speech at 8 kHz does not fail; it produces nonsense.
+
 ---
 
 ## 13. Turn-taking
@@ -951,7 +1053,7 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 | Wake word | Local | Open plugin category (`emet.wake`). Default is a phonetic spotter, so any phrase works without a trained model. |
 | VAD, speaker ID | Local | Reflex tier. |
 | Gaze / DoA / face tracking | Local | Reflex tier. |
-| STT | Cloud (streaming) | BYOK. |
+| STT | Cloud (streaming) | BYOK. Open plugin category (`emet.stt`, §12.3); the soul names the provider and the body may take it over. |
 | LLM | Cloud (streaming) | BYOK. Speak first sentence as it streams. |
 | TTS | Local (Piper) | The expensive cloud stage; keep it local. Premium cloud voice is an opt-in toggle. |
 | Backchannel micro-model | Local | Fills the thinking gap. |

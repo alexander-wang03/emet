@@ -56,6 +56,7 @@ __all__ = [
     "DEFAULT_AUDIO_SOURCE",
     "BUILTIN_AUDIO_OUT",
     "DEFAULT_AUDIO_SINK",
+    "BUILTIN_STT",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -113,6 +114,16 @@ DEFAULT_AUDIO_SOURCE = "microphone"
 #: and in any test that would otherwise play through whatever is plugged in.
 BUILTIN_AUDIO_OUT: frozenset[str] = frozenset({"speaker", "wav", "null"})
 DEFAULT_AUDIO_SINK = "speaker"
+
+#: Speech recognition providers `emet-providers` ships. Documentation, like the
+#: others: `models.stt.provider` is an open enum resolved against entry points.
+#:
+#: There is deliberately no `DEFAULT_STT_PROVIDER`. The other defaults name
+#: the hardware floor, which every body has. Speech recognition is a cloud
+#: account with a key the owner brings, and nobody can be assumed to hold one,
+#: so an absent provider means "no transcription", and asking for it anyway is
+#: an error that names the field to set. See `emet_sdk.models.stt_selection`.
+BUILTIN_STT: frozenset[str] = frozenset({"mock", "deepgram"})
 
 
 # --------------------------------------------------------------------------
@@ -279,6 +290,7 @@ def validate_manifest(
     _check_wake_engine(doc, registry, report)
     _check_audio_source(doc, registry, report)
     _check_audio_sink(doc, registry, report)
+    _check_stt_provider(doc, registry, report)
 
     return report
 
@@ -376,6 +388,36 @@ def _check_audio_sink(
         f"plugin simply is not installed. Omit it entirely for a real speaker, "
         f"which is the default.",
         "/audio/output/sink",
+    )
+
+
+def _check_stt_provider(
+    doc: Mapping[str, Any],
+    registry: PluginRegistry,
+    report: ValidationReport,
+) -> None:
+    """Resolve `audio.stt.provider`, on the same terms as the wake engine.
+
+    Absent is the common case: most bodies leave the choice to the soul's
+    `models.stt`. That soul field is deliberately checked neither here nor in
+    `validate_soul`. A soul is valid on every machine or on none, and whether
+    the provider it names is installed is a question for boot, the way
+    `identity.wake_word` is answered against a live descriptor. A body is one
+    machine, so a body that names a provider names software that has to be
+    installed on it, and an unresolvable name is an error like
+    `audio.wake.engine`.
+    """
+    provider = ((doc.get("audio") or {}).get("stt") or {}).get("provider")
+    if not isinstance(provider, str) or registry.has_stt(provider):
+        return
+    installed = ", ".join(registry.stt_names) or "(none)"
+    report.error(
+        "missing_plugin",
+        f"no speech recognition provider provides {provider!r}. Installed: "
+        f"{installed}. `audio.stt.provider` is an open enum: this value is "
+        f"legal, the plugin simply is not installed. Omit it to let the soul's "
+        f"`models.stt` choose.",
+        "/audio/stt/provider",
     )
 
 

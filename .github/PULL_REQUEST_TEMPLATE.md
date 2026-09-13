@@ -13,7 +13,7 @@
 
 - [ ] Commits are signed off (`git commit -s`). See CONTRIBUTING.md.
 - [ ] `python tools/check_layering.py .` and `python tools/release_check.py .` pass.
-- [ ] `pytest` passes in `emet-sdk`, `emet-hal` and `emet-engine`.
+- [ ] `pytest` passes in `emet-sdk`, `emet-hal`, `emet-providers` and `emet-engine`.
 - [ ] New behaviour has a test and a caller.
 - [ ] Anything taken from a paper or repository is cited at the point of use
       and in CITATIONS.md.
@@ -34,7 +34,7 @@ even when it works. See DESIGN.md section 2.
 
 - [ ] The soul names no hardware.
 - [ ] Every fallback chain still terminates in a voice rung.
-- [ ] `emet_sdk` imports nothing internal; `emet_hal` and `emet_engine`
-      import `emet_sdk` only.
+- [ ] `emet_sdk` imports nothing internal; `emet_hal`, `emet_providers` and
+      `emet_engine` import `emet_sdk` only.
 - [ ] Memory is not namespaced by body.
 - [ ] A missing plugin is still distinct from a schema error.

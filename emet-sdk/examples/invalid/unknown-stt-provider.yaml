@@ -1,0 +1,37 @@
+# INVALID: a speech recognition provider that is not installed, named by the body.
+#
+# `audio.stt.provider` follows the rule `audio.wake.engine` follows. The value
+# below is legal, since the field is an open enum resolved against installed
+# `emet.stt` plugins, but it does not resolve, and on a body that is an error
+# rather than a warning: a body is one machine, and it has named software that
+# has to be installed on it.
+#
+# The soul's `models.stt.provider` is the other half of the choice and is
+# deliberately never checked this way. A soul has to be valid on every machine
+# or on none, so whether the provider it names is installed is answered at
+# boot, like whether its wake phrase can be heard.
+#
+# Expected: missing_plugin, /audio/stt/provider
+
+manifest_version: "0.1"
+
+body:
+  id: pigeon_post
+  name: "a body whose ears report to nobody"
+  scale: desk
+  power: plugged_in
+
+audio:
+  input:
+    device: "plughw:1,0"
+    sample_rate: 16000
+    channels: 1
+    aec: hardware
+    doa: false
+  output:
+    device: "plughw:1,0"
+    gain_db: -6.0
+  stt:
+    provider: carrier_pigeon
+
+capabilities: []

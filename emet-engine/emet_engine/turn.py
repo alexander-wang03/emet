@@ -41,7 +41,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
 
-from emet_sdk.types import AudioFormat
+from emet_sdk.types import AudioFormat, Transcript
 
 from emet_engine.vad import EnergyVad, VadTuning
 
@@ -69,6 +69,10 @@ class Utterance:
     audio: bytes
     duration_ms: float
     reason: EndReason
+    #: What speech recognition made of it, when a transcriber was listening.
+    #: None means nobody asked, which is different from an empty final: that
+    #: means a provider listened and heard no words it could make out.
+    transcript: Transcript | None = None
 
     @property
     def had_speech(self) -> bool:

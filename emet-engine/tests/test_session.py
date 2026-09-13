@@ -69,11 +69,14 @@ def body(
     }
 
 
-def soul(wake_word: str | None = PHRASE) -> dict:
+def soul(wake_word: str | None = PHRASE, **stt) -> dict:
     identity = {"name": "Emet"}
     if wake_word is not None:
         identity["wake_word"] = wake_word
-    return {"identity": identity}
+    doc: dict = {"identity": identity}
+    if stt:
+        doc["models"] = {"stt": stt}
+    return doc
 
 
 # ------------------------------------------------------------------ startup
@@ -366,3 +369,244 @@ def test_a_plugin_with_nothing_to_remember_yields_no_hint(tmp_path):
             return session.warm_start_hint()
 
     assert run(scenario()) is None
+
+
+# ------------------------------------------------------------ transcription
+
+
+def spoken(*words: bytes) -> bytes:
+    """The phrase, then frames that spell words, then silence. The mock
+    transcriber reads the words; the energy detector hears the same bytes as
+    loud, so the endpointer captures them and closes on the silence after."""
+    return frame() + frame(PHRASE.encode()) + b"".join(frame(w) for w in words) + frame() * 20
+
+
+def transcribing(tmp_path, name: str, pcm: bytes, *, soul_doc=None, manifest=None, **kw):
+    manifest = manifest or body(write_wav(tmp_path / name, pcm))
+    return ListenSession(manifest, soul_doc or soul(provider="mock"), transcribe=True, **kw)
+
+
+def test_a_turn_is_transcribed_when_asked(tmp_path):
+    """0.4's first step end to end: hear the name, feed what follows to a
+    provider the engine never imported, get the words back on the turn."""
+    session = transcribing(tmp_path, "t.wav", spoken(b"what", b"time", b"is it"))
+
+    async def scenario():
+        async with session:
+            return [(e, u) async for e, u in session.turns()]
+
+    turns = run(scenario())
+    assert len(turns) == 1
+    _, utterance = turns[0]
+    assert utterance.had_speech
+    assert utterance.transcript is not None
+    assert utterance.transcript.final
+    assert utterance.transcript.text == "what time is it"
+    assert session.stt_name == "mock"
+    assert session.stt_descriptor is not None and session.stt_descriptor.streaming
+
+
+def test_partials_arrive_while_the_person_is_still_talking(tmp_path):
+    """Streaming through the seam. Each partial carries everything so far,
+    and the last one is what the final confirms."""
+    partials = []
+    session = transcribing(
+        tmp_path, "p.wav", spoken(b"what", b"time", b"is it"), on_partial=partials.append
+    )
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert [p.text for p in partials] == ["what", "what time", "what time is it"]
+    assert all(not p.final for p in partials)
+    assert utterance.transcript is not None
+    assert partials[-1].text == utterance.transcript.text
+
+
+def test_the_wake_callback_fires_before_the_turn_ends(tmp_path):
+    seen: list[str] = []
+    session = transcribing(
+        tmp_path,
+        "w.wav",
+        spoken(b"what"),
+        on_wake=lambda e: seen.append("wake"),
+        on_partial=lambda t: seen.append("partial"),
+    )
+
+    async def scenario():
+        async with session:
+            async for _ in session.turns():
+                seen.append("turn")
+
+    run(scenario())
+    assert seen == ["wake", "partial", "turn"]
+
+
+def test_without_asking_nothing_is_built_and_the_transcript_is_none(tmp_path):
+    """The 0.3 loop, unchanged, even for a soul that names a provider. The
+    selection is still reported so a caller can say what would run."""
+    session = ListenSession(body(write_wav(tmp_path / "n.wav", spoken(b"what"))), soul(provider="mock"))
+
+    async def scenario():
+        async with session:
+            assert session._stt is None
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert utterance.transcript is None
+    assert session.stt_name == "mock"
+
+
+def test_asking_with_no_provider_anywhere_names_the_fields_to_set(tmp_path):
+    session = transcribing(tmp_path, "x.wav", frame(), soul_doc=soul())
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    message = str(exc.value)
+    assert "models.stt.provider" in message and "audio.stt.provider" in message
+    assert "mock" in message  # what is installed
+    run(session.stop())
+
+
+def test_an_uninstalled_provider_is_a_missing_plugin(tmp_path):
+    session = transcribing(tmp_path, "d.wav", frame(), soul_doc=soul(provider="whisper"))
+    with pytest.raises(MissingPluginError):
+        run(session.start())
+    run(session.stop())
+
+
+def test_a_provider_that_cannot_start_is_refused_with_its_own_reason(tmp_path):
+    """A dead network or a missing key. The plugin's health detail is more
+    specific than anything the engine could invent, so it is quoted."""
+    manifest = body(write_wav(tmp_path / "f.wav", frame()))
+    manifest["audio"]["stt"] = {"provider": "mock", "params": {"fail_on_start": True}}
+    session = transcribing(tmp_path, "f.wav", frame(), manifest=manifest)
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    assert "unreachable" in str(exc.value)
+    assert "will not run" in str(exc.value)
+    run(session.stop())
+
+
+def test_a_missing_key_is_named_at_boot(tmp_path, monkeypatch):
+    monkeypatch.delenv("EMET_MOCK_KEY", raising=False)
+    session = transcribing(
+        tmp_path,
+        "k.wav",
+        frame(),
+        soul_doc=soul(provider="mock", key_env="EMET_MOCK_KEY"),
+    )
+    session.stt["params"]["require_key"] = True
+    with pytest.raises(EngineError, match="EMET_MOCK_KEY"):
+        run(session.start())
+    run(session.stop())
+
+
+def test_a_provider_at_the_wrong_rate_is_refused_before_the_microphone_opens(tmp_path):
+    """One microphone feeds the wake engine and the transcriber. A recogniser
+    hearing 16 kHz speech at 8 kHz does not fail; it produces nonsense."""
+    manifest = body(write_wav(tmp_path / "r.wav", frame()))
+    manifest["audio"]["stt"] = {"provider": "mock", "params": {"sample_rate": 8000}}
+    session = transcribing(tmp_path, "r.wav", frame(), manifest=manifest)
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    message = str(exc.value)
+    assert "8000" in message and "16000" in message
+    assert session._audio is None, "the microphone was opened before the refusal"
+    run(session.stop())
+
+
+def test_the_body_takes_over_from_the_soul(tmp_path):
+    """The reference soul names deepgram; a mocked rig names mock and runs."""
+    manifest = body(write_wav(tmp_path / "o.wav", spoken(b"hello")))
+    manifest["audio"]["stt"] = {"provider": "mock"}
+    session = transcribing(
+        tmp_path,
+        "o.wav",
+        frame(),
+        manifest=manifest,
+        soul_doc=soul(provider="deepgram", model="nova-2", key_env="EMET_DEEPGRAM_KEY"),
+    )
+    assert session.stt_name == "mock"
+    assert session.stt is not None and session.stt["key_env"] is None
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert utterance.transcript is not None and utterance.transcript.text == "hello"
+
+
+def test_a_scripted_mock_says_its_line_over_real_looking_audio(tmp_path):
+    """How the seam is exercised on a body: audio the mock cannot read, and a
+    line it was told to say."""
+    manifest = body(write_wav(tmp_path / "s.wav", frame() + frame(PHRASE.encode()) + loud_frame() * 5 + frame() * 20))
+    manifest["audio"]["stt"] = {"provider": "mock", "params": {"transcript": "testing the seam"}}
+    partials = []
+    session = transcribing(tmp_path, "s.wav", frame(), manifest=manifest, on_partial=partials.append)
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert utterance.transcript is not None
+    assert utterance.transcript.text == "testing the seam"
+    assert [p.text for p in partials] == ["testing", "testing the", "testing the seam"]
+
+
+def test_a_false_wake_yields_an_empty_final_not_none(tmp_path):
+    """Nobody spoke, the provider listened, and it says so. None would mean
+    nobody asked."""
+    session = transcribing(tmp_path, "e.wav", frame() + frame(PHRASE.encode()) + frame() * 60)
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert not utterance.had_speech
+    assert utterance.transcript is not None
+    assert utterance.transcript.final and utterance.transcript.text == ""
+
+
+def test_a_source_that_ends_mid_turn_still_hands_over_the_transcript(tmp_path):
+    pcm = frame() + frame(PHRASE.encode()) + frame(b"cut") + frame(b"off")
+    session = transcribing(tmp_path, "c.wav", pcm)
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert utterance.reason.value == "source_ended"
+    assert utterance.transcript is not None and utterance.transcript.text == "cut off"
+
+
+def test_each_turn_gets_its_own_transcript(tmp_path):
+    # Two words a turn: the energy detector needs two loud frames in a row
+    # before it calls it speech, and a turn has to end by silence for the
+    # next wake to be heard.
+    session = transcribing(tmp_path, "two.wav", spoken(b"first", b"one") + spoken(b"second", b"two"))
+
+    async def scenario():
+        async with session:
+            return [u.transcript.text async for _, u in session.turns()]
+
+    assert run(scenario()) == ["first one", "second two"]
+
+
+def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):
+    manifest = body(write_wav(tmp_path / "z.wav", frame()))
+    manifest["audio"]["stt"] = {"provider": "mock", "params": {"fail_on_start": True}}
+    session = transcribing(tmp_path, "z.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        with pytest.raises(EngineError):
+            await session.start()
+        await session.stop()
+        await session.stop()
+
+    run(scenario())

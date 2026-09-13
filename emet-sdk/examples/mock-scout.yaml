@@ -55,6 +55,12 @@ audio:
     # a frame literally contains the phrase, which makes the whole wake path
     # testable on a laptop with no microphone.
     engine: mock
+  stt:
+    # And its understanding. The reference soul names a real provider under
+    # `models.stt`; this rig has no key and no network, so the body takes the
+    # choice over, which is what this field is for. The mock reads words out
+    # of the bytes it is given, so `emet-listen --transcribe` runs here too.
+    provider: mock
 
 capabilities:
   - id: head
