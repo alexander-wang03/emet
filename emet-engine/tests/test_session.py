@@ -803,3 +803,282 @@ def test_a_run_that_only_dropped_frames_while_busy_kept_up():
     stats.dropped_busy = 11
     assert stats.kept_up
     assert "11 while speaking or thinking" in stats.report(live=False)
+
+
+# ------------------------------------------------------------------ speech
+
+
+from emet_sdk.plugin import PluginError  # noqa: E402
+
+
+def speaking(tmp_path, name: str, pcm: bytes, *, tts: dict | None = None, manifest=None, sink: str = "null", **kw):
+    manifest = manifest or body(write_wav(tmp_path / name, pcm), sink=sink)
+    soul_doc = soul(provider="mock", chat={"provider": "mock"})
+    soul_doc["models"]["tts"] = tts if tts is not None else {"provider": "mock"}
+    return ListenSession(manifest, soul_doc, transcribe=True, reply=True, speak=True, **kw)
+
+
+def wav_body(path: str, out: str, **wake_params) -> dict:
+    doc = body(path, **wake_params)
+    doc["audio"]["output"] = {"sink": "wav", "device": "none", "params": {"path": out}}
+    return doc
+
+
+def read_wav(path: str) -> tuple[int, bytes]:
+    with wave.open(path, "rb") as w:
+        return w.getframerate(), w.readframes(w.getnframes())
+
+
+def test_a_turn_can_be_answered_aloud_through_a_voice_the_engine_never_imported(tmp_path):
+    """0.4's third seam end to end: hear the name, transcribe, reply, and
+    speak the reply through a voice and a sink, both reached by name. The
+    wav the sink wrote reads back as the words the model said."""
+    out = str(tmp_path / "said.wav")
+    manifest = wav_body(write_wav(tmp_path / "a.wav", spoken(b"what", b"time", b"is it")), out)
+    session = speaking(tmp_path, "a.wav", b"", manifest=manifest)
+
+    async def scenario():
+        async with session:
+            turns = [(e, u) async for e, u in session.turns()]
+            (_, utterance) = turns[0]
+            events = await drain(session.answer_aloud(utterance.transcript.text))
+            return events, session.last_spoken
+
+    events, outcome = run(scenario())
+    done = events[-1]
+    assert isinstance(done, ReplyDone) and done.text == "You said: what time is it"
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == done.text
+    assert [s.text for s in outcome] == ["You said: what time is it"] and outcome[0].ok
+    from emet_providers.mock import read_back  # a test may name the layer above; the engine may not
+
+    rate, pcm = read_wav(out)
+    assert read_back(pcm) == "You said: what time is it"
+    assert rate == 16000, "the sink was opened at the rate the voice stated"
+    assert session.tts_name == "mock"
+    assert session.tts_descriptor is not None and session.tts_descriptor.healthy
+
+
+def test_the_voice_states_the_rate_and_the_sink_is_opened_to_match(tmp_path):
+    manifest = body(write_wav(tmp_path / "r.wav", frame()))
+    manifest["audio"]["output"]["sample_rate"] = 48000
+    manifest["models"] = {"tts": {"provider": "mock", "params": {"sample_rate": 8000}}}
+    session = speaking(tmp_path, "r.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        async with session:
+            return session.sink_format, session._sink.format
+
+    sink_format, opened = run(scenario())
+    assert sink_format.sample_rate == 8000 and opened.sample_rate == 8000
+
+
+def test_without_a_voice_the_sink_keeps_the_manifests_rate(tmp_path):
+    manifest = body(write_wav(tmp_path / "m.wav", frame()))
+    manifest["audio"]["output"]["sample_rate"] = 48000
+    session = ListenSession(manifest, soul())
+
+    async def scenario():
+        async with session:
+            return session.sink_format.sample_rate
+
+    assert run(scenario()) == 48000
+
+
+def test_the_first_sentence_plays_before_the_reply_is_done(tmp_path):
+    """The reason everything streams. A slow model writes two sentences;
+    the first is at the sink before the model has finished the second."""
+    marks: list[str] = []
+    session = speaking(tmp_path, "s.wav", frame())
+
+    async def scenario():
+        async with session:
+            real_sink_play = session._sink.play
+
+            async def logged_play(pcm):
+                marks.append("play")
+                await real_sink_play(pcm)
+
+            session._sink.play = logged_play
+
+            async def slow_reply(prompt):
+                # A model's tokens carry their leading space, so the first
+                # sentence is confirmed by the token that starts the second.
+                yield TextDelta("First one.")
+                yield TextDelta(" Second")
+                await asyncio.sleep(0.05)
+                yield TextDelta(" one.")
+                marks.append("model done")
+                yield ReplyDone(text="First one. Second one.", stop_reason="end", model="mock")
+
+            session._llm.reply = slow_reply
+            async for event in session.answer_aloud("hello"):
+                if isinstance(event, ReplyDone):
+                    marks.append("reply done")
+            return marks, session.last_spoken
+
+    marks, spoken = run(scenario())
+    assert marks.index("play") < marks.index("model done") < marks.index("reply done")
+    assert [s.text for s in spoken] == ["First one.", "Second one."]
+    assert marks.count("play") == 2, "the second sentence was spoken after the reply ended"
+
+
+def test_a_reply_without_a_full_stop_is_still_spoken(tmp_path):
+    manifest = body(write_wav(tmp_path / "t.wav", frame()))
+    manifest["models"] = {"chat": {"provider": "mock", "params": {"reply": "no end mark here"}}, "tts": {"provider": "mock"}}
+    session = speaking(tmp_path, "t.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        async with session:
+            await drain(session.answer_aloud("hello"))
+            return session.last_spoken
+
+    (spoken,) = run(scenario())
+    assert spoken.text == "no end mark here" and spoken.ok
+
+
+def test_a_sentence_the_voice_loses_is_counted_and_the_rest_is_heard(tmp_path):
+    manifest = body(write_wav(tmp_path / "l.wav", frame()))
+    manifest["models"] = {
+        "chat": {"provider": "mock", "params": {"reply": "Fine. The symbol POISON here. Fine again."}},
+        "tts": {"provider": "mock", "params": {"fail_on": "POISON"}},
+    }
+    session = speaking(tmp_path, "l.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        async with session:
+            await drain(session.answer_aloud("hello"))
+            return session.last_spoken, session.stats
+
+    spoken, stats = run(scenario())
+    assert [s.ok for s in spoken] == [True, False, True]
+    assert stats.sentences_spoken == 2 and stats.sentences_lost == 1
+    assert "1 lost" in stats.report(live=False)
+
+
+def test_answering_aloud_records_the_two_latencies_a_person_feels(tmp_path):
+    session = speaking(tmp_path, "m.wav", frame())
+
+    async def scenario():
+        async with session:
+            await drain(session.answer_aloud("hello"))
+            return session.stats
+
+    stats = run(scenario())
+    assert len(stats.speech_first_ms) == 1 and len(stats.speech_done_ms) == 1
+    assert stats.speech_first_ms[0] <= stats.speech_done_ms[0]
+    assert len(stats.reply_first_ms) == 1, "the model's own numbers are still recorded"
+    report = stats.report(live=False)
+    assert "voice first" in report and "voice done" in report
+
+
+def test_speak_text_says_a_fixed_line(tmp_path):
+    out = str(tmp_path / "line.wav")
+    manifest = wav_body(write_wav(tmp_path / "f.wav", frame()), out)
+    session = speaking(tmp_path, "f.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        async with session:
+            return await session.speak_text("Hello there. I am awake.")
+
+    spoken = run(scenario())
+    assert [s.text for s in spoken] == ["Hello there.", "I am awake."]
+    from emet_providers.mock import read_back
+
+    assert read_back(read_wav(out)[1]) == "Hello there. I am awake."
+
+
+def test_asking_for_speech_with_no_voice_names_the_field(tmp_path):
+    session = speaking(tmp_path, "n.wav", frame(), tts={})
+    session.tts = None
+    session.tts_name = None
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    assert "models.tts.provider" in str(exc.value)
+    assert "mock" in str(exc.value)
+    run(session.stop())
+
+
+def test_an_uninstalled_voice_is_a_missing_plugin(tmp_path):
+    session = speaking(tmp_path, "u.wav", frame(), tts={"provider": "gramophone"})
+    with pytest.raises(MissingPluginError):
+        run(session.start())
+    run(session.stop())
+
+
+def test_a_voice_that_cannot_start_is_refused_with_its_own_reason(tmp_path):
+    manifest = body(write_wav(tmp_path / "x.wav", frame()))
+    manifest["models"] = {"tts": {"provider": "mock", "params": {"fail_on_start": True}}}
+    session = speaking(tmp_path, "x.wav", frame(), manifest=manifest)
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    assert "never be heard" in str(exc.value) and "missing" in str(exc.value)
+    assert session._audio is None, "the microphone was opened before the refusal"
+    run(session.stop())
+    run(session.stop())
+
+
+def test_the_souls_voice_block_reaches_the_plugin(tmp_path):
+    session = speaking(tmp_path, "v.wav", frame())
+    session.soul["voice"] = {"rate": 1.3}
+    session._voice_block = session.soul["voice"]
+
+    async def scenario():
+        async with session:
+            return session._tts.rate
+
+    assert run(scenario()) == 1.3
+
+
+def test_the_body_takes_the_voice_over_from_the_soul(tmp_path):
+    manifest = body(write_wav(tmp_path / "o.wav", frame()))
+    manifest["models"] = {"tts": {"provider": "mock", "params": {"sample_rate": 8000}}}
+    session = speaking(
+        tmp_path, "o.wav", frame(), manifest=manifest,
+        tts={"provider": "deepgram", "model": "aura-2-thalia-en", "key_env": "EMET_DEEPGRAM_KEY"},
+    )
+    assert session.tts_name == "mock"
+
+    async def scenario():
+        async with session:
+            return session.tts_descriptor.sample_rate
+
+    assert run(scenario()) == 8000
+
+
+def test_speaking_without_speak_enabled_is_an_error(tmp_path):
+    session = ListenSession(body(write_wav(tmp_path / "w.wav", frame())), soul(provider="mock", chat={"provider": "mock"}), transcribe=True, reply=True)
+
+    async def scenario():
+        async with session:
+            with pytest.raises(EngineError, match="speak=True"):
+                await drain(session.answer_aloud("hello"))
+            with pytest.raises(EngineError, match="speak=True"):
+                await session.speak_text("hello")
+
+    run(scenario())
+
+
+def test_hush_with_a_voice_drops_the_queue_and_cancels_the_sink(tmp_path):
+    session = speaking(tmp_path, "h.wav", frame())
+
+    async def scenario():
+        async with session:
+            session._mouth.open()
+            await session._mouth.say("One.")
+            await session.hush()
+            return session._sink.cancelled
+
+    assert run(scenario()) == 1
+
+
+def test_without_asking_no_voice_is_built(tmp_path):
+    soul_doc = soul(provider="mock", chat={"provider": "mock"})
+    soul_doc["models"]["tts"] = {"provider": "mock"}
+    session = ListenSession(body(write_wav(tmp_path / "q.wav", frame())), soul_doc)
+
+    async def scenario():
+        async with session:
+            return session._tts, session._mouth
+
+    assert run(scenario()) == (None, None)
+    assert session.tts_name == "mock", "the selection is still reported"

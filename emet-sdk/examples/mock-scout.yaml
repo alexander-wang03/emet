@@ -56,15 +56,20 @@ audio:
     # testable on a laptop with no microphone.
     engine: mock
 
-# And its understanding, and its answers. The reference soul names real
-# providers under its `models` block; this rig has no key and no network, so
-# the body takes both stages over, which is what this block is for. The mock
-# transcriber reads words out of the bytes it is given and the mock language
-# model repeats them back, so `emet-listen --transcribe --reply` runs here.
+# And its understanding, its answers, and its voice. The reference soul names
+# real providers under its `models` block; this rig has no key, no network
+# and no voice model on disk, so the body takes all three stages over, which
+# is what this block is for. The mock transcriber reads words out of the
+# bytes it is given, the mock language model repeats them back, and the mock
+# voice spells the words into the audio it produces, so
+# `emet-listen --transcribe --reply --speak` runs here and a wav sink can be
+# read back to check what was said.
 models:
   stt:
     provider: mock
   chat:
+    provider: mock
+  tts:
     provider: mock
 
 capabilities:

@@ -23,10 +23,11 @@ identity:
   license: null                    # RSV
 
 voice:
-  engine: piper
-  model: "en_US-amy-medium"
+  # How it sounds, whichever voice produces the sound. `rate` is a persona
+  # trait like `patience_ms`: 1.0 is the voice's own pace. Which voice speaks
+  # is `models.tts` below, beside the other providers.
   rate: 1.0
-  pitch_shift_semitones: 0
+  pitch_shift_semitones: 0        # RSV
 
 persona:
   summary: >
@@ -71,5 +72,11 @@ memory:
 models:
   chat:  {provider: openai,   model: "gpt-5.6-terra", key_env: "EMET_OPENAI_KEY"}
   stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}
-  tts:   {provider: local_piper}
+  # Local by design: synthesis is the stage a robot in a home should manage
+  # with the network down. The voice is a file the owner downloads once:
+  #     python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
+  # LJ Speech is public domain, which is why it is the reference voice and
+  # Amy, fine-tuned from a corpus licensed for research only, is not. A cloud
+  # voice is one line: {provider: deepgram, model: "aura-2-thalia-en", key_env: "EMET_DEEPGRAM_KEY"}
+  tts:   {provider: piper,    model: "en_US-ljspeech-medium"}
   micro: {provider: local,    model: "qwen3-0.6b-q4"}

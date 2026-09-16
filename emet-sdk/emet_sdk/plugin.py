@@ -1,6 +1,6 @@
 """The plugin contract. Breaking it is a major version bump.
 
-Six categories, and the split is not arbitrary:
+Seven categories, and the split is not arbitrary:
 
 * **Actuators** receive `Action`s and do something physical. The engine tells
   them what should happen; how is theirs.
@@ -24,6 +24,10 @@ Six categories, and the split is not arbitrary:
   thing the robot says. Chosen the same way as a transcriber. The engine
   hands over an assembled prompt and reads the reply as it streams, so a
   sentence can be spoken before the paragraph exists.
+* **Voice** plugins turn that text into audio. Chosen the same way again.
+  The engine hands over one sentence at a time and plays the audio as it
+  arrives, at the rate the voice states, so the first sentence is heard
+  while the language model is still writing the second.
 
 **Why there is no VAD category.** Voice activity detection looks like it
 belongs beside wake, and does not. It is not a swap point: there is one real
@@ -65,6 +69,7 @@ from emet_sdk.types import (
     Transcript,
     TranscriberDescriptor,
     Twist,
+    VoiceDescriptor,
     WakeDescriptor,
     WakeEvent,
 )
@@ -78,6 +83,7 @@ __all__ = [
     "WakePlugin",
     "TranscriberPlugin",
     "LanguageModelPlugin",
+    "VoicePlugin",
     "PluginError",
 ]
 
@@ -475,4 +481,95 @@ class LanguageModelPlugin(Plugin):
         provider reported or the network caused: those end the stream with
         `ReplyDone(stop_reason="error", error=...)` and whatever text came
         first, so the engine can say something rather than crash mid-turn.
+        """
+
+
+class VoicePlugin(Plugin):
+    """What turns the words the robot will say into audio.
+
+    The third provider seam, built like the other two: the contract and a
+    mock first, then the local voice, then one cloud voice. `DESIGN.md`
+    section 14 keeps synthesis local by default, because it is the stage that
+    costs the most per turn in the cloud and the one a robot in a home should
+    be able to do with the network down, so the shipped default is a local
+    model and a cloud voice is a line of a soul.
+
+    **Who chooses.** The soul, through `models.tts`, on the terms `models.stt`
+    set: the provider, the model (a voice, here: a Piper model name, a
+    vendor's voice id), and the environment variable holding the key when
+    there is one. The body may take the choice over through its own
+    `models.tts` and tunes whichever runs through `params`.
+    `emet_sdk.models.tts_selection` is the rule.
+
+    **What else the soul says.** How fast it speaks. `voice.rate` on the soul
+    is a persona trait, like `patience_ms`: a reflective character talks
+    slower than an eager one, and that is true whichever voice produces the
+    sound. So the soul's `voice` block reaches this constructor beside the
+    provider reference, the way `identity.wake_word` reaches a wake plugin.
+    Principle 1 holds: the soul says how it sounds, never which library, on
+    what device, at what sample rate.
+
+    **Streaming.** `speak()` takes one sentence and is an async iterator of
+    audio chunks: mono int16 at `describe().sample_rate`, in order,
+    concatenable. A provider that streams yields the first chunk before the
+    sentence is finished; one that does not yields the whole sentence as one
+    chunk and says `streaming=False`. The engine plays each sentence as its
+    audio completes and asks for the next while it plays, which is what lets
+    the first sentence be heard while the reply is still being written.
+
+    **Format.** The voice states the sample rate; the engine opens the sink
+    to match. A local model produces one rate and only one, and the sink is
+    the side that can convert.
+    """
+
+    #: The string matched against `models.tts.provider`, and the entry-point
+    #: name this plugin registers under.
+    provider: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> None:
+        """Receive the merged provider reference and the soul's `voice` block.
+
+        `config` is `provider`, `model`, `key_env`, `params`; the key itself is
+        never in it, and a plugin that needs one reads the environment
+        variable `key_env` names, in `start()`, and reports `healthy=False`
+        naming it when it is absent. `voice` is the soul's `voice` block:
+        `rate`, a multiplier on speaking speed, is the field every plugin
+        honours as far as its engine allows; the rest is advisory.
+        """
+        self.config: Mapping[str, Any] = config
+        self.model: str | None = (
+            str(config["model"]) if config.get("model") is not None else None
+        )
+        self.key_env: str | None = (
+            str(config["key_env"]) if config.get("key_env") is not None else None
+        )
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+        self.voice: Mapping[str, Any] = dict(voice or {})
+        #: Speaking speed as a multiplier: 1.0 is the voice's own pace, 1.2 is
+        #: a fifth faster. From the soul; a persona trait.
+        rate = self.voice.get("rate")
+        self.rate: float = float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
+
+    @abstractmethod
+    def describe(self) -> VoiceDescriptor:
+        """Report what this instance can actually do, after `start()`.
+
+        Report narrowly. A voice whose model is not on disk, whose key is
+        missing or whose library is not installed says `healthy=False` and
+        puts the reason, and the command that fixes it, in `health().detail`;
+        the boot check prints it, and the robot refuses to run rather than
+        answer questions nobody will hear.
+        """
+
+    @abstractmethod
+    def speak(self, text: str) -> AsyncIterator[bytes]:
+        """Turn one sentence into audio, as an async iterator of chunks.
+
+        Each chunk is mono int16 PCM at `describe().sample_rate`, and the
+        chunks concatenate into the sentence. Empty or blank text yields
+        nothing. A failure the provider reported or the network caused
+        raises `PluginError` after whatever audio came first; the engine
+        treats that as one sentence lost, says so, and goes on with the
+        next, because a robot that drops a sentence is still a robot that
+        talks.
         """

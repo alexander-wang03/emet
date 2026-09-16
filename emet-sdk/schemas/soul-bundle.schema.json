@@ -44,13 +44,27 @@
     },
 
     "voice": {
+      "description": "P0. How the soul sounds, whichever voice produces it. rate is a persona trait like patience_ms: a multiplier on speaking speed, 1.0 the voice's own pace, honoured by every shipped voice. engine and model are superseded by models.tts, which names the provider and the voice model; they are accepted for older bundles and ignored. pitch_shift_semitones is RSV: no shipped voice honours it yet.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "engine": { "enum": ["piper", "cloud"] },
-        "model": { "type": "string" },
-        "rate": { "type": "number", "exclusiveMinimum": 0 },
-        "pitch_shift_semitones": { "type": "number" }
+        "engine": {
+          "description": "Superseded by models.tts.provider. Accepted, ignored.",
+          "enum": ["piper", "cloud"]
+        },
+        "model": {
+          "description": "Superseded by models.tts.model. Accepted, ignored.",
+          "type": "string"
+        },
+        "rate": {
+          "description": "P0. Speaking speed as a multiplier: 1.2 is a fifth faster than the voice's own pace. Handed to whichever voice runs.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "pitch_shift_semitones": {
+          "description": "RSV. Accepted, and no shipped voice honours it yet.",
+          "type": "number"
+        }
       }
     },
 
@@ -170,7 +184,7 @@
     },
 
     "models": {
-      "description": "P0. BYOK, bring your own keys. Online-first: in P0 the robot fails loudly and in character when a key or the network is missing.",
+      "description": "P0. BYOK, bring your own keys. Online-first: in P0 the robot fails loudly and in character when a key or the network is missing. stt resolves against emet.stt, chat against emet.llm, tts against emet.tts (model is the voice: a Piper model name, a vendor's voice id; key_env only for a cloud voice). micro is RSV. None of these is checked against what is installed: a soul is valid on every machine or on none, and the question is answered at boot.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

@@ -18,6 +18,8 @@ import asyncio
 import wave
 from pathlib import Path
 
+import pytest
+
 from emet_engine import cli
 from emet_engine.session import ListenSession
 
@@ -85,6 +87,7 @@ def args(**overrides) -> argparse.Namespace:
         "stats": True,
         "transcribe": False,
         "reply": False,
+        "speak": False,
         "keys": None,
     }
     base.update(overrides)
@@ -371,3 +374,120 @@ def test_without_keys_and_without_default_files_the_header_says_nothing_about_ke
     asyncio.run(cli._run(args(keys=None)))
 
     assert "  keys " not in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ --speak
+
+
+def talking_soul() -> dict:
+    return soul(provider="mock", chat={"provider": "mock"}) | {"models": {"stt": {"provider": "mock"}, "chat": {"provider": "mock"}, "tts": {"provider": "mock"}}}
+
+
+def test_speak_says_the_reply_and_implies_reply_and_transcribe(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "s.wav", spoken(b"what", b"time", b"is it"))
+    stub_loaders(monkeypatch, body(wav), talking_soul())
+
+    rc = asyncio.run(cli._run(args(speak=True)))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "  stt      mock (streaming)" in out
+    assert "  llm      mock" in out
+    assert "  voice    mock (16000 Hz)" in out
+    assert "    reply: You said: what time is it" in out
+    assert "    spoke 1 sentence(s)" in out
+    assert "voice first" in out and "voice done" in out
+
+
+def test_speak_writes_what_was_said_through_the_wav_sink(tmp_path, monkeypatch, capsys):
+    """The whole 0.4 path on a laptop: wake, words, reply, voice, sink."""
+    wav = write_wav(tmp_path / "w.wav", spoken(b"hello", b"there"))
+    manifest = body(wav)
+    out = str(tmp_path / "said.wav")
+    manifest["audio"]["output"] = {"sink": "wav", "device": "none", "params": {"path": out}}
+    stub_loaders(monkeypatch, manifest, talking_soul())
+
+    rc = asyncio.run(cli._run(args(speak=True)))
+    assert rc == 0
+    from emet_providers.mock import read_back
+
+    with wave.open(out, "rb") as w:
+        assert w.getframerate() == 16000
+        assert read_back(w.readframes(w.getnframes())) == "You said: hello there"
+
+
+def test_a_lost_sentence_is_printed_with_its_reason(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "l.wav", spoken(b"hello", b"there"))
+    manifest = body(wav)
+    manifest["models"] = {
+        "chat": {"provider": "mock", "params": {"reply": "Fine. The POISON word. Fine again."}},
+        "tts": {"provider": "mock", "params": {"fail_on": "POISON"}},
+    }
+    stub_loaders(monkeypatch, manifest, talking_soul())
+
+    asyncio.run(cli._run(args(speak=True)))
+
+    out = capsys.readouterr().out
+    assert "    spoke 2 sentence(s)" in out
+    assert "the voice could not say 'The POISON word.'" in out
+
+
+def test_speak_with_no_voice_configured_names_the_field(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "n.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--speak"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "models.tts.provider" in err
+
+
+def test_speak_with_the_reference_voice_and_nothing_installed_says_what_to_do(tmp_path, monkeypatch, capsys):
+    """The reference soul names piper. Without the extra, or without the
+    voice model, the run must stop before the microphone opens and say
+    which command fixes it."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "piper", None)
+    wav = write_wav(tmp_path / "p.wav", saying(1))
+    doc = talking_soul()
+    doc["models"]["tts"] = {"provider": "piper", "model": "en_US-ljspeech-medium"}
+    stub_loaders(monkeypatch, body(wav), doc)
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--speak"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "will not run" in err and "emet-providers[piper]" in err
+
+
+def test_speak_with_the_cloud_voice_and_no_key_names_the_variable(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("EMET_DEEPGRAM_KEY", raising=False)
+    wav = write_wav(tmp_path / "k.wav", saying(1))
+    doc = talking_soul()
+    doc["models"]["tts"] = {"provider": "deepgram", "key_env": "EMET_DEEPGRAM_KEY"}
+    stub_loaders(monkeypatch, body(wav), doc)
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--speak"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "EMET_DEEPGRAM_KEY" in err and "will not run" in err
+
+
+def test_echo_and_speak_exclude_each_other(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["body.yaml", "soul.yaml", "--echo", "--speak"])
+    assert exc.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_a_false_wake_is_not_spoken_to(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "f.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), talking_soul())
+
+    asyncio.run(cli._run(args(speak=True)))
+
+    out = capsys.readouterr().out
+    assert "spoke" not in out and "reply:" not in out

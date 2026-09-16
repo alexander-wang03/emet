@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "emet-providers"
 version = "0.3.0"
-description = "Emet providers: speech recognition and language model plugins that reach a service; speech synthesis to follow."
+description = "Emet providers: speech recognition, language model and voice plugins that reach a service, or a model on disk."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "The Emet Authors" }]
-keywords = ["emet", "robotics", "stt", "llm", "providers"]
+keywords = ["emet", "robotics", "stt", "llm", "tts", "providers"]
 
 # emet-sdk only, like emet-hal. A provider is a plugin that talks to a service
 # instead of a chip; the contract it satisfies is the same kind of thing and
@@ -20,21 +20,29 @@ dependencies = ["emet-sdk>=0.1"]
 
 [project.optional-dependencies]
 # The Deepgram transcriber speaks the wire protocol itself and needs only a
-# WebSocket client. Optional because a body with no key, or no network, has
-# no use for it. websockets is BSD-3-Clause and ships cp311 to cp313 wheels
-# for aarch64 Linux (PyPI, 2026-09-12); 13 is where its asyncio client took
-# `additional_headers`.
-deepgram = ["websockets>=13"]
+# WebSocket client; the Deepgram voice streams audio over HTTPS through the
+# same client the language models use. Optional because a body with no key,
+# or no network, has no use for either. websockets is BSD-3-Clause and ships
+# cp311 to cp313 wheels for aarch64 Linux (PyPI, 2026-09-12); 13 is where its
+# asyncio client took `additional_headers`.
+deepgram = ["websockets>=13", "httpx>=0.27"]
 # The two language model providers speak JSON over HTTPS and stream
 # Server-Sent Events, so one HTTP client serves both. httpx is BSD-3-Clause,
 # pure Python, and ships one wheel for every platform (PyPI, 2026-09-15).
 anthropic = ["httpx>=0.27"]
 openai = ["httpx>=0.27"]
+# The local voice. piper-tts 1.8.0 ships cp39-abi3 wheels for manylinux
+# aarch64 and x86_64, macOS and Windows, one wheel for Python 3.9 to 3.13,
+# and depends on onnxruntime (MIT, cp313 aarch64 wheels) and pathvalidate
+# (PyPI, 2026-09-15). It is GPL-3.0-or-later, because espeak-ng is compiled
+# into it: Emet imports it through this extra and never bundles it, so a body
+# without the extra carries no GPL code. See CITATIONS.md.
+piper = ["piper-tts>=1.8"]
 dev = ["pytest>=8.0"]
 
 # Installing a package is what makes a provider exist. The entry-point name is
-# the string a soul puts in `models.stt.provider`, or a body puts in
-# `audio.stt.provider` to take the choice over.
+# the string a soul puts in `models.stt.provider`, or a body puts in its own
+# `models.stt.provider` to take the choice over.
 [project.entry-points."emet.stt"]
 "mock" = "emet_providers.mock:MockTranscriber"
 "deepgram" = "emet_providers.deepgram:DeepgramTranscriber"
@@ -44,6 +52,12 @@ dev = ["pytest>=8.0"]
 "mock" = "emet_providers.mock:MockLanguageModel"
 "anthropic" = "emet_providers.anthropic:AnthropicLanguageModel"
 "openai" = "emet_providers.openai:OpenAILanguageModel"
+
+# The entry-point name is the string a soul puts in `models.tts.provider`.
+[project.entry-points."emet.tts"]
+"mock" = "emet_providers.mock:MockVoice"
+"piper" = "emet_providers.piper:PiperVoice"
+"deepgram" = "emet_providers.deepgram_voice:DeepgramVoice"
 
 [tool.hatch.build.targets.wheel]
 packages = ["emet_providers"]

@@ -273,11 +273,12 @@ def test_a_body_naming_shipped_providers_validates_clean():
     assert validate_manifest(doc).ok
 
 
-def test_reserved_stages_are_accepted_and_not_checked():
-    """`tts` and `micro` resolve against nothing yet, so a body may name
-    anything there and the schema still accepts the shape."""
+def test_the_reserved_stage_is_accepted_and_not_checked():
+    """`micro` resolves against nothing yet, so a body may name anything
+    there and the schema still accepts the shape. `tts` used to be here and
+    is checked since the voice seam arrived."""
     doc = load_yaml(EXAMPLES / "bodiless.yaml")
-    doc["models"] = {"tts": {"provider": "nobody_yet"}, "micro": {"params": {"x": 1}}}
+    doc["models"] = {"micro": {"provider": "nobody_yet", "params": {"x": 1}}}
     assert validate_manifest(doc).ok
 
 

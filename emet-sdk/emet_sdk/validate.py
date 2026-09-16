@@ -58,6 +58,7 @@ __all__ = [
     "DEFAULT_AUDIO_SINK",
     "BUILTIN_STT",
     "BUILTIN_LLM",
+    "BUILTIN_TTS",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -129,6 +130,10 @@ BUILTIN_STT: frozenset[str] = frozenset({"mock", "deepgram"})
 
 #: Language model providers `emet-providers` ships. Same status.
 BUILTIN_LLM: frozenset[str] = frozenset({"mock", "anthropic", "openai"})
+
+#: Voices `emet-providers` ships. Same status. `piper` is the local default
+#: the design asks for; `deepgram` is the cloud voice a soul opts into.
+BUILTIN_TTS: frozenset[str] = frozenset({"mock", "piper", "deepgram"})
 
 
 # --------------------------------------------------------------------------
@@ -397,12 +402,13 @@ def _check_audio_sink(
 
 
 #: Which entry-point group each body-side `models.<stage>.provider` resolves
-#: against, and what to call it in a message. Stages absent here (`tts`,
-#: `micro`) are reserved: accepted by the schema, resolved against nothing
-#: yet, so a name under them is not checked.
+#: against, and what to call it in a message. A stage absent here (`micro`)
+#: is reserved: accepted by the schema, resolved against nothing yet, so a
+#: name under it is not checked.
 _MODEL_STAGE_GROUPS: Mapping[str, tuple[str, str]] = {
     "stt": ("has_stt", "speech recognition provider"),
     "chat": ("has_llm", "language model provider"),
+    "tts": ("has_tts", "speech synthesis provider"),
 }
 
 

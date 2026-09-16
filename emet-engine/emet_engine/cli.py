@@ -1,12 +1,13 @@
 """`emet-listen`: bring a body up and print what it hears.
 
-The 0.3 milestone in one command, and the first step of 0.4 behind a flag. It
+The 0.3 milestone in one command, and the steps of 0.4 behind flags. It
 brings up a microphone and a wake detector, and says so each time the robot
 hears its name. With `--transcribe` it also hands what follows to the speech
 recognition provider the soul names and prints what was said, partials as
 they arrive and then the final. With `--reply` it hands what was said to the
-language model the soul names and prints the answer as it streams. Nothing
-is spoken yet: that is the next seam.
+language model the soul names and prints the answer as it streams. With
+`--speak` the answer is also said, through the voice the soul names and out
+of the speaker, a sentence at a time while the rest is still being written.
 
 Useful before that, though. `--replay` points the same path at a recording
 instead of a microphone, so a wake failure somebody reports can be reproduced
@@ -107,22 +108,25 @@ async def _run(args: argparse.Namespace) -> int:
     if args.echo:
         # Echo replays captured *input* audio, so the sink has to run at the
         # input's rate rather than the synthesis rate it would normally use.
-        # Once there is speech synthesis this goes away: the sink will run at
-        # whatever the voice produces and nothing will need to match.
+        # Under --speak the session opens the sink at the voice's rate
+        # instead, which is why the two flags exclude each other.
         manifest = copy.deepcopy(manifest)
         output = manifest.setdefault("audio", {}).setdefault("output", {})
         output["sample_rate"] = int(
             (manifest["audio"].get("input") or {}).get("sample_rate") or 16000
         )
 
-    # A reply needs words to reply to, so --reply implies --transcribe.
-    transcribe = args.transcribe or args.reply
+    # Speaking needs a reply to speak, and a reply needs words to reply to,
+    # so --speak implies --reply implies --transcribe.
+    reply = args.reply or args.speak
+    transcribe = args.transcribe or reply
     session = ListenSession(
         manifest,
         soul,
         registry=registry,
         transcribe=transcribe,
-        reply=args.reply,
+        reply=reply,
+        speak=args.speak,
         on_wake=_on_wake,
         on_partial=_on_partial if transcribe else None,
     )
@@ -140,10 +144,15 @@ async def _run(args: argparse.Namespace) -> int:
             model = f", model {described.model}" if described and described.model else ""
             mode = "streaming" if described and described.streaming else "batch"
             lines.append(f"  stt      {session.stt_name}{model} ({mode})")
-        if args.reply:
+        if reply:
             described_llm = session.llm_descriptor
             model = f", model {described_llm.model}" if described_llm and described_llm.model else ""
             lines.append(f"  llm      {session.chat_name}{model}")
+        if args.speak:
+            described_tts = session.tts_descriptor
+            model = f", model {described_tts.model}" if described_tts and described_tts.model else ""
+            rate = f" ({described_tts.sample_rate} Hz)" if described_tts else ""
+            lines.append(f"  voice    {session.tts_name}{model}{rate}")
         for entry in loaded:
             names = ", ".join(entry.names) or "nothing new"
             lines.append(f"  keys     {names} from {entry.path}")
@@ -172,8 +181,8 @@ async def _run(args: argparse.Namespace) -> int:
                         print(f"    said {utterance.transcript.text!r}")
                     else:
                         print("    said nothing the provider could make out")
-                if args.reply and utterance.transcript is not None and utterance.transcript.text.strip():
-                    await _print_reply(session, utterance.transcript.text)
+                if reply and utterance.transcript is not None and utterance.transcript.text.strip():
+                    await _print_reply(session, utterance.transcript.text, speak=args.speak)
         except asyncio.CancelledError:
             # Ctrl-C. `asyncio.run` answers SIGINT by cancelling this task, and
             # a microphone never ends on its own, so this is how every live
@@ -194,10 +203,12 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _print_reply(session: ListenSession, text: str) -> None:
-    """Stream the reply to the console as the model produces it."""
+async def _print_reply(session: ListenSession, text: str, *, speak: bool = False) -> None:
+    """Stream the reply to the console as the model produces it, and with
+    `speak`, out of the speaker as each sentence completes."""
     print("    reply: ", end="", flush=True)
-    async for event in session.answer(text):
+    events = session.answer_aloud(text) if speak else session.answer(text)
+    async for event in events:
         if isinstance(event, TextDelta):
             print(event.text, end="", flush=True)
         elif isinstance(event, ReplyDone):
@@ -208,6 +219,12 @@ async def _print_reply(session: ListenSession, text: str) -> None:
                 print("    (the provider declined to answer)")
             elif event.stop_reason == "length":
                 print("    (cut off at the reply's token cap)")
+    if speak:
+        spoken = session.last_spoken
+        said = [s for s in spoken if s.ok and s.audio_bytes]
+        print(f"    spoke {len(said)} sentence(s)")
+        for lost in (s for s in spoken if not s.ok):
+            print(f"    the voice could not say {lost.text!r}: {lost.error}")
 
 
 def _finish(session: ListenSession, args: argparse.Namespace) -> None:
@@ -220,7 +237,7 @@ def _finish(session: ListenSession, args: argparse.Namespace) -> None:
     hint = session.warm_start_hint()
     if hint:
         print("\n" + hint)
-    if session.dropped and (args.echo or args.reply):
+    if session.dropped and (args.echo or args.reply or args.speak):
         print(
             f"\nnote: {session.dropped} frame(s) were dropped while the robot was "
             f"speaking or thinking. The loop does not read the microphone during "
@@ -246,12 +263,13 @@ def main(argv: list[str] | None = None) -> int:
         help="read this 16-bit mono wav instead of the microphone, so a wake "
         "failure can be reproduced away from the room it happened in",
     )
-    parser.add_argument(
+    playback = parser.add_mutually_exclusive_group()
+    playback.add_argument(
         "--echo",
         action="store_true",
-        help="play each captured utterance back through the output. There is "
-        "no speech synthesis yet, so this is what proves the whole duplex path "
-        "works: audio in, wake, endpoint, audio out",
+        help="play each captured utterance back through the output: audio in, "
+        "wake, endpoint, audio out, with no voice in between. Excludes --speak, "
+        "which opens the output at the voice's rate rather than the input's",
     )
     parser.add_argument(
         "--transcribe",
@@ -276,7 +294,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="hand what was said to the language model the soul names under "
         "models.chat (or the body takes over) and print the reply as it streams. "
-        "Implies --transcribe. Nothing is spoken yet",
+        "Implies --transcribe",
+    )
+    playback.add_argument(
+        "--speak",
+        action="store_true",
+        help="say the reply through the voice the soul names under models.tts "
+        "(or the body takes over) and out of the audio sink, a sentence at a "
+        "time while the rest is still being written; the sink runs at the "
+        "voice's sample rate. Implies --reply. The reference soul names piper, "
+        "which needs emet-providers[piper] and a voice downloaded once; "
+        "`mock` needs neither and makes a sound no one could mistake for speech",
     )
     parser.add_argument(
         "--stats",

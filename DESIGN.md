@@ -93,8 +93,10 @@ emet/                         one repository, Apache 2.0 throughout
     schemas/          manifest, soul bundle, motion pack (JSON Schema)
     emet_sdk/
       types.py        Intent, Action, CapabilityDescriptor, Pose, Twist,
-                      WakeDescriptor, AudioFormat, AudioSource, AudioSink
-      plugin.py       ActuatorPlugin, SensorPlugin, LocomotionPlugin, WakePlugin ABCs
+                      WakeDescriptor, AudioFormat, AudioSource, AudioSink,
+                      Transcript, Prompt, ReplyDone, VoiceDescriptor
+      plugin.py       ActuatorPlugin, SensorPlugin, LocomotionPlugin, WakePlugin,
+                      TranscriberPlugin, LanguageModelPlugin, VoicePlugin ABCs
       intents.py      the canonical intent vocabulary
       chains.py       fallback chain format + the voice-rung rule
       discovery.py    entry-point plugin discovery
@@ -109,12 +111,13 @@ emet/                         one repository, Apache 2.0 throughout
     audio.py          microphone and speaker through PortAudio; wav and null
     ...               pca9685, tb6612, gc9a01, ws2812: not yet written
 
-  emet-providers/   the plugins that reach a service (§12.3, §12.4)
-    mock.py           a transcriber and a language model that pretend
+  emet-providers/   the plugins that reach a service, or a model on disk (§12.3 to §12.5)
+    mock.py           a transcriber, a language model and a voice that pretend
     deepgram.py       speech recognition through Deepgram
     anthropic.py      Claude through the Messages API
     openai.py         GPT, or any server speaking Chat Completions
-    ...               voices: not yet written
+    piper.py          the local voice, through Piper (the default)
+    deepgram_voice.py the cloud voice, Aura through Deepgram
 
   emet-engine/      the listen loop today (wake, VAD, endpointing, §13);
                     personality synthesis, memory, arbitration, choreography,
@@ -123,9 +126,9 @@ emet/                         one repository, Apache 2.0 throughout
 
 **HAL** is *hardware abstraction layer*: the standard embedded and OS term for the layer separating generic upper software from specific silicon. Emet uses it in Android's sense: the abstraction itself is `emet_sdk.plugin` (the ABCs and capability descriptors), and `emet-hal` is the collection of per-device *implementations* that satisfy it. Spell the acronym out on first use in any document a newcomer might read first; not every contributor arrives from embedded work.
 
-**`emet-providers`** is the HAL's counterpart for what a robot borrows from a computer somewhere else: speech recognition, and in later releases language models and speech synthesis. A provider is a plugin in exactly the HAL's sense, satisfying a contract in `emet_sdk.plugin` and reaching the engine by name, and it is a separate package because the HAL is named for hardware, a client for a speech service is not hardware, and provider client libraries are heavy and networked in a way a body that only ever wakes should not have to install.
+**`emet-providers`** is the HAL's counterpart for what a robot borrows from a computer somewhere else, or from a model on its own disk: speech recognition, language models and speech synthesis. A provider is a plugin in exactly the HAL's sense, satisfying a contract in `emet_sdk.plugin` and reaching the engine by name, and it is a separate package because the HAL is named for hardware, a client for a speech service is not hardware, and provider client libraries are heavy and networked in a way a body that only ever wakes should not have to install.
 
-The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic, targeting under ~3,500 lines. The original target of 2,000 predates the wake and audio contracts, which added about 800 lines; the rest is headroom for the speech-to-text seam. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
+The engine imports the SDK. Plugins import the SDK. The SDK is types and contracts and almost no logic, and it is about 3,700 lines at 0.4, against a target of under 4,000. The original target of 2,000 predates the wake and audio contracts, which added about 800 lines, and the three provider contracts (speech recognition, the language model, the voice), which added about 900 more; the rest is headroom for the self-model and memory types. It is the only thing both sides must agree on. Enforced in CI by `tools/check_layering.py`, because with one open monorepo the layering is a test rather than a property of how the software is distributed.
 
 **Where the line falls when something is arguably logic:** deterministic pure functions over contract data belong in the SDK; anything stateful, scheduled, or personality-bearing belongs in the engine. Chain resolution (§6) is the former, `(chains, descriptors) → binding table` with no state and no I/O, and it lives in the SDK so that a HAL contributor can check where their driver binds without running an engine. The choreographer, at 50Hz and holding motion state, is the latter.
 
@@ -195,9 +198,10 @@ models:                          # P0  optional. The body's say over the soul's
     provider: mock               #     over, with its own model and key_env;
     params: {}                   #     params ride along either way (§12.3).
   chat:                          #     OPEN ENUMS: stt against emet.stt, chat
-    provider: mock               #     against emet.llm (§12.4).
-  tts: {}                        # RSV  reserved, resolved against nothing yet
-  micro: {}                      # RSV
+    provider: mock               #     against emet.llm (§12.4), tts against
+  tts:                           #     emet.tts (§12.5).
+    provider: mock
+  micro: {}                      # RSV  reserved, resolved against nothing yet
 
 capabilities: []                 # P0  see 4.2
 
@@ -386,7 +390,7 @@ Enforced by `emet_sdk.validate`, run at boot and by the CLI:
 - `drive.kinematics` must be a **string that resolves to an installed locomotion plugin**, not a member of a frozen list. An unrecognized value fails boot with "no locomotion plugin provides `legged`; install one or change `kinematics`", which is a *missing plugin* error, not a *schema* error. This is what keeps the enum open.
 - Every referenced `driver.plugin` resolves to an installed plugin, or boot fails loudly with the missing package name. Never silently degrade because of a typo: that is a *different* failure from missing hardware, and conflating them costs support hours.
 - `audio.wake.engine`, `audio.input.source` and `audio.output.sink` resolve to installed plugins, or validation fails. `driver.plugin` may name hardware not yet wired and so only warns outside `--verify-drivers`; these name software that has to exist for the robot to hear or speak at all.
-- `models.stt.provider` and `models.chat.provider`, when a body sets them, resolve to an installed `emet.stt` or `emet.llm` plugin on the same terms. The soul's `models` block is never checked against what is installed: a soul is valid on every machine or on none, and that question is answered at boot (§12.3, §12.4).
+- `models.stt.provider`, `models.chat.provider` and `models.tts.provider`, when a body sets them, resolve to an installed `emet.stt`, `emet.llm` or `emet.tts` plugin on the same terms. The soul's `models` block is never checked against what is installed: a soul is valid on every machine or on none, and that question is answered at boot (§12.3 to §12.5).
 
 ---
 
@@ -632,11 +636,13 @@ identity:
   created: "2026-08-08"          # P0
   license: null                  # RSV  for the community soul registry
 
-voice:
-  engine: piper                  # P0  piper | cloud
-  model: "en_US-amy-medium"      # P0
-  rate: 1.0                      # P0
-  pitch_shift_semitones: 0       # P0
+voice:                           # P0  how it sounds, whichever voice speaks
+  rate: 1.0                      # P0  a multiplier on speaking speed; a persona
+                                 #     trait like patience_ms, honoured by every
+                                 #     shipped voice. Which voice is models.tts.
+  pitch_shift_semitones: 0       # RSV no shipped voice honours it yet
+                                 #     (engine and model, the pre-seam fields,
+                                 #     are accepted for older bundles and ignored)
 
 persona:
   summary: >                     # P0  the seed a human writes
@@ -681,10 +687,12 @@ models:                          # P0  BYOK
                                  #     names an installed emet.llm plugin (§12.4)
   stt:   {provider: deepgram, model: "...", key_env: "EMET_DEEPGRAM_KEY"}
                                  #     names an installed emet.stt plugin (§12.3).
-                                 #     Both resolved at boot; a body may take
-                                 #     either over with its own models block.
-  tts:   {provider: local_piper}
-  micro: {provider: local, model: "qwen3-0.6b-q4"}   # backchannel only
+  tts:   {provider: piper, model: "en_US-ljspeech-medium"}
+                                 #     names an installed emet.tts plugin (§12.5);
+                                 #     model is the voice. All three resolved at
+                                 #     boot; a body may take any over with its
+                                 #     own models block.
+  micro: {provider: local, model: "qwen3-0.6b-q4"}   # backchannel only, RSV
 ```
 
 #### 8.1.1 Why `name` and `wake_word` are separate fields
@@ -908,13 +916,13 @@ so honestly.
 
 ### 12.2 Wake and audio plugins
 
-Eight entry-point groups in total. Three are built from a manifest capability
+Nine entry-point groups in total. Three are built from a manifest capability
 (`emet.actuators`, `emet.sensors`, `emet.locomotion`). Three are built from the
 manifest's `audio` block (`emet.wake`, `emet.audio`, `emet.audio_out`), because
 the hardware floor already guarantees a microphone and a speaker, so there is no
-capability to declare, only a choice of what runs on them. The seventh and
-eighth, `emet.stt` and `emet.llm`, are built from the soul's `models` block and
-the body's together (§12.3, §12.4).
+capability to declare, only a choice of what runs on them. The seventh, eighth
+and ninth, `emet.stt`, `emet.llm` and `emet.tts`, are built from the soul's
+`models` block and the body's together (§12.3 to §12.5).
 
 ```python
 class PocketSphinxWake(WakePlugin):
@@ -1112,6 +1120,84 @@ request, a model listing, so a rejected key or an unreachable network is
 known at boot. The engine refuses to run a robot that would hear questions
 and never answer them, in the terms the owner can act on.
 
+### 12.5 Speech synthesis plugins
+
+`emet.tts` is the ninth group, chosen the way the other two are chosen, and
+built the same way: the contract and a mock first, then the local voice, then
+one cloud voice, because a seam with one implementation is untested as a seam
+and a cloud voice is the implementation most likely to pull the engine out of
+true.
+
+```python
+class PiperVoice(VoicePlugin):
+    provider = "piper"                 # the string matched against models.tts.provider
+
+    def __init__(self, config, voice):
+        """The merged provider reference (provider, model, key_env, params)
+        and the soul's `voice` block. `model` is the voice: a Piper model
+        name, a vendor's voice id. `voice.rate` is how fast the soul speaks,
+        a persona trait, and the one field every plugin honours."""
+
+    def describe(self) -> VoiceDescriptor:
+        """The voice this instance loaded, the sample rate its audio arrives
+        at, whether chunks arrive before the sentence is done, and whether
+        the model, the key or the library was there at start()."""
+
+    async def speak(self, text: str) -> AsyncIterator[bytes]:
+        """One sentence in; mono int16 chunks at describe().sample_rate out,
+        in order. A failure raises PluginError after the audio so far, and
+        the engine loses that sentence, not the turn."""
+```
+
+**Local by default, and why.** §14 has always placed synthesis locally: it
+is the stage that costs the most per turn in the cloud, and the one a robot in
+a home should manage with the network down. The shipped default is Piper, a
+small neural voice on ONNX Runtime that a Raspberry Pi 5 runs in a tenth of
+real time. Its current packaging, `piper-tts` 1.8.0 (PyPI, 2026-09-04), ships
+one `cp39-abi3` wheel per platform, aarch64 Linux included, so the Pi needs no
+compiler; it is GPL-3.0-or-later, because espeak-ng is compiled into it. Emet
+imports it through the optional extra `emet-providers[piper]` and never bundles
+it, so a body without the extra carries no GPL code, and `CITATIONS.md` records
+the terms. A cloud voice is a line of a soul: the shipped one is Deepgram's
+Aura over `POST /v1/speak`, raw linear16 streamed back at a rate the body
+chooses, one request per sentence, at $0.030 per thousand characters (pricing
+page, 2026-09-15). Deepgram's newer Flux TTS speaks a different protocol
+(`/v2/speak`, raw audio over WebSocket only, its own turn and interrupt
+messages) and is in the deferred register.
+
+**Voices are files, and their licences vary.** A Piper voice is a model and a
+config the owner downloads once; the plugin looks in `params.path`,
+`params.voices_dir`, `~/.local/share/emet/voices` and `/etc/emet/voices`, and
+when it finds nothing it names the command that fixes it rather than fetching
+sixty megabytes because a soul asked. Each voice on Hugging Face carries its
+own model card. The reference soul names `en_US-ljspeech-medium` because LJ
+Speech is public domain; the earlier reference voice, Amy, is fine-tuned from
+the Blizzard 2013 Lessac corpus, whose licence forbids use in voice synthesis
+products (read 2026-09-15), and a shipped default cannot rest on that.
+
+**Sentences, and why the reply streams.** A voice given one word at a time
+loses the sentence's melody; a voice given the whole reply cannot start until
+the model has stopped, which on the reference body is two seconds of silence.
+So the engine watches the reply's text deltas for sentence ends, hands each
+complete sentence to the voice at once, and plays its audio while the model is
+still writing the next. Synthesis of sentence two overlaps playback of
+sentence one; the voice is asked for one sentence at a time so that any
+provider, streaming or not, fits. `emet-listen --stats` reports `voice first`
+and `voice done`: the wait from the final transcript to the first sound at the
+speaker, measured where a person hears it, and to the last.
+
+**The voice states the rate, the speaker conforms.** The wake rule (§12.2)
+run the other way. A local model produces one sample rate and only one, and
+the engine opens the sink at whatever the voice reports (22050 Hz for a Piper
+medium voice, 24000 Hz for Aura by default) rather than resampling in
+between, which would be a second place for audio to go quietly wrong. The
+sink is the side that can convert, through the card's `plug` layer.
+
+**A sentence lost is a sentence lost.** A voice that fails on one sentence
+raises; the engine logs it, counts it, prints it, and goes on with the next.
+The text was still printed, and a robot that skipped a sentence is still a
+robot that answered.
+
 ---
 
 ## 13. Turn-taking
@@ -1134,7 +1220,7 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 | Gaze / DoA / face tracking | Local | Reflex tier. |
 | STT | Cloud (streaming) | BYOK. Open plugin category (`emet.stt`, §12.3); the soul names the provider and the body may take it over. |
 | LLM | Cloud (streaming) | BYOK. Open plugin category (`emet.llm`, §12.4); Anthropic and OpenAI ship, and any Chat Completions server is a `url` away. Speak first sentence as it streams. |
-| TTS | Local (Piper) | The expensive cloud stage; keep it local. Premium cloud voice is an opt-in toggle. |
+| TTS | Local (Piper) | The expensive cloud stage; keep it local. Open plugin category (`emet.tts`, §12.5); Piper ships as the default, Deepgram Aura as the opt-in cloud voice, one line of a soul. |
 | Backchannel micro-model | Local | Fills the thinking gap. |
 | Vision understanding | Cloud (VLM), event-triggered | One frame on an explicit trigger. Never streamed. |
 | Nightly consolidation | Cloud (batch) | `RSV`. Nobody waiting; use the biggest model. |

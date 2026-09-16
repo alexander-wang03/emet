@@ -77,6 +77,7 @@ def test_shipped_chain_files_are_valid():
         ("unknown-mount.yaml", "unknown_reference"),
         ("unknown-stt-provider.yaml", "missing_plugin"),
         ("unknown-llm-provider.yaml", "missing_plugin"),
+        ("unknown-tts-provider.yaml", "missing_plugin"),
     ],
 )
 def test_invalid_manifests_are_rejected(fixture: str, expected: str):

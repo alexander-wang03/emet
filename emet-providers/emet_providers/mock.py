@@ -1,4 +1,4 @@
-"""A speech recogniser and a language model that pretend.
+"""A speech recogniser, a language model and a voice that pretend.
 
 `MockTranscriber` reads words out of the bytes it is given. A frame that
 begins with printable text, followed by zeros, is taken to be somebody saying
@@ -51,15 +51,37 @@ Params, all optional:
     fail_on_start   bool. Pretend the service is unreachable.
     require_key     bool. Insist on the environment variable `key_env`
                     names.
+
+`MockVoice` speaks without a voice. The words it is given become the audio:
+one chunk per word, each chunk the word's bytes followed by zeros, which is
+the transcriber's trick run backwards. `read_back()` turns that audio into
+the words again, so a test that records the robot through the `wav` sink
+can assert on what was said. It streams a chunk per word, so the engine's
+sentence pipeline is exercised end to end with no model and no network.
+
+Params, all optional:
+
+    sample_rate     int. Report this rate, default 16000; the engine opens
+                    the sink at whatever a voice reports.
+    latency_ms      int. Wait this long before the first chunk of each
+                    sentence, the way a real voice would.
+    fail_on         str. A sentence containing this word raises after its
+                    first chunk, which is how a test watches the engine
+                    lose one sentence and keep the next.
+    fail_on_start   bool. Pretend the model is missing.
+    require_key     bool. Insist on the environment variable `key_env`
+                    names, the way a cloud voice would.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from typing import Any, Mapping
+import re
+from typing import Any, AsyncIterator, Mapping
 
-from emet_sdk.plugin import LanguageModelPlugin, TranscriberPlugin
+from emet_sdk.plugin import LanguageModelPlugin, PluginError, TranscriberPlugin, VoicePlugin
 from emet_sdk.types import (
     AudioFormat,
     Health,
@@ -71,9 +93,10 @@ from emet_sdk.types import (
     ToolCall,
     Transcript,
     TranscriberDescriptor,
+    VoiceDescriptor,
 )
 
-__all__ = ["MockTranscriber", "MockLanguageModel", "spelled", "MIN_CHARS"]
+__all__ = ["MockTranscriber", "MockLanguageModel", "MockVoice", "spelled", "read_back", "MIN_CHARS"]
 
 log = logging.getLogger("emet_providers.mock")
 
@@ -94,6 +117,24 @@ def spelled(frame: bytes) -> str:
     if len(head) < MIN_CHARS or any(b < 0x20 or b > 0x7E for b in head):
         return ""
     return head.decode("ascii").strip()
+
+
+def read_back(pcm: bytes) -> str:
+    """The words the mock voice wrote into `pcm`, in order.
+
+    The voice writes each word and then at least two zero bytes, so a word
+    is a run of printable bytes between runs of zeros, whatever its length:
+    "is" and "it" are words here, where `spelled()` would take them for
+    audio, because this reads the mock's own output and nothing else. Works
+    whatever the chunk size, so a wav the sink wrote can be read back
+    without knowing how it was cut.
+    """
+    words: list[str] = []
+    for run in re.split(rb"\x00{2,}", pcm):
+        run = run.strip(b"\x00")
+        if run and all(0x20 <= b <= 0x7E for b in run):
+            words.append(run.decode("ascii").strip())
+    return " ".join(w for w in words if w)
 
 
 class MockTranscriber(TranscriberPlugin):
@@ -276,3 +317,82 @@ class MockLanguageModel(LanguageModelPlugin):
             input_tokens=input_tokens,
             output_tokens=len(_words(text)),
         )
+
+
+class MockVoice(VoicePlugin):
+    """A voice with no voice in it: the words become the audio."""
+
+    provider = "mock"
+
+    #: Bytes a word's chunk is padded to. Short, so a sentence is small.
+    CHUNK_BYTES = 64
+
+    def __init__(self, config: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> None:
+        super().__init__(config, voice)
+        #: Every sentence this instance was asked to say, in order.
+        self.said: list[str] = []
+        self._started = False
+        self._fault: str | None = None
+
+    # ------------------------------------------------------------ lifecycle
+
+    async def start(self) -> None:
+        if self.params.get("fail_on_start"):
+            self._fail(str(self.params.get("fault_detail") or "simulated: the voice model is missing"))
+            return
+        if self.params.get("require_key"):
+            if not self.key_env:
+                self._fail("this voice needs a key and the soul names no key_env")
+                return
+            if not os.environ.get(self.key_env):
+                self._fail(f"no key: the environment variable {self.key_env} is not set")
+                return
+        self._started = True
+
+    def _fail(self, reason: str) -> None:
+        self._fault = reason
+        log.warning("mock tts: %s", reason)
+
+    async def shutdown(self) -> None:
+        self._started = False
+
+    # ------------------------------------------------------------ reporting
+
+    def describe(self) -> VoiceDescriptor:
+        return VoiceDescriptor(
+            provider=self.provider,
+            model=self.model,
+            sample_rate=int(self.params.get("sample_rate") or 16000),
+            streaming=True,
+            healthy=self._started,
+        )
+
+    def health(self) -> Health:
+        if self._fault:
+            fault = "no_key" if "no key" in self._fault else "start_failed"
+            return Health(ok=False, detail=self._fault, faults=(fault,))
+        return Health()
+
+    # ---------------------------------------------------------------- speak
+
+    def _chunk(self, word: str) -> bytes:
+        payload = word.encode("ascii", "replace")
+        size = max(self.CHUNK_BYTES, len(payload) + 2)
+        size += size % 2
+        return payload + bytes(size - len(payload))
+
+    async def speak(self, text: str) -> AsyncIterator[bytes]:
+        words = text.split()
+        if not words:
+            return
+        if not self._started:
+            raise PluginError("the mock voice was not started")
+        self.said.append(" ".join(words))
+        latency = float(self.params.get("latency_ms") or 0)
+        if latency:
+            await asyncio.sleep(latency / 1000.0)
+        poison = self.params.get("fail_on")
+        for i, word in enumerate(words):
+            yield self._chunk(word)
+            if poison and poison in word:
+                raise PluginError(f"simulated: the voice failed on {word!r}")

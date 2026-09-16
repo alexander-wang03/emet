@@ -322,3 +322,103 @@ def test_a_missing_key_is_reported_by_the_name_of_the_variable_for_the_model_too
     run(model.start())
     assert not model.describe().healthy
     assert "EMET_MOCK_KEY" in (model.health().detail or "")
+
+
+# ------------------------------------------------------------------ voice
+
+
+from emet_sdk.plugin import PluginError, VoicePlugin  # noqa: E402
+from emet_sdk.types import VoiceDescriptor  # noqa: E402
+
+from emet_providers.mock import MockVoice, read_back  # noqa: E402
+
+
+def voice(config: dict | None = None, soul_voice: dict | None = None, **params) -> MockVoice:
+    cfg: dict = {"provider": "mock", "params": params}
+    cfg.update(config or {})
+    tts = MockVoice(cfg, soul_voice)
+    run(tts.start())
+    return tts
+
+
+async def audio(tts: MockVoice, text: str) -> list[bytes]:
+    return [c async for c in tts.speak(text)]
+
+
+def test_the_mock_voice_is_a_voice_plugin_that_spells_the_words_into_the_audio():
+    tts = voice()
+    assert isinstance(tts, VoicePlugin)
+    d = tts.describe()
+    assert isinstance(d, VoiceDescriptor)
+    assert d.healthy and d.streaming and d.sample_rate == 16000 and d.provider == "mock"
+    chunks = run(audio(tts, "what time is it"))
+    assert len(chunks) == 4, "one chunk a word, so the pipeline sees a stream"
+    assert all(len(c) % 2 == 0 and len(c) >= MockVoice.CHUNK_BYTES for c in chunks)
+    assert read_back(b"".join(chunks)) == "what time is it"
+    assert tts.said == ["what time is it"]
+
+
+def test_read_back_survives_any_chunking_and_keeps_short_words():
+    tts = voice()
+    pcm = b"".join(run(audio(tts, "I am a robot, it is true.")))
+    assert read_back(pcm) == "I am a robot, it is true."
+    assert read_back(pcm[:50] + pcm[50:]) == read_back(pcm)
+    assert read_back(bytes(100)) == ""
+
+
+def test_the_sample_rate_is_whatever_the_body_says():
+    assert voice(sample_rate=8000).describe().sample_rate == 8000
+
+
+def test_blank_text_makes_no_sound():
+    tts = voice()
+    assert run(audio(tts, "  ")) == []
+    assert tts.said == []
+
+
+def test_a_latency_is_waited_before_the_first_chunk():
+    import time
+
+    tts = voice(latency_ms=30)
+    before = time.perf_counter()
+    run(audio(tts, "hi"))
+    assert time.perf_counter() - before >= 0.025
+
+
+def test_a_poisoned_word_fails_the_sentence_after_its_first_chunk():
+    tts = voice(fail_on="Ω")
+
+    async def scenario():
+        got = []
+        with pytest.raises(PluginError, match="simulated"):
+            async for chunk in tts.speak("the symbol Ω here"):
+                got.append(chunk)
+        return got
+
+    got = run(scenario())
+    assert [read_back(c) for c in got] == ["the", "symbol", "Ω".encode("ascii", "replace").decode()]
+    assert run(audio(tts, "fine again")), "the plugin is not broken"
+
+
+def test_a_missing_model_or_key_is_unhealthy_with_the_reason(monkeypatch):
+    assert not voice(fail_on_start=True).describe().healthy
+    assert "missing" in (voice(fail_on_start=True).health().detail or "")
+    monkeypatch.delenv("EMET_MOCK_KEY", raising=False)
+    tts = voice(config={"key_env": "EMET_MOCK_KEY"}, require_key=True)
+    assert not tts.describe().healthy
+    assert "EMET_MOCK_KEY" in (tts.health().detail or "")
+    assert tts.health().faults == ("no_key",)
+
+
+def test_an_unstarted_mock_voice_says_so():
+    tts = MockVoice({"provider": "mock"})
+
+    async def scenario():
+        with pytest.raises(PluginError, match="not started"):
+            await audio(tts, "hello")
+
+    run(scenario())
+
+
+def test_the_souls_rate_is_carried():
+    assert voice(soul_voice={"rate": 1.5}).rate == 1.5

@@ -1,13 +1,15 @@
-"""What the two HTTP language model providers share.
+"""What the HTTP providers share.
 
-Both Anthropic and OpenAI speak JSON over HTTPS and stream replies as
-Server-Sent Events, so the client, the event parser and the error reading are
-written once here. The vendors differ in headers, body shape and event names,
-and those stay in each provider's own file.
+Anthropic and OpenAI speak JSON over HTTPS and stream replies as Server-Sent
+Events, and Deepgram's voice streams raw audio over the same client, so the
+client, the event parser and the error reading are written once here. The
+vendors differ in headers, body shape and event names, and those stay in
+each provider's own file.
 
 `httpx` is imported lazily, inside `open_client()`, so that a body with no
-language model never needs it and the `anthropic` and `openai` extras stay
-optional. Tests inject an `httpx.MockTransport` through `transport`.
+cloud provider never needs it and the `anthropic`, `openai` and `deepgram`
+extras stay optional. Tests inject an `httpx.MockTransport` through
+`transport`.
 """
 
 from __future__ import annotations
@@ -86,8 +88,9 @@ async def sse_events(lines: AsyncIterator[str]) -> AsyncIterator[tuple[str, Any]
 def api_error(status: int, body: bytes | str) -> str:
     """One line for a non-200 response, quoting the vendor's message if any.
 
-    Both vendors answer errors with `{"error": {"type"|"code", "message"}}`;
-    anything else is quoted as text, trimmed.
+    Anthropic and OpenAI answer errors with `{"error": {"type"|"code",
+    "message"}}`; Deepgram with `{"err_code", "err_msg"}`. Anything else is
+    quoted as text, trimmed.
     """
     text = body.decode("utf-8", "replace") if isinstance(body, bytes) else body
     try:
@@ -96,6 +99,9 @@ def api_error(status: int, body: bytes | str) -> str:
         if isinstance(err, dict):
             kind = err.get("type") or err.get("code") or "error"
             return f"HTTP {status} {kind}: {err.get('message', '')}".rstrip(": ")
+        if isinstance(data, dict) and (data.get("err_code") or data.get("err_msg")):
+            kind = data.get("err_code") or "error"
+            return f"HTTP {status} {kind}: {data.get('err_msg', '')}".rstrip(": ")
     except ValueError:
         pass
     return f"HTTP {status}: {text.strip()[:200]}"

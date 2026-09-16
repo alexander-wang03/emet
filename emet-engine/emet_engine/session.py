@@ -4,14 +4,15 @@ This is the first thing in Emet that is neither a contract nor a driver. It
 takes a body manifest and a soul bundle, brings up the two pieces of hardware
 the floor guarantees, and produces an event each time the robot hears its name.
 Asked to, it also hands the speech that follows to a recogniser and returns
-what was said, and hands what was said to a language model and streams what
-the robot would answer.
+what was said, hands what was said to a language model and streams what the
+robot would answer, and hands the answer, a sentence at a time as it
+streams, to a voice and out through the speaker.
 
 **It imports `emet_sdk` and nothing else.** Microphones and wake detectors live
-in `emet_hal`, transcribers and language models in `emet_providers`, and this
-module never names either package. All of them arrive by name through
-entry-point discovery, which is the only reason a layering rule that forbids
-the import and an engine that needs a microphone can both be true.
+in `emet_hal`, transcribers, language models and voices in `emet_providers`,
+and this module never names either package. All of them arrive by name
+through entry-point discovery, which is the only reason a layering rule that
+forbids the import and an engine that needs a microphone can both be true.
 
 **Order matters at start-up, and not the obvious way round.** The detector is
 brought up first and asked what audio it needs, and the source is then
@@ -21,7 +22,10 @@ robot ends up running perfectly and hearing nothing, because feeding 48 kHz
 audio to a 16 kHz model does not raise anything. It just stops working. The
 transcriber is built between the two: it is handed the detector's format,
 reports the rate it will actually run at, and a mismatch is refused before the
-microphone is ever opened.
+microphone is ever opened. The output side runs the same rule the other way
+round: the voice states the rate its audio arrives at, and the speaker is
+opened to match, so a local voice that produces one rate and only one is
+never resampled by the engine.
 
 **The boot check that has no fallback.** Every other missing piece degrades: a
 chain that cannot find a head falls through to a light ring, and one that finds
@@ -38,7 +42,7 @@ from dataclasses import replace
 from typing import Any, AsyncIterator, Callable, Mapping
 
 from emet_sdk.discovery import PluginRegistry
-from emet_sdk.models import chat_selection, stt_selection
+from emet_sdk.models import chat_selection, stt_selection, tts_selection
 from emet_sdk.types import (
     AudioFormat,
     AudioSink,
@@ -49,6 +53,7 @@ from emet_sdk.types import (
     TextDelta,
     Transcript,
     TranscriberDescriptor,
+    VoiceDescriptor,
     WakeDescriptor,
     WakeEvent,
 )
@@ -60,6 +65,7 @@ from emet_sdk.validate import (
 
 from emet_engine.metrics import SessionStats, Stopwatch
 from emet_engine.prompting import DEFAULT_MAX_TOKENS, Conversation, system_prompt
+from emet_engine.speech import Mouth, Sentences, SpokenSentence
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance
 
 __all__ = ["EngineError", "ListenSession"]
@@ -90,7 +96,8 @@ class ListenSession:
     `answer(text)` is the next step, taken by the caller after a turn: the
     words go to the language model with the persona and the conversation so
     far, and the reply streams back as events. The caller decides whether to
-    print it, speak it, or both.
+    print it, speak it, or both. `answer_aloud(text)` is both: the same
+    events, and each sentence spoken through the voice as it completes.
     """
 
     def __init__(
@@ -101,6 +108,7 @@ class ListenSession:
         registry: PluginRegistry | None = None,
         transcribe: bool = False,
         reply: bool = False,
+        speak: bool = False,
         on_wake: Callable[[WakeEvent], None] | None = None,
         on_partial: Callable[[Transcript], None] | None = None,
     ) -> None:
@@ -139,6 +147,14 @@ class ListenSession:
         self.system_prompt = system_prompt(soul)
         self.conversation = Conversation()
 
+        #: The voice the soul and the body agree on, and whether to bring it
+        #: up. The soul's `voice` block (its speaking rate) reaches the
+        #: plugin beside the provider reference.
+        self.tts = tts_selection(manifest, soul)
+        self.tts_name: str | None = self.tts["provider"] if self.tts else None
+        self.speak = speak
+        self._voice_block: Mapping[str, Any] = soul.get("voice") or {}
+
         # Turn-taking is a persona trait, not engine tuning: a reflective soul
         # waits longer than an eager one, and that difference is the whole
         # reason the number lives on the soul rather than in this file.
@@ -148,12 +164,16 @@ class ListenSession:
         self._wake: Any = None
         self._stt: Any = None
         self._llm: Any = None
+        self._tts: Any = None
+        self._mouth: Mouth | None = None
         self._audio: AudioSource | None = None
         self._sink: AudioSink | None = None
         self.descriptor: WakeDescriptor | None = None
         self.stt_descriptor: TranscriberDescriptor | None = None
         self.llm_descriptor: LanguageModelDescriptor | None = None
+        self.tts_descriptor: VoiceDescriptor | None = None
         self.format: AudioFormat | None = None
+        self.sink_format: AudioFormat | None = None
         #: Whether the loop is keeping up. Populated as it runs; see
         #: `emet_engine.metrics` for why the real-time factor is the number
         #: that decides whether a body can run Emet at all.
@@ -189,19 +209,27 @@ class ListenSession:
             await self._start_stt()
         if self.reply:
             await self._start_llm()
+        if self.speak:
+            await self._start_tts()
 
         source_cls = self.registry.load_audio(self.source_name)
         self._audio = source_cls(self._input_block, self.format)
         await self._audio.start()
 
         # The output rate is not the input rate and has no reason to be: one is
-        # what the detector needs, the other is what synthesis produces.
-        self.sink_format = AudioFormat(
-            sample_rate=int(self._output_block.get("sample_rate") or 22050)
-        )
+        # what the detector needs, the other is what synthesis produces. With
+        # a voice running, the voice states it and the sink is opened to match;
+        # without one, the manifest's figure, or a synthesis rate.
+        if self.tts_descriptor is not None:
+            sink_rate = self.tts_descriptor.sample_rate
+        else:
+            sink_rate = int(self._output_block.get("sample_rate") or 22050)
+        self.sink_format = AudioFormat(sample_rate=sink_rate)
         sink_cls = self.registry.load_audio_out(self.sink_name)
         self._sink = sink_cls(self._output_block, self.sink_format)
         await self._sink.start()
+        if self._tts is not None:
+            self._mouth = Mouth(self._tts, self._sink)
 
         log.info(
             "listening for %r via %s on %s at %d Hz",
@@ -271,6 +299,35 @@ class ListenSession:
                 f"would hear questions it can never answer. It will not run.{detail}"
             )
 
+    async def _start_tts(self) -> None:
+        """Bring up the voice, or say precisely why not.
+
+        The plugin's own reason is quoted, because it is the one that names
+        the fix: a download command for a missing model, a variable for a
+        missing key, an extra for a missing library.
+        """
+        if self.tts is None or self.tts_name is None:
+            installed = ", ".join(self.registry.tts_names) or "(none)"
+            raise EngineError(
+                "speech was asked for and no voice is configured. Name one under "
+                "`models.tts.provider` in the soul, or take it over with "
+                f"`models.tts.provider` in the body. Installed: {installed}."
+            )
+        tts_cls = self.registry.load_tts(self.tts_name)
+        self._tts = tts_cls(self.tts, self._voice_block)
+        await self._tts.start()
+
+        self.tts_descriptor = self._tts.describe()
+        if not self.tts_descriptor.healthy:
+            detail = ""
+            health = self._tts.health()
+            if not health.ok and health.detail:
+                detail = f" {health.detail}"
+            raise EngineError(
+                f"the voice {self.tts_name!r} cannot start, so the robot would "
+                f"answer and never be heard. It will not run.{detail}"
+            )
+
     def _deaf_message(self) -> str:
         """Say what is wrong in the terms the person can act on.
 
@@ -299,9 +356,15 @@ class ListenSession:
 
     async def stop(self) -> None:
         """Safe to call twice, and safe if `start()` raised part way through."""
+        if self._mouth is not None:
+            await self._mouth.hush()
+            self._mouth = None
         if self._sink is not None:
             await self._sink.stop()
             self._sink = None
+        if self._tts is not None:
+            await self._tts.shutdown()
+            self._tts = None
         if self._audio is not None:
             await self._audio.stop()
             self._audio = None
@@ -341,15 +404,39 @@ class ListenSession:
             self._charge_busy(before)
 
     async def hush(self) -> None:
-        """Stop talking immediately, mid-word.
+        """Stop talking immediately, mid-word, and drop what was queued.
 
         Barge-in is built on this: `DESIGN.md` §13 requires that speech during
         playback interrupts rather than queues. Nothing calls it yet, and the
         sink contract carries it from the start so that adding barge-in later
         is engine work rather than a breaking change to every sink.
         """
-        if self._sink is not None:
+        if self._mouth is not None:
+            await self._mouth.hush()
+        elif self._sink is not None:
             await self._sink.cancel()
+
+    async def speak_text(self, text: str) -> list[SpokenSentence]:
+        """Say a fixed piece of text, sentence by sentence, and wait for it.
+
+        The voice's path without the language model in front of it: a
+        greeting, a test line, a robot reading something out. Returns what
+        happened to each sentence.
+        """
+        if self._mouth is None:
+            raise EngineError("the voice was not started; construct the session with speak=True")
+        before = self.dropped
+        sentences = Sentences()
+        self._mouth.open()
+        try:
+            for sentence in sentences.feed(text):
+                await self._mouth.say(sentence)
+            rest = sentences.flush()
+            if rest:
+                await self._mouth.say(rest)
+            return await self._mouth.finish()
+        finally:
+            self._charge_busy(before)
 
     # ----------------------------------------------------------------- loop
 
@@ -487,6 +574,65 @@ class ListenSession:
             self.stats.record_reply(first_ms, watch.elapsed_ms)
         finally:
             self._charge_busy(before)
+
+    async def answer_aloud(self, text: str) -> AsyncIterator[ReplyEvent]:
+        """`answer()`, spoken: the same events, and every sentence said through
+        the voice as soon as it is complete.
+
+        The reply's text deltas are watched for sentence ends as they pass
+        through. Each complete sentence goes to the voice at once, and its
+        audio plays while the model is still writing the next, which is the
+        whole reason the reply streams. After `ReplyDone` the tail (a model
+        that stops without a full stop) is spoken too, and this waits for the
+        last sound before returning, so the caller knows the floor is free.
+
+        A sentence the voice could not say is logged, counted, and skipped;
+        the rest of the reply is still heard. `stats` gets the two numbers
+        a person feels: transcript to first sound, transcript to last.
+        """
+        if self._mouth is None:
+            raise EngineError("the voice was not started; construct the session with speak=True")
+        sentences = Sentences()
+        mouth = self._mouth
+        first_ms: float | None = None
+        watch = Stopwatch()
+
+        def mark_first() -> None:
+            nonlocal first_ms
+            if first_ms is None:
+                first_ms = watch.peek_ms()
+
+        mouth.on_first_audio = mark_first
+        mouth.open()
+        with watch:
+            try:
+                async for event in self.answer(text):
+                    if isinstance(event, TextDelta):
+                        for sentence in sentences.feed(event.text):
+                            await mouth.say(sentence)
+                    yield event
+                # `answer()` charged the frames dropped while the model wrote;
+                # what follows is the voice's, and is charged below.
+                after_reply = self.dropped
+                rest = sentences.flush()
+                if rest:
+                    await mouth.say(rest)
+                spoken = await mouth.finish()
+            except BaseException:
+                await mouth.hush()
+                raise
+        self.stats.record_speech(
+            first_ms,
+            watch.elapsed_ms,
+            spoken=sum(1 for s in spoken if s.ok and s.audio_bytes),
+            lost=sum(1 for s in spoken if not s.ok),
+        )
+        self._charge_busy(after_reply)
+
+    @property
+    def last_spoken(self) -> list[SpokenSentence]:
+        """What happened to each sentence of the most recent spoken reply."""
+        return list(self._mouth.spoken) if self._mouth is not None else []
 
     def _charge_busy(self, dropped_before: int) -> None:
         """Attribute frames dropped during `say()` or `answer()` to the loop's

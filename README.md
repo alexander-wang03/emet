@@ -120,7 +120,7 @@ tells you which rungs were skipped and what was wrong with each:
 |---|---|
 | `emet-sdk/` | Types, schemas, the intent vocabulary, chain resolution. The contract everything agrees on. |
 | `emet-hal/` | Drivers and locomotion plugins. Where hardware support goes. |
-| `emet-providers/` | The plugins that reach a service: speech recognition and language models, and later voices. |
+| `emet-providers/` | The plugins that reach a service, or a model on disk: speech recognition, language models and voices. |
 | `emet-engine/` | The listen loop: wake, endpointing, audio in and out. Personality, memory and arbitration arrive from 0.4. |
 
 ## Documentation

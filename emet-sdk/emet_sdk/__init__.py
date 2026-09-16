@@ -20,6 +20,7 @@ from emet_sdk.plugin import (
     PluginError,
     SensorPlugin,
     TranscriberPlugin,
+    VoicePlugin,
     WakePlugin,
 )
 from emet_sdk.types import (
@@ -48,6 +49,7 @@ from emet_sdk.types import (
     Transcript,
     TranscriberDescriptor,
     Twist,
+    VoiceDescriptor,
     WakeDescriptor,
     WakeEvent,
 )
@@ -82,6 +84,7 @@ __all__ = [
     "SensorPlugin",
     "TranscriberPlugin",
     "LanguageModelPlugin",
+    "VoicePlugin",
     "WakePlugin",
     "CapabilityDescriptor",
     "Health",
@@ -104,6 +107,7 @@ __all__ = [
     "Transcript",
     "TranscriberDescriptor",
     "Twist",
+    "VoiceDescriptor",
     "WakeDescriptor",
     "WakeEvent",
 ]

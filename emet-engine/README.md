@@ -10,6 +10,7 @@ emet-listen path/to/manifest.yaml path/to/soul.yaml
 emet-listen path/to/manifest.yaml path/to/soul.yaml --replay recording.wav
 emet-listen path/to/manifest.yaml path/to/soul.yaml --transcribe
 emet-listen path/to/manifest.yaml path/to/soul.yaml --reply
+emet-listen path/to/manifest.yaml path/to/soul.yaml --speak
 ```
 
 Needs `emet-hal[audio,wake]` installed alongside for a microphone and a
@@ -48,7 +49,25 @@ the answer prints as it streams after `reply:`. The reference soul names
 `anthropic` needs its extra and `EMET_ANTHROPIC_KEY`; the mock needs
 neither and repeats what it heard. `--stats` adds `llm first` and `llm done`,
 the wait from the final transcript to the first word and to the whole reply.
-Nothing is spoken yet.
+
+`--speak` goes the last step and implies `--reply`: the answer is said
+through the voice the soul names under `models.tts`, a sentence at a time as
+the model writes it, so the first sentence is heard while the second is still
+arriving. The reference soul names `piper`, the local voice, which needs
+`emet-providers[piper]` and a voice model downloaded once:
+
+```sh
+pip install -e "emet-providers[piper]"
+python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
+```
+
+A cloud voice is one line of the soul (`{provider: deepgram, model:
+"aura-2-thalia-en", key_env: "EMET_DEEPGRAM_KEY"}`); the mock voice spells
+the words into the audio and needs nothing. The sink is opened at whatever
+rate the voice reports, 22050 Hz for a Piper medium voice, 24000 Hz for
+Aura, so `--speak` and `--echo` exclude each other. `--stats` adds `voice
+first` and `voice done`: the wait from the final transcript to the first
+sound at the speaker, and to the last.
 
 ## Checking that it keeps up
 

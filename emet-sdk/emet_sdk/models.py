@@ -21,12 +21,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-__all__ = ["STAGES", "model_selection", "stt_selection", "chat_selection"]
+__all__ = ["STAGES", "model_selection", "stt_selection", "chat_selection", "tts_selection"]
 
 #: The keys of a `models` block, on the soul and on the body alike. Each names
 #: one stage of the conversation and resolves against one entry-point group:
-#: `stt` against `emet.stt`, `chat` against `emet.llm`. `tts` and `micro` are
-#: reserved in the schema and resolve against nothing yet.
+#: `stt` against `emet.stt`, `chat` against `emet.llm`, `tts` against
+#: `emet.tts`. `micro` is reserved in the schema and resolves against nothing
+#: yet.
 STAGES: frozenset[str] = frozenset({"stt", "chat", "tts", "micro"})
 
 
@@ -84,3 +85,15 @@ def stt_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> dict[
 def chat_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> dict[str, Any] | None:
     """Which language model runs. `model_selection(..., "chat")`."""
     return model_selection(manifest, soul, "chat")
+
+
+def tts_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Which voice speaks. `model_selection(..., "tts")`.
+
+    The same rule as the other stages, and the same absence of a default,
+    though the reason differs: the shipped local voice costs nothing per
+    word, and there is still no default because a voice model is a file
+    somebody has to have downloaded, and a robot that chose one quietly would
+    fail at boot naming a file nobody asked for.
+    """
+    return model_selection(manifest, soul, "tts")

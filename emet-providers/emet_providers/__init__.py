@@ -1,10 +1,11 @@
 """Emet providers: the plugins that reach a service.
 
 Hardware lives in `emet-hal`. This package is its counterpart for the things
-a robot borrows from a computer somewhere else: speech recognition today,
-language models and speech synthesis as releases arrive. They are plugins in
-exactly the sense drivers are: they satisfy a contract in `emet_sdk.plugin`,
-advertise themselves through entry points, and reach the engine by name.
+a robot borrows from a computer somewhere else, or from a model on its own
+disk: speech recognition, language models and speech synthesis. They are
+plugins in exactly the sense drivers are: they satisfy a contract in
+`emet_sdk.plugin`, advertise themselves through entry points, and reach the
+engine by name.
 
 Why a package of its own. `emet-hal` is named for hardware, and a client for
 a speech service does not belong under that heading. Provider client
@@ -24,9 +25,15 @@ Shipped, language models (`emet.llm`):
     anthropic   Claude through the Messages API              (extra: anthropic)
     openai      GPT, or any Chat Completions server          (extra: openai)
 
+Shipped, voices (`emet.tts`):
+
+    mock        spells the words into the audio, a chunk a word
+    piper       local synthesis through Piper, the default   (extra: piper)
+    deepgram    Aura through Deepgram's speak API            (extra: deepgram)
+
 In each group the mock came first, so that the real providers were written
 against the contract rather than the contract against a provider, and the
-language models came as a pair, because a seam with one implementation is
+real providers came as a pair, because a seam with one implementation is
 untested as a seam.
 """
 

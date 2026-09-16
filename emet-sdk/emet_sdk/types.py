@@ -38,6 +38,7 @@ __all__ = [
     "ReplyEvent",
     "STOP_REASONS",
     "LanguageModelDescriptor",
+    "VoiceDescriptor",
     "AudioFormat",
     "AudioSource",
     "AudioSink",
@@ -443,6 +444,38 @@ class LanguageModelDescriptor:
     #: Whether `Prompt.tools` will be honoured. A provider without tool use
     #: says False and the engine leaves tools out of its prompts.
     tools: bool = True
+    healthy: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceDescriptor:
+    """What a speech synthesis plugin can actually do, reported after `start()`.
+
+    The third provider descriptor, and the one the output side is built
+    from. `sample_rate` is the rate the audio from `speak()` will arrive at,
+    and the engine opens the sink at that rate rather than asking the voice
+    to match a card: a local voice produces one rate and only one, and
+    resampling in the engine would be a second place for audio to go
+    wrong. The same rule as the wake engine, the other way round: the
+    detector states the format and the microphone conforms; the voice states
+    the format and the speaker conforms.
+
+    `healthy` is what the boot check reads. A voice whose model file is
+    missing, whose key is rejected or whose library is not installed says so
+    here and in `health().detail`, and the engine refuses to run a robot that
+    would answer and never be heard.
+    """
+
+    provider: str
+    #: The voice this instance loaded: a Piper model name, a vendor's voice
+    #: id. What was asked for is in the config; this is what will speak.
+    model: str | None = None
+    #: The rate of the audio `speak()` yields. Mono int16, always.
+    sample_rate: int = 22050
+    #: Whether audio arrives in pieces before the sentence is finished. A
+    #: provider that synthesises a whole sentence at once yields one chunk
+    #: and says False; the engine cannot tell them apart except by latency.
+    streaming: bool = False
     healthy: bool = True
 
 

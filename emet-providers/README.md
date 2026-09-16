@@ -1,7 +1,7 @@
 # emet-providers
 
-The plugins that reach a service for [Emet](../DESIGN.md): speech recognition
-and language models today, speech synthesis as releases arrive.
+The plugins that reach a service for [Emet](../DESIGN.md), or a model on the
+robot's own disk: speech recognition, language models and voices.
 
 Apache 2.0. The counterpart to `emet-hal`, which is named for hardware and
 holds drivers, locomotion, wake and audio. A provider is a plugin in the same
@@ -19,11 +19,43 @@ wakes should not install them. So they live here.
 | `mock` | `emet.llm` | Repeats what it heard, or says a scripted line, one word a delta; can ask for a tool |
 | `anthropic` | `emet.llm` | Claude through the Messages API, streamed, `claude-opus-5` unless the soul says otherwise. Extra: `anthropic` |
 | `openai` | `emet.llm` | GPT through Chat Completions, streamed, `gpt-5.6-terra` unless the soul says otherwise; `params.url` points it at any compatible server. Extra: `openai` |
+| `mock` | `emet.tts` | Spells the words into the audio it produces, a chunk a word; `read_back()` turns the audio into the words again |
+| `piper` | `emet.tts` | The local voice, through Piper on ONNX Runtime, `en_US-ljspeech-medium` unless the soul says otherwise; the model is a file downloaded once. Extra: `piper` (GPL-3.0, imported, never bundled) |
+| `deepgram` | `emet.tts` | The cloud voice: Aura over Deepgram's speak API, raw linear16 streamed back, `aura-2-thalia-en` unless the soul says otherwise. Extra: `deepgram` |
 
 In each group the mock shipped first, so that the real providers were written
-against the seam rather than the seam around them, and the language models
+against the seam rather than the seam around them, and the real providers
 came as a pair: a seam with one implementation is untested as a seam.
-`DESIGN.md` sections 12.3 and 12.4 have the contracts and the reasoning.
+`DESIGN.md` sections 12.3 to 12.5 have the contracts and the reasoning.
+
+## The local voice
+
+Synthesis is local by default. The reference soul names `piper`, and a
+voice is two files the owner downloads once into a place the plugin looks
+(`~/.local/share/emet/voices`, or `/etc/emet/voices` for an installed robot,
+or wherever `models.tts.params.voices_dir` says):
+
+```sh
+pip install -e "emet-providers[piper]"
+python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
+```
+
+The plugin never downloads a voice at boot; when the file is missing it
+names that command and refuses to run. Each voice on Hugging Face has its
+own licence in its model card. LJ Speech is public domain, which is why it
+is the reference voice; several others in the catalogue are fine-tuned from
+a corpus licensed for research only, and a shipped default cannot rest on
+those. `piper-tts` itself is GPL-3.0-or-later (it compiles espeak-ng in), so
+it is an optional extra that Emet imports and does not bundle; a body
+without the extra carries none of it.
+
+A cloud voice is one line of the soul, and a Deepgram key serves both the
+transcriber and the voice:
+
+```yaml
+models:
+  tts: {provider: deepgram, model: "aura-2-thalia-en", key_env: "EMET_DEEPGRAM_KEY"}
+```
 
 ## Keys
 
@@ -41,7 +73,7 @@ EMET_OPENAI_KEY=...          # from platform.openai.com
 EMET_ANTHROPIC_KEY=...       # from console.anthropic.com
 EOF
 chmod 600 ~/.config/emet/keys.env
-pip install -e "emet-providers[deepgram,openai,anthropic]"
+pip install -e "emet-providers[deepgram,openai,anthropic,piper]"
 ```
 
 An installed robot reads `/etc/emet/keys.env` too, and `--keys FILE` names
@@ -49,11 +81,12 @@ any other. A variable already exported in the shell always wins over the
 file, so a one-off key for one run still works. `keys.env` is in the
 repository's `.gitignore`, whatever directory it lands in.
 
-At boot each plugin makes one cheap request (a connection for Deepgram, a
-model listing for the language models), so a missing key, a rejected key
-(HTTP 401) or an unreachable network is reported in those words before the
-first question, and the robot refuses to run rather than hear questions it
-can never answer. Emet never sees a key except to send it in a header.
+At boot each plugin makes one cheap request (a connection for the Deepgram
+transcriber, a model listing for the language models, one six-character
+word for the Deepgram voice), so a missing key, a rejected key (HTTP 401)
+or an unreachable network is reported in those words before the first
+question, and the robot refuses to run rather than hear questions it can
+never answer. Emet never sees a key except to send it in a header.
 
 A local model works the same way: point the `openai` provider at any server
 that speaks Chat Completions and give it whatever key that server wants.
@@ -75,14 +108,16 @@ The soul names one per stage, under `models`:
 models:
   stt:  {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}
   chat: {provider: openai, model: "gpt-5.6-terra", key_env: "EMET_OPENAI_KEY"}
+  tts:  {provider: piper, model: "en_US-ljspeech-medium"}
 ```
 
 The key is the owner's and travels with the soul, so the choice is a soul
 field: a cloud account is not hardware. The body may take a stage over with
 its own `models.<stage>.provider`, carrying its own `model` and `key_env`,
 which is what a test rig with no key does (`examples/mock-scout.yaml` names
-`mock` for both), and it tunes whichever provider runs through
-`models.<stage>.params`. The rule in code is `emet_sdk.models.model_selection`,
+`mock` for all three), and it tunes whichever provider runs through
+`models.<stage>.params`. The soul's `voice.rate`, how fast it speaks, rides
+along to whichever voice runs: it is a persona trait, like `patience_ms`. The rule in code is `emet_sdk.models.model_selection`,
 one rule for every stage.
 
 A soul's provider is never checked against what is installed, because a soul
@@ -93,7 +128,7 @@ would spend somebody's credits.
 
 ## Writing one
 
-Implement `TranscriberPlugin` or `LanguageModelPlugin` from
+Implement `TranscriberPlugin`, `LanguageModelPlugin` or `VoicePlugin` from
 `emet_sdk.plugin`, register an entry point, and install the package:
 
 ```toml
@@ -102,6 +137,9 @@ Implement `TranscriberPlugin` or `LanguageModelPlugin` from
 
 [project.entry-points."emet.llm"]
 "gemini" = "your_package.gemini:GeminiLanguageModel"
+
+[project.entry-points."emet.tts"]
+"kokoro" = "your_package.kokoro:KokoroVoice"
 ```
 
 A transcriber has three methods: `describe()` reports the model that
@@ -117,6 +155,12 @@ call, and one `ReplyDone` last, on success and on failure alike. A failure
 the vendor reported or the network caused ends the stream with
 `stop_reason="error"` and the text so far; it never raises through the
 engine's turn.
+
+A voice has two as well: `describe()`, which states the sample rate its
+audio arrives at (the engine opens the speaker to match, so say the true
+one), and `speak(text)`, an async iterator of mono int16 chunks for one
+sentence. Raise `PluginError` for a failure the provider reported; the
+engine loses that sentence and goes on with the next.
 
 Two things worth getting right:
 
