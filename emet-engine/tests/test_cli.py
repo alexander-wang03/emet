@@ -339,6 +339,14 @@ def test_keys_are_read_from_a_file_before_the_providers_start(tmp_path, monkeypa
     assert os.environ["EMET_TEST_KEY"] == "hunter2"
 
 
+def test_the_suite_never_sees_a_developers_keys_file():
+    """The guard in conftest.py. Without it, a laptop holding real keys turns
+    every 'no key' test into a live call to a vendor."""
+    from emet_engine import keys
+
+    assert keys.default_paths() == []
+
+
 def test_a_missing_keys_file_stops_the_run_with_its_path(tmp_path, monkeypatch, capsys):
     wav = write_wav(tmp_path / "m.wav", saying(1))
     stub_loaders(monkeypatch, body(wav), soul())

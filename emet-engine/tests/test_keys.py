@@ -96,7 +96,8 @@ def test_the_persons_file_is_read_first_so_it_wins_over_the_machines(tmp_path, m
     assert environ["EMET_ONLY_SYSTEM"] == "shell"
 
 
-def test_the_real_default_order_is_person_then_machine():
+def test_the_real_default_order_is_person_then_machine(monkeypatch):
+    monkeypatch.undo()  # conftest empties default_paths for every test; look at the real one
     paths = keys.default_paths()
     assert paths == [keys.user_keys_path(), keys.SYSTEM_KEYS]
 
