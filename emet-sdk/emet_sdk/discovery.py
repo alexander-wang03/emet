@@ -5,7 +5,7 @@ points. Nothing scans directories, nothing imports by convention, and the
 engine has no list of known drivers compiled into it; installing a package is
 what makes a driver exist.
 
-Seven groups:
+Eight groups:
 
     emet.actuators    name = the string used in `driver.plugin`
     emet.sensors      name = the string used in `driver.plugin`
@@ -13,8 +13,10 @@ Seven groups:
     emet.wake         name = the string used in `audio.wake.engine`
     emet.audio        name = the string used in `audio.input.source`
     emet.audio_out    name = the string used in `audio.output.sink`
-    emet.stt          name = the string used in `models.stt.provider` on the
-                      soul, or `audio.stt.provider` on the body
+    emet.stt          name = the string used in `models.stt.provider`, on the
+                      soul or on the body
+    emet.llm          name = the string used in `models.chat.provider`, on the
+                      soul or on the body
 
 `emet.audio` exists for a reason the others do not share. The engine may import
 `emet_sdk` and nothing else, so it cannot reach into `emet_hal` for a
@@ -31,12 +33,13 @@ For locomotion, wake and audio the entry-point name *is* the manifest value,
 which is what makes those enums genuinely open: `kinematics: legged` is legal today and
 resolves the moment somebody publishes a package registering `legged`.
 
-`emet.stt` is the first group whose name comes from the *soul* rather than
-the body: `models.stt.provider`. Speech recognition is a cloud account with a
-key the owner brings, and that travels with the soul, so the soul names it.
-The body may override it, and a test rig does. Either way the name resolves
-here, against what is installed, and a provider nobody has packaged yet is a
-`MissingPluginError` on the day it is named, exactly like `legged`.
+`emet.stt` and `emet.llm` are the groups whose names come from the *soul*
+rather than the body: `models.stt.provider` and `models.chat.provider`. Each
+is a cloud account with a key the owner brings, and that travels with the
+soul, so the soul names it. The body may override either, and a test rig
+does. Either way the name resolves here, against what is installed, and a
+provider nobody has packaged yet is a `MissingPluginError` on the day it is
+named, exactly like `legged`.
 
 That openness is not theoretical for wake. Picovoice disabled every free
 Porcupine access key on 30 June 2026, and every project that had wired one
@@ -65,6 +68,7 @@ __all__ = [
     "GROUP_AUDIO",
     "GROUP_AUDIO_OUT",
     "GROUP_STT",
+    "GROUP_LLM",
     "PluginRegistry",
     "discover",
 ]
@@ -76,6 +80,7 @@ GROUP_WAKE = "emet.wake"
 GROUP_AUDIO = "emet.audio"
 GROUP_AUDIO_OUT = "emet.audio_out"
 GROUP_STT = "emet.stt"
+GROUP_LLM = "emet.llm"
 
 
 def _entry_points(group: str) -> dict[str, EntryPoint]:
@@ -99,6 +104,7 @@ class PluginRegistry:
         audio: Mapping[str, EntryPoint] | None = None,
         audio_out: Mapping[str, EntryPoint] | None = None,
         stt: Mapping[str, EntryPoint] | None = None,
+        llm: Mapping[str, EntryPoint] | None = None,
         *,
         verify_drivers: bool = False,
     ) -> None:
@@ -109,6 +115,7 @@ class PluginRegistry:
         self._audio = dict(audio or {})
         self._audio_out = dict(audio_out or {})
         self._stt = dict(stt or {})
+        self._llm = dict(llm or {})
         #: When False, an unrecognised *driver* name is reported as a warning
         #: rather than an error. See `validate` for why the two callers differ:
         #: linting a manifest for hardware you have not wired yet is a normal
@@ -127,6 +134,7 @@ class PluginRegistry:
             audio=_entry_points(GROUP_AUDIO),
             audio_out=_entry_points(GROUP_AUDIO_OUT),
             stt=_entry_points(GROUP_STT),
+            llm=_entry_points(GROUP_LLM),
         )
 
     def with_verification(self, verify_drivers: bool) -> "PluginRegistry":
@@ -143,6 +151,7 @@ class PluginRegistry:
             audio=self._audio,
             audio_out=self._audio_out,
             stt=self._stt,
+            llm=self._llm,
             verify_drivers=verify_drivers,
         )
 
@@ -165,6 +174,9 @@ class PluginRegistry:
 
     def has_stt(self, provider: str) -> bool:
         return provider in self._stt
+
+    def has_llm(self, provider: str) -> bool:
+        return provider in self._llm
 
     @property
     def driver_names(self) -> list[str]:
@@ -190,6 +202,10 @@ class PluginRegistry:
     def stt_names(self) -> list[str]:
         return sorted(self._stt)
 
+    @property
+    def llm_names(self) -> list[str]:
+        return sorted(self._llm)
+
     def __bool__(self) -> bool:
         return bool(
             self._actuators
@@ -199,6 +215,7 @@ class PluginRegistry:
             or self._audio
             or self._audio_out
             or self._stt
+            or self._llm
         )
 
     def __iter__(self) -> Iterator[tuple[str, str]]:
@@ -217,6 +234,8 @@ class PluginRegistry:
             yield ("audio_out", name)
         for name in sorted(self._stt):
             yield ("stt", name)
+        for name in sorted(self._llm):
+            yield ("llm", name)
 
     # ----------------------------------------------------------------- load
 
@@ -277,6 +296,18 @@ class PluginRegistry:
         ep = self._stt.get(provider)
         if ep is None:
             raise _missing(provider, self.stt_names, "speech recognition provider")
+        return ep.load()
+
+    def load_llm(self, provider: str) -> type:
+        """Import and return the plugin class for a language model provider.
+
+        Constructed as `cls(config)`, where `config` is the merged provider
+        reference from `emet_sdk.models.chat_selection`. No audio format: a
+        language model never hears the microphone.
+        """
+        ep = self._llm.get(provider)
+        if ep is None:
+            raise _missing(provider, self.llm_names, "language model provider")
         return ep.load()
 
 

@@ -109,9 +109,12 @@ emet/                         one repository, Apache 2.0 throughout
     audio.py          microphone and speaker through PortAudio; wav and null
     ...               pca9685, tb6612, gc9a01, ws2812: not yet written
 
-  emet-providers/   the plugins that reach a service (§12.3)
-    mock.py           a transcriber that reads words out of the bytes it is given
-    ...               deepgram, and later language models and voices: not yet written
+  emet-providers/   the plugins that reach a service (§12.3, §12.4)
+    mock.py           a transcriber and a language model that pretend
+    deepgram.py       speech recognition through Deepgram
+    anthropic.py      Claude through the Messages API
+    openai.py         GPT, or any server speaking Chat Completions
+    ...               voices: not yet written
 
   emet-engine/      the listen loop today (wake, VAD, endpointing, §13);
                     personality synthesis, memory, arbitration, choreography,
@@ -185,13 +188,16 @@ audio:                           # P0  required: this is the hardware floor
     engine: pocketsphinx         #     OPEN ENUM naming an installed emet.wake
                                  #     plugin. The PHRASE is on the soul (§8.1).
     params: {}                   #     passed to the engine untouched
-  stt:                           # P0  optional. Speech recognition on THIS body.
-    provider: mock               #     OPEN ENUM naming an installed emet.stt
-                                 #     plugin. Set it and the body takes the
-                                 #     choice over from the soul's models.stt,
-                                 #     with its own model and key_env (§12.3).
-    params: {}                   #     passed to the provider untouched, with
-                                 #     whichever provider runs
+
+models:                          # P0  optional. The body's say over the soul's
+                                 #     models block (§8.1), one entry per stage.
+  stt:                           #     Set provider and the body takes the stage
+    provider: mock               #     over, with its own model and key_env;
+    params: {}                   #     params ride along either way (§12.3).
+  chat:                          #     OPEN ENUMS: stt against emet.stt, chat
+    provider: mock               #     against emet.llm (§12.4).
+  tts: {}                        # RSV  reserved, resolved against nothing yet
+  micro: {}                      # RSV
 
 capabilities: []                 # P0  see 4.2
 
@@ -380,7 +386,7 @@ Enforced by `emet_sdk.validate`, run at boot and by the CLI:
 - `drive.kinematics` must be a **string that resolves to an installed locomotion plugin**, not a member of a frozen list. An unrecognized value fails boot with "no locomotion plugin provides `legged`; install one or change `kinematics`", which is a *missing plugin* error, not a *schema* error. This is what keeps the enum open.
 - Every referenced `driver.plugin` resolves to an installed plugin, or boot fails loudly with the missing package name. Never silently degrade because of a typo: that is a *different* failure from missing hardware, and conflating them costs support hours.
 - `audio.wake.engine`, `audio.input.source` and `audio.output.sink` resolve to installed plugins, or validation fails. `driver.plugin` may name hardware not yet wired and so only warns outside `--verify-drivers`; these name software that has to exist for the robot to hear or speak at all.
-- `audio.stt.provider`, when a body sets it, resolves to an installed `emet.stt` plugin on the same terms. The soul's `models.stt.provider` is never checked against what is installed: a soul is valid on every machine or on none, and that question is answered at boot (§12.3).
+- `models.stt.provider` and `models.chat.provider`, when a body sets them, resolve to an installed `emet.stt` or `emet.llm` plugin on the same terms. The soul's `models` block is never checked against what is installed: a soul is valid on every machine or on none, and that question is answered at boot (§12.3, §12.4).
 
 ---
 
@@ -672,10 +678,11 @@ memory:
 
 models:                          # P0  BYOK
   chat:  {provider: openai,   model: "...", key_env: "EMET_OPENAI_KEY"}
+                                 #     names an installed emet.llm plugin (§12.4)
   stt:   {provider: deepgram, model: "...", key_env: "EMET_DEEPGRAM_KEY"}
-                                 #     provider names an installed emet.stt
-                                 #     plugin, resolved at boot. A body may take
-                                 #     the choice over with audio.stt (§12.3).
+                                 #     names an installed emet.stt plugin (§12.3).
+                                 #     Both resolved at boot; a body may take
+                                 #     either over with its own models block.
   tts:   {provider: local_piper}
   micro: {provider: local, model: "qwen3-0.6b-q4"}   # backchannel only
 ```
@@ -901,13 +908,13 @@ so honestly.
 
 ### 12.2 Wake and audio plugins
 
-Seven entry-point groups in total. Three are built from a manifest capability
+Eight entry-point groups in total. Three are built from a manifest capability
 (`emet.actuators`, `emet.sensors`, `emet.locomotion`). Three are built from the
 manifest's `audio` block (`emet.wake`, `emet.audio`, `emet.audio_out`), because
 the hardware floor already guarantees a microphone and a speaker, so there is no
-capability to declare, only a choice of what runs on them. The seventh,
-`emet.stt`, is built from the soul's `models` block and the body's `audio.stt`
-together (§12.3).
+capability to declare, only a choice of what runs on them. The seventh and
+eighth, `emet.stt` and `emet.llm`, are built from the soul's `models` block and
+the body's together (§12.3, §12.4).
 
 ```python
 class PocketSphinxWake(WakePlugin):
@@ -982,18 +989,19 @@ class DeepgramTranscriber(TranscriberPlugin):
 **Who chooses, and why it is the soul.** `models.stt` on the soul names the
 provider, the model, and the environment variable holding the key. Keys are the
 owner's (BYOK) and travel with the soul, and a cloud account is not hardware, so
-principle 1 holds. The body may take the choice over with `audio.stt.provider`,
-carrying its own `model` and `key_env`: a test rig running `mock`, or an owner
-whose key is for a different vendor than the soul's author had. The override is
-whole or nothing, because a provider from one document with a model and a key
-from the other is a broken reference. Whichever provider runs, the body's
-`audio.stt.params` ride along untouched: an endpoint, a timeout, tuning for
-this deployment. `emet_sdk.models.stt_selection` is the rule in code, and the
-engine uses it rather than restating it.
+principle 1 holds. The body may take the choice over with its own
+`models.stt.provider`, carrying its own `model` and `key_env`: a test rig
+running `mock`, or an owner whose key is for a different vendor than the soul's
+author had. The override is whole or nothing, because a provider from one
+document with a model and a key from the other is a broken reference. Whichever
+provider runs, the body's `models.stt.params` ride along untouched: an endpoint,
+a timeout, tuning for this deployment. `emet_sdk.models.model_selection` is the
+rule in code, one rule for every stage, and the engine uses it rather than
+restating it.
 
 A soul's provider is never checked against what is installed. A soul is valid
 on every machine or on none, and a validator that asked would make the same
-bundle valid on one laptop and invalid on the next. A body's `audio.stt.provider`
+bundle valid on one laptop and invalid on the next. A body's `models.stt.provider`
 is checked, and fails as `missing_plugin` like `audio.wake.engine`. Whether the
 soul's provider is present is answered at boot, the way `identity.wake_word` is
 answered against a live `WakeDescriptor`.
@@ -1033,6 +1041,77 @@ rather than stating one, and reports in `describe()` the rate it will actually
 run at. The engine refuses a mismatch before it opens the microphone. A
 recogniser hearing 16 kHz speech at 8 kHz does not fail; it produces nonsense.
 
+### 12.4 Language model plugins
+
+`emet.llm` is the eighth group, chosen the way `emet.stt` is chosen, and built
+the same way: the contract and a mock first, then two vendors in one batch,
+because a seam with one implementation is untested as a seam.
+
+```python
+class AnthropicLanguageModel(LanguageModelPlugin):
+    provider = "anthropic"             # the string matched against models.chat.provider
+
+    def __init__(self, config):
+        """The merged provider reference: provider, model, key_env, params.
+        No audio format: a language model never hears the microphone."""
+
+    def describe(self) -> LanguageModelDescriptor:
+        """The model this instance will ask for, whether text streams, whether
+        tools are honoured, and whether the key and the network were there
+        at start()."""
+
+    async def reply(self, prompt: Prompt) -> AsyncIterator[ReplyEvent]:
+        """Text as TextDeltas, a ToolCall per completed call, and one
+        ReplyDone last, on success and on failure alike."""
+```
+
+**What the model is handed, and what it is not.** A `Prompt`: a `system`
+string the engine assembled, the recent `messages`, and vendor-neutral
+`tools`. The persona is the engine's to write into `system`; the self-model
+(§7) and the memories the sensitivity floor lets through (§9.2) join it there
+in their releases, and the seam does not change when they do. The body enters
+the prompt through the self-model, never through a provider: a language model
+plugin knows nothing about the robot it speaks for, which is what lets one
+soul run on any body with any vendor.
+
+**Streaming is the contract.** A reply is spoken, and a person waits from the
+end of their sentence to the first word of the answer, so `reply()` is an
+async iterator and the first `TextDelta` is the number that matters. The
+engine measures it (`llm first` in `emet-listen --stats`) beside the wait for
+the whole reply. A provider that cannot stream sends one delta and says
+`streaming: false`.
+
+**Tools are how side effects leave the model.** What is said comes back as
+text. What is *done*, a memory written with its sensitivity (§9.2), a fact
+looked up, comes back as a `ToolCall`, and the engine answers it with a `tool`
+message and asks again. The vocabulary of tools is the engine's; the plugin
+translates each `ToolSpec` to its vendor's shape and back. Expressive intents
+(§5) are a separate question, decided when the conversation loop is built: a
+tool round trip ends the text, so an intent that should land on a sentence
+cannot travel as a call without stopping the speech it belongs to.
+
+**Stop reasons are the seam's, in five words.** `end`, `tool`, `length`,
+`refusal`, `error`. A vendor's own names map onto them and anything new maps
+to `end`, so a vendor adding a reason does not break a robot. `refusal` is
+real: a provider's classifier may decline a request the person made in good
+faith, and the robot should say that it will not answer rather than say
+nothing. `error` carries the text so far, so a dropped connection mid-sentence
+loses the rest of the sentence and not the turn.
+
+**No vendor SDK.** Both shipped plugins speak JSON over HTTPS and read
+Server-Sent Events through one small HTTP client, for the reason given in
+§12.3: a vendor SDK is the vendor's shape arriving by another door. The
+OpenAI plugin speaks Chat Completions rather than the vendor's newer surface
+because Chat Completions is what every other server speaks too: a local model,
+a gateway, a company proxy. `params.url` points it at any of them, which is how
+the offline mode reserved in §14 arrives as a manifest line.
+
+**What fails loudly, and where.** `start()` reads the key from the variable
+the soul names and refuses to report healthy without one; then one cheap
+request, a model listing, so a rejected key or an unreachable network is
+known at boot. The engine refuses to run a robot that would hear questions
+and never answer them, in the terms the owner can act on.
+
 ---
 
 ## 13. Turn-taking
@@ -1054,7 +1133,7 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 | VAD, speaker ID | Local | Reflex tier. |
 | Gaze / DoA / face tracking | Local | Reflex tier. |
 | STT | Cloud (streaming) | BYOK. Open plugin category (`emet.stt`, §12.3); the soul names the provider and the body may take it over. |
-| LLM | Cloud (streaming) | BYOK. Speak first sentence as it streams. |
+| LLM | Cloud (streaming) | BYOK. Open plugin category (`emet.llm`, §12.4); Anthropic and OpenAI ship, and any Chat Completions server is a `url` away. Speak first sentence as it streams. |
 | TTS | Local (Piper) | The expensive cloud stage; keep it local. Premium cloud voice is an opt-in toggle. |
 | Backchannel micro-model | Local | Fills the thinking gap. |
 | Vision understanding | Cloud (VLM), event-triggered | One frame on an explicit trigger. Never streamed. |

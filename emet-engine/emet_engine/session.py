@@ -4,13 +4,14 @@ This is the first thing in Emet that is neither a contract nor a driver. It
 takes a body manifest and a soul bundle, brings up the two pieces of hardware
 the floor guarantees, and produces an event each time the robot hears its name.
 Asked to, it also hands the speech that follows to a recogniser and returns
-what was said.
+what was said, and hands what was said to a language model and streams what
+the robot would answer.
 
 **It imports `emet_sdk` and nothing else.** Microphones and wake detectors live
-in `emet_hal`, transcribers in `emet_providers`, and this module never names
-either package. All of them arrive by name through entry-point discovery,
-which is the only reason a layering rule that forbids the import and an engine
-that needs a microphone can both be true.
+in `emet_hal`, transcribers and language models in `emet_providers`, and this
+module never names either package. All of them arrive by name through
+entry-point discovery, which is the only reason a layering rule that forbids
+the import and an engine that needs a microphone can both be true.
 
 **Order matters at start-up, and not the obvious way round.** The detector is
 brought up first and asked what audio it needs, and the source is then
@@ -37,11 +38,15 @@ from dataclasses import replace
 from typing import Any, AsyncIterator, Callable, Mapping
 
 from emet_sdk.discovery import PluginRegistry
-from emet_sdk.models import stt_selection
+from emet_sdk.models import chat_selection, stt_selection
 from emet_sdk.types import (
     AudioFormat,
     AudioSink,
     AudioSource,
+    LanguageModelDescriptor,
+    ReplyDone,
+    ReplyEvent,
+    TextDelta,
     Transcript,
     TranscriberDescriptor,
     WakeDescriptor,
@@ -54,6 +59,7 @@ from emet_sdk.validate import (
 )
 
 from emet_engine.metrics import SessionStats, Stopwatch
+from emet_engine.prompting import DEFAULT_MAX_TOKENS, Conversation, system_prompt
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance
 
 __all__ = ["EngineError", "ListenSession"]
@@ -80,6 +86,11 @@ class ListenSession:
     callbacks let a caller show something while the turn is still going:
     `on_wake` fires the moment the name is heard, and `on_partial` fires with
     each partial transcript while a transcriber is listening.
+
+    `answer(text)` is the next step, taken by the caller after a turn: the
+    words go to the language model with the persona and the conversation so
+    far, and the reply streams back as events. The caller decides whether to
+    print it, speak it, or both.
     """
 
     def __init__(
@@ -89,6 +100,7 @@ class ListenSession:
         *,
         registry: PluginRegistry | None = None,
         transcribe: bool = False,
+        reply: bool = False,
         on_wake: Callable[[WakeEvent], None] | None = None,
         on_partial: Callable[[Transcript], None] | None = None,
     ) -> None:
@@ -118,6 +130,15 @@ class ListenSession:
         self.on_wake = on_wake
         self.on_partial = on_partial
 
+        #: The language model the soul and the body agree on, and whether to
+        #: bring it up. The persona becomes the system prompt here, once; the
+        #: conversation accumulates across turns for the length of the run.
+        self.chat = chat_selection(manifest, soul)
+        self.chat_name: str | None = self.chat["provider"] if self.chat else None
+        self.reply = reply
+        self.system_prompt = system_prompt(soul)
+        self.conversation = Conversation()
+
         # Turn-taking is a persona trait, not engine tuning: a reflective soul
         # waits longer than an eager one, and that difference is the whole
         # reason the number lives on the soul rather than in this file.
@@ -126,10 +147,12 @@ class ListenSession:
 
         self._wake: Any = None
         self._stt: Any = None
+        self._llm: Any = None
         self._audio: AudioSource | None = None
         self._sink: AudioSink | None = None
         self.descriptor: WakeDescriptor | None = None
         self.stt_descriptor: TranscriberDescriptor | None = None
+        self.llm_descriptor: LanguageModelDescriptor | None = None
         self.format: AudioFormat | None = None
         #: Whether the loop is keeping up. Populated as it runs; see
         #: `emet_engine.metrics` for why the real-time factor is the number
@@ -160,10 +183,12 @@ class ListenSession:
 
         self.stats.frame_ms = self.format.frame_ms
 
-        # Before the microphone: a transcriber that cannot start should never
+        # Before the microphone: a provider that cannot start should never
         # have caused a device to open.
         if self.transcribe:
             await self._start_stt()
+        if self.reply:
+            await self._start_llm()
 
         source_cls = self.registry.load_audio(self.source_name)
         self._audio = source_cls(self._input_block, self.format)
@@ -222,6 +247,30 @@ class ListenSession:
                 f"does not fail, it produces nonsense. It will not start."
             )
 
+    async def _start_llm(self) -> None:
+        """Bring up the language model, or say precisely why not."""
+        if self.chat is None or self.chat_name is None:
+            installed = ", ".join(self.registry.llm_names) or "(none)"
+            raise EngineError(
+                "a reply was asked for and no language model is configured. Name "
+                "one under `models.chat.provider` in the soul, or take it over "
+                f"with `models.chat.provider` in the body. Installed: {installed}."
+            )
+        llm_cls = self.registry.load_llm(self.chat_name)
+        self._llm = llm_cls(self.chat)
+        await self._llm.start()
+
+        self.llm_descriptor = self._llm.describe()
+        if not self.llm_descriptor.healthy:
+            detail = ""
+            health = self._llm.health()
+            if not health.ok and health.detail:
+                detail = f" {health.detail}"
+            raise EngineError(
+                f"the language model {self.chat_name!r} cannot start, so the robot "
+                f"would hear questions it can never answer. It will not run.{detail}"
+            )
+
     def _deaf_message(self) -> str:
         """Say what is wrong in the terms the person can act on.
 
@@ -259,6 +308,9 @@ class ListenSession:
         if self._stt is not None:
             await self._stt.shutdown()
             self._stt = None
+        if self._llm is not None:
+            await self._llm.shutdown()
+            self._llm = None
         if self._wake is not None:
             await self._wake.shutdown()
             self._wake = None
@@ -394,6 +446,39 @@ class ListenSession:
             final = await self._stt.finish()
         self.stats.record_final(watch.elapsed_ms)
         return replace(utterance, transcript=final)
+
+    # --------------------------------------------------------------- answer
+
+    async def answer(self, text: str) -> AsyncIterator[ReplyEvent]:
+        """Hand what was said to the language model and stream the reply.
+
+        The caller's step after a turn, on purpose: `turns()` ends when the
+        person stops talking, and what happens next is the caller's to show
+        or to speak. The words join the conversation, the persona and the
+        conversation become the prompt, and the events come back as the
+        model produces them, `ReplyDone` last. A reply that ended well joins
+        the conversation too; one that ended in error does not, so the model
+        is never shown its own failure as something it said.
+
+        The microphone is not read while this runs, the same as `say()`.
+        Frames dropped meanwhile are the loop's own doing and are reported
+        as such; barge-in, in 1.0, is what changes it.
+        """
+        if self._llm is None:
+            raise EngineError("the language model was not started; construct the session with reply=True")
+        self.conversation.add_user(text)
+        prompt = self.conversation.prompt(self.system_prompt, max_tokens=DEFAULT_MAX_TOKENS)
+
+        first_ms: float | None = None
+        with Stopwatch() as watch:
+            async for event in self._llm.reply(prompt):
+                if isinstance(event, TextDelta) and first_ms is None:
+                    first_ms = watch.peek_ms()
+                if isinstance(event, ReplyDone):
+                    if event.stop_reason != "error" and event.text.strip():
+                        self.conversation.add_assistant(event.text.strip())
+                yield event
+        self.stats.record_reply(first_ms, watch.elapsed_ms)
 
     # -------------------------------------------------------------- honesty
 

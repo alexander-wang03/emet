@@ -129,24 +129,19 @@
               "type": "object"
             }
           }
-        },
-        "stt": {
-          "description": "P0, optional. Speech recognition on this body. The soul chooses the provider through models.stt, because the key is the owner's and travels with the soul. This block lets the body take that choice over (set provider, with its own model and key_env, and the soul's three are ignored together) or tune whichever provider runs (params, passed through untouched). provider resolves against installed emet.stt plugins, so it is an open enum: an unknown value is a missing plugin, never a schema error. There is no default provider.",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "provider": { "type": "string", "minLength": 1 },
-            "model": { "type": "string" },
-            "key_env": {
-              "description": "Name of the environment variable holding the key. The key itself is never written into a manifest.",
-              "type": "string"
-            },
-            "params": {
-              "description": "Passed to the provider untouched. Emet never inspects these.",
-              "type": "object"
-            }
-          }
         }
+      }
+    },
+
+    "models": {
+      "description": "P0, optional. The body's say over the soul's models block. The soul chooses each stage's provider through its own models block, because the key is the owner's and travels with the soul. A stage named here takes that choice over on this body (provider, with its own model and key_env; the soul's three are ignored together) or tunes whichever provider runs (params, passed through untouched). Each provider resolves against an entry-point group, emet.stt for stt and emet.llm for chat, so these are open enums: an unknown value is a missing plugin, never a schema error. There is no default provider for any stage. tts and micro are RSV: accepted, resolved against nothing yet.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stt": { "$ref": "#/$defs/model_override" },
+        "chat": { "$ref": "#/$defs/model_override" },
+        "tts": { "$ref": "#/$defs/model_override" },
+        "micro": { "$ref": "#/$defs/model_override" }
       }
     },
 
@@ -169,6 +164,24 @@
   },
 
   "$defs": {
+    "model_override": {
+      "description": "The same shape as the soul's model_ref, plus params. Set provider to take the stage over; leave it out to tune the soul's choice with params alone.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string" },
+        "key_env": {
+          "description": "Name of the environment variable holding the key. The key itself is never written into a manifest.",
+          "type": "string"
+        },
+        "params": {
+          "description": "Passed to the provider untouched. Emet never inspects these.",
+          "type": "object"
+        }
+      }
+    },
+
     "identifier": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",

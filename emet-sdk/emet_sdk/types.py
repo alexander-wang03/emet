@@ -29,6 +29,15 @@ __all__ = [
     "WakeEvent",
     "Transcript",
     "TranscriberDescriptor",
+    "ToolSpec",
+    "ToolCall",
+    "Message",
+    "Prompt",
+    "TextDelta",
+    "ReplyDone",
+    "ReplyEvent",
+    "STOP_REASONS",
+    "LanguageModelDescriptor",
     "AudioFormat",
     "AudioSource",
     "AudioSink",
@@ -286,6 +295,154 @@ class TranscriberDescriptor:
     #: A batch recogniser says False and sends one final per utterance.
     streaming: bool = False
     sample_rate: int = 16000
+    healthy: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    """A function the language model may ask to have run.
+
+    Vendor-neutral: `parameters` is a JSON Schema object and each provider
+    translates it to its own tool format. Tools are how side effects leave
+    the model (a memory to write, a fact to look up); what is *said* comes
+    back as text.
+    """
+
+    name: str
+    description: str
+    parameters: Mapping[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """The model asking for a tool to run, with parsed arguments.
+
+    Streamed once the arguments are complete. The caller runs the tool and
+    answers with a `Message` of role `tool` carrying this call's `id`.
+    """
+
+    id: str
+    name: str
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+
+
+#: Roles a `Message` may carry. The system prompt is not a message: it sits
+#: on the `Prompt`, because every provider treats it differently.
+MESSAGE_ROLES: frozenset[str] = frozenset({"user", "assistant", "tool"})
+
+
+@dataclass(frozen=True, slots=True)
+class Message:
+    """One turn of the conversation as the model sees it.
+
+    `user` and `assistant` carry text. An `assistant` turn that asked for
+    tools carries the calls beside its text; a `tool` turn answers one call
+    and names it. Providers that want tool results in a different wrapper
+    (a user turn holding result blocks, say) do the wrapping themselves.
+    """
+
+    role: str
+    content: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.role not in MESSAGE_ROLES:
+            raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}, got {self.role!r}")
+        if self.role == "tool" and not self.tool_call_id:
+            raise ValueError("a tool message must name the call it answers (tool_call_id)")
+        if self.tool_calls and self.role != "assistant":
+            raise ValueError("only an assistant message carries tool_calls")
+
+
+@dataclass(frozen=True, slots=True)
+class Prompt:
+    """Everything one request to a language model needs.
+
+    Assembled by the engine: the persona, and in later releases the
+    self-model and the memories the sensitivity floor lets through, become
+    `system`; the conversation so far and the words just heard become
+    `messages`. Nothing about which vendor answers is in here.
+
+    `max_tokens` bounds one reply. A reply is spoken aloud, so the engine
+    sets this low on purpose; a provider that hits it reports `length`.
+    """
+
+    system: str
+    messages: tuple[Message, ...]
+    tools: tuple[ToolSpec, ...] = ()
+    max_tokens: int = 1024
+
+    def __post_init__(self) -> None:
+        if self.max_tokens < 1:
+            raise ValueError("max_tokens must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta:
+    """A piece of the reply, as it is generated. Concatenate in order."""
+
+    text: str
+
+
+#: Why a reply ended, in words every provider maps onto. `end` is the
+#: natural finish; `tool` means the model wants tool results before it goes
+#: on; `length` means `max_tokens` cut it off; `refusal` means the provider
+#: declined to answer; `error` means the reply is incomplete and `error`
+#: says why.
+STOP_REASONS: frozenset[str] = frozenset({"end", "tool", "length", "refusal", "error"})
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyDone:
+    """The last event of a reply: the whole text, why it stopped, what it cost.
+
+    Always the final event, on success and on failure alike. A caller that
+    only wants the text reads it here; a caller that streamed the deltas
+    reads `stop_reason` and the token counts.
+    """
+
+    text: str
+    stop_reason: str = "end"
+    tool_calls: tuple[ToolCall, ...] = ()
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    error: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.stop_reason not in STOP_REASONS:
+            raise ValueError(
+                f"stop_reason must be one of {sorted(STOP_REASONS)}, got {self.stop_reason!r}"
+            )
+
+
+#: What `LanguageModelPlugin.reply()` yields: text as it arrives, a tool call
+#: once its arguments are complete, and one `ReplyDone` last.
+ReplyEvent = TextDelta | ToolCall | ReplyDone
+
+
+@dataclass(frozen=True, slots=True)
+class LanguageModelDescriptor:
+    """What a language model plugin can actually do, reported after `start()`.
+
+    `healthy` is what the boot check reads: a provider whose key is missing,
+    rejected, or unreachable says so here and in `health().detail`, and the
+    engine refuses to run a robot that would hear and never answer.
+    """
+
+    provider: str
+    #: The model this instance will ask for. What answered is on each
+    #: `ReplyDone`, because a provider may substitute one.
+    model: str | None = None
+    #: Whether `TextDelta`s arrive before `ReplyDone`. A provider that does
+    #: not stream sends the whole text as one delta.
+    streaming: bool = True
+    #: Whether `Prompt.tools` will be honoured. A provider without tool use
+    #: says False and the engine leaves tools out of its prompts.
+    tools: bool = True
     healthy: bool = True
 
 

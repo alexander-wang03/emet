@@ -4,8 +4,8 @@ Layering, enforced in CI: this package imports `emet_sdk` and nothing else.
 Not for tidiness. The engine is where somebody would reach for a concrete
 servo or a concrete microphone, and one `from emet_hal.differential import ...`
 would quietly end the claim that the engine holds no hardware knowledge. Every
-driver, detector, audio source and transcriber arrives by name through
-entry-point discovery instead.
+driver, detector, audio source, transcriber and language model arrives by
+name through entry-point discovery instead.
 
 `emet-hal` and `emet-providers` are therefore not dependencies of this package.
 They are dependencies of a working robot, which is a different thing: install

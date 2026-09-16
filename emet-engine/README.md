@@ -9,6 +9,7 @@ discovery, never by import. See the layering check in `tools/check_layering.py`.
 emet-listen path/to/manifest.yaml path/to/soul.yaml
 emet-listen path/to/manifest.yaml path/to/soul.yaml --replay recording.wav
 emet-listen path/to/manifest.yaml path/to/soul.yaml --transcribe
+emet-listen path/to/manifest.yaml path/to/soul.yaml --reply
 ```
 
 Needs `emet-hal[audio,wake]` installed alongside for a microphone and a
@@ -31,6 +32,16 @@ Partials print as they arrive, one word a frame from the mock, and the final
 prints as `said`. With `--stats`, an `stt final` line reports the wait from
 the endpoint to the final transcript, which is the first latency a person
 feels.
+
+`--reply` goes one step further and implies `--transcribe`: what was said
+goes to the language model the soul names under `models.chat`, with the
+soul's persona as the system prompt and the run's conversation so far, and
+the answer prints as it streams after `reply:`. The reference soul names
+`openai`, which needs `emet-providers[openai]` and `EMET_OPENAI_KEY`;
+`anthropic` needs its extra and `EMET_ANTHROPIC_KEY`; the mock needs
+neither and repeats what it heard. `--stats` adds `llm first` and `llm done`,
+the wait from the final transcript to the first word and to the whole reply.
+Nothing is spoken yet.
 
 ## Checking that it keeps up
 

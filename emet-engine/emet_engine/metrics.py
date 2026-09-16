@@ -57,6 +57,11 @@ class Stopwatch:
     def __exit__(self, *exc: object) -> None:
         self.elapsed_ms = (time.perf_counter() - self._start) * 1000.0
 
+    def peek_ms(self) -> float:
+        """Milliseconds so far, without stopping. For a first-token mark
+        inside a block that keeps running."""
+        return (time.perf_counter() - self._start) * 1000.0
+
 
 @dataclass
 class SessionStats:
@@ -87,6 +92,12 @@ class SessionStats:
     #: every turn rather than guessed from a vendor's page.
     final_ms: list[float] = field(default_factory=list)
 
+    #: Per answered turn: milliseconds from the final transcript to the first
+    #: word of the reply, and to the whole reply. The first is what a person
+    #: waits in silence; the second is what a speaker would need to keep up.
+    reply_first_ms: list[float] = field(default_factory=list)
+    reply_done_ms: list[float] = field(default_factory=list)
+
     _samples: deque[float] = field(default_factory=lambda: deque(maxlen=SAMPLE_CAP))
     #: Set by the first frame, so that loading the acoustic model and opening
     #: the card are left out. What remains is the card's clock against the
@@ -107,6 +118,11 @@ class SessionStats:
 
     def record_final(self, wait_ms: float) -> None:
         self.final_ms.append(wait_ms)
+
+    def record_reply(self, first_ms: float | None, done_ms: float) -> None:
+        if first_ms is not None:
+            self.reply_first_ms.append(first_ms)
+        self.reply_done_ms.append(done_ms)
 
     # ------------------------------------------------------------ readings
 
@@ -190,6 +206,17 @@ class SessionStats:
                 f"  stt final     mean {sum(self.final_ms) / len(self.final_ms):.0f} ms   "
                 f"max {max(self.final_ms):.0f}   ({len(self.final_ms)} turn(s), "
                 f"endpoint to final transcript)"
+            )
+        if self.reply_first_ms:
+            lines.append(
+                f"  llm first     mean {sum(self.reply_first_ms) / len(self.reply_first_ms):.0f} ms   "
+                f"max {max(self.reply_first_ms):.0f}   ({len(self.reply_first_ms)} reply(ies), "
+                f"transcript to first word)"
+            )
+        if self.reply_done_ms:
+            lines.append(
+                f"  llm done      mean {sum(self.reply_done_ms) / len(self.reply_done_ms):.0f} ms   "
+                f"max {max(self.reply_done_ms):.0f}   (transcript to whole reply)"
             )
         if live:
             skew = self.wall_ms - self.audio_ms

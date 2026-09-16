@@ -237,3 +237,88 @@ def test_the_reported_version_matches_the_installed_distribution():
 
     assert emet_providers.__version__ == version("emet-providers")
     assert emet_providers.__version__ != "0+unknown", "package is not installed"
+
+
+# --------------------------------------------------------- language model
+
+
+from emet_sdk.plugin import LanguageModelPlugin  # noqa: E402
+from emet_sdk.types import Message, Prompt, ReplyDone, TextDelta, ToolCall, ToolSpec  # noqa: E402
+
+from emet_providers.mock import MockLanguageModel  # noqa: E402
+
+
+def llm(**params) -> MockLanguageModel:
+    model = MockLanguageModel({"provider": "mock", "params": params})
+    run(model.start())
+    return model
+
+
+async def collect(events) -> list:
+    return [e async for e in events]
+
+
+def prompt(*texts: str, tools: tuple = ()) -> Prompt:
+    messages = tuple(Message(role="user" if i % 2 == 0 else "assistant", content=t) for i, t in enumerate(texts))
+    return Prompt(system="Be brief.", messages=messages, tools=tools)
+
+
+def test_the_mock_language_model_is_a_plugin_that_repeats_what_it_heard():
+    model = llm()
+    assert isinstance(model, LanguageModelPlugin)
+    assert model.describe().healthy and model.describe().streaming and model.describe().tools
+    events = run(collect(model.reply(prompt("what time is it"))))
+    assert [e.text for e in events if isinstance(e, TextDelta)] == ["You", " said:", " what", " time", " is", " it"]
+    done = events[-1]
+    assert isinstance(done, ReplyDone)
+    assert done.text == "You said: what time is it" and done.stop_reason == "end"
+    assert done.model == "mock" and done.output_tokens == 6
+    assert model.prompts[0].system == "Be brief."
+
+
+def test_a_scripted_reply_is_said_whatever_was_asked():
+    model = llm(reply="As you wish.")
+    done = run(collect(model.reply(prompt("anything"))))[-1]
+    assert done.text == "As you wish."
+
+
+def test_the_mock_can_ask_for_a_tool_and_then_report_its_result():
+    remember = ToolSpec(name="remember", description="keep a fact")
+    model = llm(call_tool={"name": "remember", "arguments": {"fact": "likes tea"}})
+    first = run(collect(model.reply(prompt("remember I like tea", tools=(remember,)))))
+    call = first[0]
+    assert call == ToolCall(id="call_1", name="remember", arguments={"fact": "likes tea"})
+    assert first[-1].stop_reason == "tool" and first[-1].tool_calls == (call,)
+
+    followed = Prompt(
+        system="s",
+        messages=(
+            Message(role="user", content="remember I like tea"),
+            Message(role="assistant", content="", tool_calls=(call,)),
+            Message(role="tool", content="stored", tool_call_id=call.id),
+        ),
+        tools=(remember,),
+    )
+    done = run(collect(model.reply(followed)))[-1]
+    assert done.text == "The tool said: stored" and done.stop_reason == "end"
+
+
+def test_without_tools_on_offer_the_mock_answers_instead_of_calling():
+    model = llm(call_tool={"name": "remember"})
+    done = run(collect(model.reply(prompt("hello"))))[-1]
+    assert done.stop_reason == "end" and done.text == "You said: hello"
+
+
+def test_an_unstarted_or_unreachable_mock_model_says_so():
+    unreachable = llm(fail_on_start=True)
+    assert not unreachable.describe().healthy
+    (done,) = run(collect(unreachable.reply(prompt("q"))))
+    assert done.stop_reason == "error" and "not started" in (done.error or "")
+
+
+def test_a_missing_key_is_reported_by_the_name_of_the_variable_for_the_model_too(monkeypatch):
+    monkeypatch.delenv("EMET_MOCK_KEY", raising=False)
+    model = MockLanguageModel({"provider": "mock", "key_env": "EMET_MOCK_KEY", "params": {"require_key": True}})
+    run(model.start())
+    assert not model.describe().healthy
+    assert "EMET_MOCK_KEY" in (model.health().detail or "")

@@ -58,10 +58,15 @@ def body(path: str) -> dict:
     }
 
 
-def soul(**stt) -> dict:
+def soul(chat: dict | None = None, **stt) -> dict:
     doc = {"identity": {"name": "Emet", "wake_word": PHRASE}}
+    models: dict = {}
     if stt:
-        doc["models"] = {"stt": stt}
+        models["stt"] = stt
+    if chat is not None:
+        models["chat"] = chat
+    if models:
+        doc["models"] = models
     return doc
 
 
@@ -79,6 +84,7 @@ def args(**overrides) -> argparse.Namespace:
         "echo": False,
         "stats": True,
         "transcribe": False,
+        "reply": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -252,3 +258,59 @@ def test_a_false_wake_under_transcribe_reports_an_empty_final(tmp_path, monkeypa
     assert rc == 0
     assert "probably a false wake" in out
     assert "said nothing the provider could make out" in out
+
+
+# ------------------------------------------------------------------ --reply
+
+
+def test_reply_prints_the_answer_as_it_streams_and_implies_transcribe(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "r.wav", spoken(b"what", b"time", b"is it"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
+
+    rc = asyncio.run(cli._run(args(reply=True)))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "  stt      mock (streaming)" in out, "--reply implies --transcribe"
+    assert "  llm      mock" in out
+    assert "    said 'what time is it'" in out
+    assert "    reply: You said: what time is it" in out
+    assert "llm first" in out and "llm done" in out
+
+
+def test_reply_with_no_language_model_configured_names_the_field(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "n.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--reply"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "models.chat.provider" in err
+
+
+def test_reply_with_the_reference_provider_and_no_key_names_the_variable(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("EMET_OPENAI_KEY", raising=False)
+    wav = write_wav(tmp_path / "k.wav", saying(1))
+    stub_loaders(
+        monkeypatch,
+        body(wav),
+        soul(provider="mock", chat={"provider": "openai", "key_env": "EMET_OPENAI_KEY"}),
+    )
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--reply"])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "EMET_OPENAI_KEY" in err and "will not run" in err
+
+
+def test_a_false_wake_gets_no_reply(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "f.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
+
+    asyncio.run(cli._run(args(reply=True)))
+
+    out = capsys.readouterr().out
+    assert "said nothing the provider could make out" in out
+    assert "reply:" not in out

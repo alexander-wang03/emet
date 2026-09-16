@@ -161,6 +161,7 @@ jobs:
           assert r.has_audio("microphone"), "audio group did not survive packaging"
           assert r.has_audio_out("speaker"), "audio_out group did not survive packaging"
           assert r.has_stt("mock"), "stt group did not survive packaging"
+          assert r.has_llm("mock"), "llm group did not survive packaging"
           print("discovered:", [f"{g}:{n}" for g, n in r])
 
           # The version is declared once, in pyproject.toml, and read back
@@ -201,7 +202,7 @@ jobs:
         run: |
           python -m pip install -e "emet-sdk[dev]"
           python -m pip install -e "emet-hal[dev]"
-          python -m pip install -e "emet-providers[dev,deepgram]"
+          python -m pip install -e "emet-providers[dev,deepgram,anthropic,openai]"
           python -m pip install -e "emet-engine[dev]"
 
       # The shipped wake engine, which is an optional extra rather than a hard
@@ -222,9 +223,9 @@ jobs:
         working-directory: emet-hal
         run: python -m pytest -q
 
-      # No network and no key. The mock reads words out of the bytes it is
-      # given, and the Deepgram plugin is tested against a stand-in server;
-      # the one live test skips unless a key and EMET_LIVE_TESTS=1 are set.
+      # No network and no key. The mocks need nothing, and every real
+      # provider is tested against a stand-in server; the live tests skip
+      # unless a key and EMET_LIVE_TESTS=1 are set.
       - name: Test emet-providers
         working-directory: emet-providers
         run: python -m pytest -q

@@ -4,7 +4,9 @@ The 0.3 milestone in one command, and the first step of 0.4 behind a flag. It
 brings up a microphone and a wake detector, and says so each time the robot
 hears its name. With `--transcribe` it also hands what follows to the speech
 recognition provider the soul names and prints what was said, partials as
-they arrive and then the final.
+they arrive and then the final. With `--reply` it hands what was said to the
+language model the soul names and prints the answer as it streams. Nothing
+is spoken yet: that is the next seam.
 
 Useful before that, though. `--replay` points the same path at a recording
 instead of a microphone, so a wake failure somebody reports can be reproduced
@@ -21,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from emet_sdk.discovery import PluginRegistry
-from emet_sdk.types import Transcript, WakeEvent
+from emet_sdk.types import ReplyDone, TextDelta, Transcript, WakeEvent
 from emet_sdk.validate import (
     MissingPluginError,
     ValidationError,
@@ -102,13 +104,16 @@ async def _run(args: argparse.Namespace) -> int:
             (manifest["audio"].get("input") or {}).get("sample_rate") or 16000
         )
 
+    # A reply needs words to reply to, so --reply implies --transcribe.
+    transcribe = args.transcribe or args.reply
     session = ListenSession(
         manifest,
         soul,
         registry=registry,
-        transcribe=args.transcribe,
+        transcribe=transcribe,
+        reply=args.reply,
         on_wake=_on_wake,
-        on_partial=_on_partial if args.transcribe else None,
+        on_partial=_on_partial if transcribe else None,
     )
     async with session:
         assert session.descriptor is not None and session.format is not None
@@ -119,11 +124,15 @@ async def _run(args: argparse.Namespace) -> int:
             f"  audio    {session.format.sample_rate} Hz, {session.format.frame_ms:.0f} ms frames",
             f"  patience {session.patience_ms} ms",
         ]
-        if args.transcribe:
+        if transcribe:
             described = session.stt_descriptor
             model = f", model {described.model}" if described and described.model else ""
             mode = "streaming" if described and described.streaming else "batch"
             lines.append(f"  stt      {session.stt_name}{model} ({mode})")
+        if args.reply:
+            described_llm = session.llm_descriptor
+            model = f", model {described_llm.model}" if described_llm and described_llm.model else ""
+            lines.append(f"  llm      {session.chat_name}{model}")
         print("\n".join(lines))
         print("  (ctrl-c to stop)\n" if not args.replay else "")
 
@@ -149,6 +158,8 @@ async def _run(args: argparse.Namespace) -> int:
                         print(f"    said {utterance.transcript.text!r}")
                     else:
                         print("    said nothing the provider could make out")
+                if args.reply and utterance.transcript is not None and utterance.transcript.text.strip():
+                    await _print_reply(session, utterance.transcript.text)
         except asyncio.CancelledError:
             # Ctrl-C. `asyncio.run` answers SIGINT by cancelling this task, and
             # a microphone never ends on its own, so this is how every live
@@ -169,6 +180,22 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _print_reply(session: ListenSession, text: str) -> None:
+    """Stream the reply to the console as the model produces it."""
+    print("    reply: ", end="", flush=True)
+    async for event in session.answer(text):
+        if isinstance(event, TextDelta):
+            print(event.text, end="", flush=True)
+        elif isinstance(event, ReplyDone):
+            print()
+            if event.stop_reason == "error":
+                print(f"    the language model failed: {event.error}")
+            elif event.stop_reason == "refusal":
+                print("    (the provider declined to answer)")
+            elif event.stop_reason == "length":
+                print("    (cut off at the reply's token cap)")
+
+
 def _finish(session: ListenSession, args: argparse.Namespace) -> None:
     """Report what the run cost, if asked, and always report what it lost."""
     if args.stats:
@@ -179,11 +206,11 @@ def _finish(session: ListenSession, args: argparse.Namespace) -> None:
     hint = session.warm_start_hint()
     if hint:
         print("\n" + hint)
-    if session.dropped and args.echo:
+    if session.dropped and (args.echo or args.reply):
         print(
             f"\nnote: {session.dropped} frame(s) were dropped while the robot was "
-            f"speaking. The loop does not read the microphone during playback; "
-            f"barge-in, in 1.0, is what changes that."
+            f"speaking or thinking. The loop does not read the microphone during "
+            f"playback or a reply; barge-in, in 1.0, is what changes that."
         )
     elif session.dropped:
         print(
@@ -221,6 +248,13 @@ def main(argv: list[str] | None = None) -> int:
         "final. The reference soul names deepgram, which needs "
         "emet-providers[deepgram] and a key in EMET_DEEPGRAM_KEY; `mock` reads "
         "words out of the bytes it is given and needs neither",
+    )
+    parser.add_argument(
+        "--reply",
+        action="store_true",
+        help="hand what was said to the language model the soul names under "
+        "models.chat (or the body takes over) and print the reply as it streams. "
+        "Implies --transcribe. Nothing is spoken yet",
     )
     parser.add_argument(
         "--stats",

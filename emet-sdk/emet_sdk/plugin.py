@@ -1,6 +1,6 @@
 """The plugin contract. Breaking it is a major version bump.
 
-Five categories, and the split is not arbitrary:
+Six categories, and the split is not arbitrary:
 
 * **Actuators** receive `Action`s and do something physical. The engine tells
   them what should happen; how is theirs.
@@ -20,6 +20,10 @@ Five categories, and the split is not arbitrary:
   soul; the body may take the choice over, and tunes it. The engine feeds
   frames in and reads partial and final transcripts out, so a streaming
   provider and a batch one satisfy the same contract.
+* **Language model** plugins turn the conversation so far into the next
+  thing the robot says. Chosen the same way as a transcriber. The engine
+  hands over an assembled prompt and reads the reply as it streams, so a
+  sentence can be spoken before the paragraph exists.
 
 **Why there is no VAD category.** Voice activity detection looks like it
 belongs beside wake, and does not. It is not a swap point: there is one real
@@ -46,15 +50,18 @@ it is why chains bind against descriptors rather than against the YAML.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Mapping
+from typing import Any, AsyncIterator, ClassVar, Mapping
 
 from emet_sdk.types import (
     Action,
     AudioFormat,
     CapabilityDescriptor,
     Health,
+    LanguageModelDescriptor,
     LocomotionDescriptor,
+    Prompt,
     Reading,
+    ReplyEvent,
     Transcript,
     TranscriberDescriptor,
     Twist,
@@ -70,6 +77,7 @@ __all__ = [
     "LocomotionPlugin",
     "WakePlugin",
     "TranscriberPlugin",
+    "LanguageModelPlugin",
     "PluginError",
 ]
 
@@ -90,10 +98,10 @@ class Plugin(ABC):
     Every category starts, shuts down, and reports health the same way. What a
     plugin is *constructed from* differs: three categories are built from one
     entry in a manifest's `capabilities` list, wake is built from `audio.wake`
-    plus a phrase the soul supplies, and a transcriber from the provider
-    reference the soul and the body agree on. Construction therefore belongs
-    to the subclasses, so that no category inherits a signature it has to
-    contradict.
+    plus a phrase the soul supplies, and a transcriber or a language model
+    from the provider reference the soul and the body agree on. Construction
+    therefore belongs to the subclasses, so that no category inherits a
+    signature it has to contradict.
     """
 
     async def start(self) -> None:
@@ -390,4 +398,81 @@ class TranscriberPlugin(Plugin):
         an empty final is a real answer (they said nothing the provider could
         make out) and the engine treats it as one. After this the plugin is
         ready for the next utterance's first `feed()`.
+        """
+
+
+class LanguageModelPlugin(Plugin):
+    """What turns the conversation so far into the next thing the robot says.
+
+    The second provider seam, built like the first: the contract and a mock
+    first, then the vendors, so that the engine is written against this
+    class and never against a vendor's client library. There are credits at
+    more than one vendor, and this is what keeps the choice one line of a
+    soul.
+
+    **Who chooses.** The soul, through `models.chat`, on the terms `models.stt`
+    set: provider, model, and the name of the environment variable holding
+    the key. The body may take the choice over through its own `models.chat`
+    and tunes whichever runs through `params`. `emet_sdk.models.chat_selection`
+    is the rule.
+
+    **What the model does and does not decide.** It receives a `Prompt` the
+    engine assembled and returns text. The persona is the engine's to write
+    into `system`, the memories are the engine's to retrieve, and what the
+    body does while the words are spoken is the engine's to resolve through
+    the chains. A vendor sees one turn at a time and nothing of the robot.
+
+    **Streaming.** `reply()` is an async iterator. Text arrives as
+    `TextDelta`s in order, a `ToolCall` arrives once its arguments are
+    complete, and exactly one `ReplyDone` arrives last, on success and on
+    failure alike, carrying the whole text and why it stopped. A caller that
+    speaks as it reads starts on the first sentence; a caller that wants the
+    text waits for the last event.
+
+    **Tools.** `Prompt.tools` are vendor-neutral specs; the plugin translates
+    them. When the model stops with `tool`, the caller runs the tools,
+    appends the assistant turn with its calls and one `tool` message per
+    result, and calls `reply()` again. The plugin keeps no conversation
+    state between calls.
+    """
+
+    #: The string matched against `models.chat.provider`, and the entry-point
+    #: name this plugin registers under.
+    provider: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        """Receive the merged provider reference: `provider`, `model`,
+        `key_env`, `params`. The key itself is never in it. A plugin that
+        needs one reads the environment variable `key_env` names, in
+        `start()`, and reports `healthy=False` naming the variable when it
+        is absent.
+        """
+        self.config: Mapping[str, Any] = config
+        self.model: str | None = (
+            str(config["model"]) if config.get("model") is not None else None
+        )
+        self.key_env: str | None = (
+            str(config["key_env"]) if config.get("key_env") is not None else None
+        )
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+
+    @abstractmethod
+    def describe(self) -> LanguageModelDescriptor:
+        """Report what this instance can actually do, after `start()`.
+
+        Report narrowly. A provider whose key is missing or whose network is
+        down says `healthy=False` and puts the reason in `health().detail`;
+        the boot check prints it, and the robot refuses to run rather than
+        hear questions it can never answer.
+        """
+
+    @abstractmethod
+    def reply(self, prompt: Prompt) -> AsyncIterator[ReplyEvent]:
+        """Generate one reply, as an async iterator of events.
+
+        Yields `TextDelta`s as text is generated, a `ToolCall` per completed
+        call, and one `ReplyDone` last. Never raises for a failure the
+        provider reported or the network caused: those end the stream with
+        `ReplyDone(stop_reason="error", error=...)` and whatever text came
+        first, so the engine can say something rather than crash mid-turn.
         """

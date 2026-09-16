@@ -20,12 +20,12 @@ it deliberately contains almost no logic.
 | | |
 |---|---|
 | `schemas/` | Body manifest, soul bundle, and motion pack, as JSON Schema. The **full** surface: every P0 field, every RSV field reserved for later releases, and the reserved V1 capability types. |
-| `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `WakeDescriptor`, `Transcript`, `TranscriberDescriptor`, `AudioFormat`, `AudioSource`, `AudioSink`, `Health`, `Priority`, `Sensitivity`. |
+| `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `WakeDescriptor`, `Transcript`, `TranscriberDescriptor`, `Prompt`, `Message`, `ToolSpec`, `ToolCall`, `TextDelta`, `ReplyDone`, `LanguageModelDescriptor`, `AudioFormat`, `AudioSource`, `AudioSink`, `Health`, `Priority`, `Sensitivity`. |
 | `emet_sdk/intents.py` | The closed intent vocabulary, plus the four names reserved from P0. |
 | `emet_sdk/chains.py` | Fallback chain format, and the rule that every chain terminates in a voice rung. |
-| `emet_sdk/plugin.py` | `CapabilityPlugin` and its subclasses `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin`, plus `WakePlugin` and `TranscriberPlugin`: the public contract. |
-| `emet_sdk/discovery.py` | Entry-point discovery across seven groups. Installing a package is what makes a driver exist. |
-| `emet_sdk/models.py` | Which speech recognition provider a body and a soul agree on. |
+| `emet_sdk/plugin.py` | `CapabilityPlugin` and its subclasses `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin`, plus `WakePlugin`, `TranscriberPlugin` and `LanguageModelPlugin`: the public contract. |
+| `emet_sdk/discovery.py` | Entry-point discovery across eight groups. Installing a package is what makes a driver exist. |
+| `emet_sdk/models.py` | Which provider a body and a soul agree on, per stage: one rule for speech recognition, the language model, and the stages still reserved. |
 | `emet_sdk/resolve.py` | Chain resolution: `(chains, descriptors) → binding table`. |
 | `emet_sdk/validate.py` | Semantic rules and the error taxonomy. |
 | `emet_sdk/cli.py` | `emet validate`, `emet explain`. |

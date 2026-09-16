@@ -69,13 +69,18 @@ def body(
     }
 
 
-def soul(wake_word: str | None = PHRASE, **stt) -> dict:
+def soul(wake_word: str | None = PHRASE, chat: dict | None = None, **stt) -> dict:
     identity = {"name": "Emet"}
     if wake_word is not None:
         identity["wake_word"] = wake_word
     doc: dict = {"identity": identity}
+    models: dict = {}
     if stt:
-        doc["models"] = {"stt": stt}
+        models["stt"] = stt
+    if chat is not None:
+        models["chat"] = chat
+    if models:
+        doc["models"] = models
     return doc
 
 
@@ -480,7 +485,7 @@ def test_a_provider_that_cannot_start_is_refused_with_its_own_reason(tmp_path):
     """A dead network or a missing key. The plugin's health detail is more
     specific than anything the engine could invent, so it is quoted."""
     manifest = body(write_wav(tmp_path / "f.wav", frame()))
-    manifest["audio"]["stt"] = {"provider": "mock", "params": {"fail_on_start": True}}
+    manifest["models"] = {"stt": {"provider": "mock", "params": {"fail_on_start": True}}}
     session = transcribing(tmp_path, "f.wav", frame(), manifest=manifest)
     with pytest.raises(EngineError) as exc:
         run(session.start())
@@ -507,7 +512,7 @@ def test_a_provider_at_the_wrong_rate_is_refused_before_the_microphone_opens(tmp
     """One microphone feeds the wake engine and the transcriber. A recogniser
     hearing 16 kHz speech at 8 kHz does not fail; it produces nonsense."""
     manifest = body(write_wav(tmp_path / "r.wav", frame()))
-    manifest["audio"]["stt"] = {"provider": "mock", "params": {"sample_rate": 8000}}
+    manifest["models"] = {"stt": {"provider": "mock", "params": {"sample_rate": 8000}}}
     session = transcribing(tmp_path, "r.wav", frame(), manifest=manifest)
     with pytest.raises(EngineError) as exc:
         run(session.start())
@@ -520,7 +525,7 @@ def test_a_provider_at_the_wrong_rate_is_refused_before_the_microphone_opens(tmp
 def test_the_body_takes_over_from_the_soul(tmp_path):
     """The reference soul names deepgram; a mocked rig names mock and runs."""
     manifest = body(write_wav(tmp_path / "o.wav", spoken(b"hello")))
-    manifest["audio"]["stt"] = {"provider": "mock"}
+    manifest["models"] = {"stt": {"provider": "mock"}}
     session = transcribing(
         tmp_path,
         "o.wav",
@@ -543,7 +548,7 @@ def test_a_scripted_mock_says_its_line_over_real_looking_audio(tmp_path):
     """How the seam is exercised on a body: audio the mock cannot read, and a
     line it was told to say."""
     manifest = body(write_wav(tmp_path / "s.wav", frame() + frame(PHRASE.encode()) + loud_frame() * 5 + frame() * 20))
-    manifest["audio"]["stt"] = {"provider": "mock", "params": {"transcript": "testing the seam"}}
+    manifest["models"] = {"stt": {"provider": "mock", "params": {"transcript": "testing the seam"}}}
     partials = []
     session = transcribing(tmp_path, "s.wav", frame(), manifest=manifest, on_partial=partials.append)
 
@@ -600,7 +605,7 @@ def test_each_turn_gets_its_own_transcript(tmp_path):
 
 def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):
     manifest = body(write_wav(tmp_path / "z.wav", frame()))
-    manifest["audio"]["stt"] = {"provider": "mock", "params": {"fail_on_start": True}}
+    manifest["models"] = {"stt": {"provider": "mock", "params": {"fail_on_start": True}}}
     session = transcribing(tmp_path, "z.wav", frame(), manifest=manifest)
 
     async def scenario():
@@ -610,3 +615,149 @@ def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):
         await session.stop()
 
     run(scenario())
+
+
+# ----------------------------------------------------------------- answers
+
+
+from emet_sdk.types import ReplyDone, TextDelta  # noqa: E402
+
+
+def answering(tmp_path, name: str, pcm: bytes, *, chat: dict | None = None, manifest=None, **kw):
+    manifest = manifest or body(write_wav(tmp_path / name, pcm))
+    soul_doc = soul(provider="mock", chat=chat if chat is not None else {"provider": "mock"})
+    return ListenSession(manifest, soul_doc, transcribe=True, reply=True, **kw)
+
+
+async def drain(events):
+    return [e async for e in events]
+
+
+def test_a_turn_can_be_answered_by_a_model_the_engine_never_imported(tmp_path):
+    """0.4's second seam end to end: hear the name, transcribe the words,
+    hand them to the language model with the persona, stream the reply."""
+    session = answering(tmp_path, "a.wav", spoken(b"what", b"time", b"is it"))
+
+    async def scenario():
+        async with session:
+            turns = [(e, u) async for e, u in session.turns()]
+            (_, utterance) = turns[0]
+            events = await drain(session.answer(utterance.transcript.text))
+            return utterance, events
+
+    utterance, events = run(scenario())
+    assert utterance.transcript.text == "what time is it"
+    deltas = [e for e in events if isinstance(e, TextDelta)]
+    done = events[-1]
+    assert isinstance(done, ReplyDone)
+    assert done.stop_reason == "end"
+    assert done.text == "You said: what time is it"
+    assert "".join(d.text for d in deltas) == done.text
+    assert session.chat_name == "mock"
+    assert session.llm_descriptor is not None and session.llm_descriptor.healthy
+
+
+def test_the_persona_becomes_the_system_prompt_and_the_conversation_accumulates(tmp_path):
+    session = answering(tmp_path, "p.wav", frame())
+    session.soul["persona"] = {"system_prompt": "You are Emet. Be honest."}
+    from emet_engine.prompting import system_prompt
+
+    session.system_prompt = system_prompt(session.soul)
+
+    async def scenario():
+        async with session:
+            await drain(session.answer("hello"))
+            await drain(session.answer("and again"))
+            return session._llm.prompts
+
+    prompts = run(scenario())
+    assert prompts[0].system.startswith("You are Emet. Be honest.")
+    assert [m.role for m in prompts[1].messages] == ["user", "assistant", "user"]
+    assert prompts[1].messages[1].content == "You said: hello"
+    assert prompts[1].messages[2].content == "and again"
+
+
+def test_a_failed_reply_is_returned_and_kept_out_of_the_conversation(tmp_path):
+    manifest = body(write_wav(tmp_path / "f.wav", frame()))
+    manifest["models"] = {"chat": {"provider": "mock"}}
+    session = answering(tmp_path, "f.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        async with session:
+            session._llm._started = False  # the vendor went away mid-run
+            events = await drain(session.answer("hello"))
+            return events, list(session.conversation.messages)
+
+    events, messages = run(scenario())
+    (done,) = events
+    assert done.stop_reason == "error" and done.error
+    assert [m.role for m in messages] == ["user"]
+
+
+def test_answering_records_the_two_latencies(tmp_path):
+    session = answering(tmp_path, "s.wav", frame())
+
+    async def scenario():
+        async with session:
+            await drain(session.answer("hello"))
+            return session.stats
+
+    stats = run(scenario())
+    assert len(stats.reply_first_ms) == 1 and len(stats.reply_done_ms) == 1
+    assert stats.reply_first_ms[0] <= stats.reply_done_ms[0]
+    assert "llm first" in stats.report(live=False) and "llm done" in stats.report(live=False)
+
+
+def test_asking_for_replies_with_no_language_model_names_the_field(tmp_path):
+    session = answering(tmp_path, "n.wav", frame(), chat={})
+    session.chat = None
+    session.chat_name = None
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    assert "models.chat.provider" in str(exc.value)
+    assert "mock" in str(exc.value)
+    run(session.stop())
+
+
+def test_an_uninstalled_language_model_is_a_missing_plugin(tmp_path):
+    session = answering(tmp_path, "u.wav", frame(), chat={"provider": "abacus"})
+    with pytest.raises(MissingPluginError):
+        run(session.start())
+    run(session.stop())
+
+
+def test_a_language_model_that_cannot_start_is_refused_with_its_own_reason(tmp_path):
+    manifest = body(write_wav(tmp_path / "x.wav", frame()))
+    manifest["models"] = {"chat": {"provider": "mock", "params": {"fail_on_start": True}}}
+    session = answering(tmp_path, "x.wav", frame(), manifest=manifest)
+    with pytest.raises(EngineError) as exc:
+        run(session.start())
+    assert "unreachable" in str(exc.value) and "will not run" in str(exc.value)
+    assert session._audio is None, "the microphone was opened before the refusal"
+    run(session.stop())
+
+
+def test_answering_without_reply_enabled_is_an_error(tmp_path):
+    session = ListenSession(body(write_wav(tmp_path / "r.wav", frame())), soul())
+
+    async def scenario():
+        async with session:
+            with pytest.raises(EngineError, match="reply=True"):
+                await drain(session.answer("hello"))
+
+    run(scenario())
+
+
+def test_the_body_takes_the_language_model_over_from_the_soul(tmp_path):
+    manifest = body(write_wav(tmp_path / "o.wav", frame()))
+    manifest["models"] = {"stt": {"provider": "mock"}, "chat": {"provider": "mock", "params": {"reply": "As you wish."}}}
+    session = answering(
+        tmp_path, "o.wav", frame(), manifest=manifest, chat={"provider": "openai", "model": "x", "key_env": "EMET_OPENAI_KEY"}
+    )
+    assert session.chat_name == "mock"
+
+    async def scenario():
+        async with session:
+            return (await drain(session.answer("anything")))[-1].text
+
+    assert run(scenario()) == "As you wish."

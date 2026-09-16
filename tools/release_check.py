@@ -58,6 +58,7 @@ EXPECTED_GROUPS = (
     "emet.audio",
     "emet.audio_out",
     "emet.stt",
+    "emet.llm",
 )
 
 problems: list[str] = []

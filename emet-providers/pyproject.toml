@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "emet-providers"
 version = "0.3.0"
-description = "Emet providers: speech recognition, and later language model and speech synthesis, plugins that reach a service."
+description = "Emet providers: speech recognition and language model plugins that reach a service; speech synthesis to follow."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "The Emet Authors" }]
-keywords = ["emet", "robotics", "stt", "providers"]
+keywords = ["emet", "robotics", "stt", "llm", "providers"]
 
 # emet-sdk only, like emet-hal. A provider is a plugin that talks to a service
 # instead of a chip; the contract it satisfies is the same kind of thing and
@@ -25,6 +25,11 @@ dependencies = ["emet-sdk>=0.1"]
 # for aarch64 Linux (PyPI, 2026-09-12); 13 is where its asyncio client took
 # `additional_headers`.
 deepgram = ["websockets>=13"]
+# The two language model providers speak JSON over HTTPS and stream
+# Server-Sent Events, so one HTTP client serves both. httpx is BSD-3-Clause,
+# pure Python, and ships one wheel for every platform (PyPI, 2026-09-15).
+anthropic = ["httpx>=0.27"]
+openai = ["httpx>=0.27"]
 dev = ["pytest>=8.0"]
 
 # Installing a package is what makes a provider exist. The entry-point name is
@@ -33,6 +38,12 @@ dev = ["pytest>=8.0"]
 [project.entry-points."emet.stt"]
 "mock" = "emet_providers.mock:MockTranscriber"
 "deepgram" = "emet_providers.deepgram:DeepgramTranscriber"
+
+# The entry-point name is the string a soul puts in `models.chat.provider`.
+[project.entry-points."emet.llm"]
+"mock" = "emet_providers.mock:MockLanguageModel"
+"anthropic" = "emet_providers.anthropic:AnthropicLanguageModel"
+"openai" = "emet_providers.openai:OpenAILanguageModel"
 
 [tool.hatch.build.targets.wheel]
 packages = ["emet_providers"]

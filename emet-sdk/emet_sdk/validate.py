@@ -57,6 +57,7 @@ __all__ = [
     "BUILTIN_AUDIO_OUT",
     "DEFAULT_AUDIO_SINK",
     "BUILTIN_STT",
+    "BUILTIN_LLM",
     "load_yaml",
     "validate_manifest",
     "validate_soul",
@@ -118,12 +119,16 @@ DEFAULT_AUDIO_SINK = "speaker"
 #: Speech recognition providers `emet-providers` ships. Documentation, like the
 #: others: `models.stt.provider` is an open enum resolved against entry points.
 #:
-#: There is deliberately no `DEFAULT_STT_PROVIDER`. The other defaults name
-#: the hardware floor, which every body has. Speech recognition is a cloud
-#: account with a key the owner brings, and nobody can be assumed to hold one,
-#: so an absent provider means "no transcription", and asking for it anyway is
-#: an error that names the field to set. See `emet_sdk.models.stt_selection`.
+#: There is deliberately no `DEFAULT_STT_PROVIDER`, and no default for any
+#: model stage. The other defaults name the hardware floor, which every body
+#: has. A model stage is a cloud account with a key the owner brings, and
+#: nobody can be assumed to hold one, so an absent provider means "this stage
+#: does not run", and asking for it anyway is an error that names the field
+#: to set. See `emet_sdk.models.model_selection`.
 BUILTIN_STT: frozenset[str] = frozenset({"mock", "deepgram"})
+
+#: Language model providers `emet-providers` ships. Same status.
+BUILTIN_LLM: frozenset[str] = frozenset({"mock", "anthropic", "openai"})
 
 
 # --------------------------------------------------------------------------
@@ -290,7 +295,7 @@ def validate_manifest(
     _check_wake_engine(doc, registry, report)
     _check_audio_source(doc, registry, report)
     _check_audio_sink(doc, registry, report)
-    _check_stt_provider(doc, registry, report)
+    _check_model_providers(doc, registry, report)
 
     return report
 
@@ -391,34 +396,47 @@ def _check_audio_sink(
     )
 
 
-def _check_stt_provider(
+#: Which entry-point group each body-side `models.<stage>.provider` resolves
+#: against, and what to call it in a message. Stages absent here (`tts`,
+#: `micro`) are reserved: accepted by the schema, resolved against nothing
+#: yet, so a name under them is not checked.
+_MODEL_STAGE_GROUPS: Mapping[str, tuple[str, str]] = {
+    "stt": ("has_stt", "speech recognition provider"),
+    "chat": ("has_llm", "language model provider"),
+}
+
+
+def _check_model_providers(
     doc: Mapping[str, Any],
     registry: PluginRegistry,
     report: ValidationReport,
 ) -> None:
-    """Resolve `audio.stt.provider`, on the same terms as the wake engine.
+    """Resolve the body's `models.<stage>.provider`, on the wake engine's terms.
 
-    Absent is the common case: most bodies leave the choice to the soul's
-    `models.stt`. That soul field is deliberately checked neither here nor in
-    `validate_soul`. A soul is valid on every machine or on none, and whether
-    the provider it names is installed is a question for boot, the way
-    `identity.wake_word` is answered against a live descriptor. A body is one
-    machine, so a body that names a provider names software that has to be
-    installed on it, and an unresolvable name is an error like
+    Absent is the common case: most bodies leave every stage to the soul's
+    `models` block. Those soul fields are deliberately checked neither here
+    nor in `validate_soul`. A soul is valid on every machine or on none, and
+    whether the provider it names is installed is a question for boot, the
+    way `identity.wake_word` is answered against a live descriptor. A body is
+    one machine, so a body that names a provider names software that has to
+    be installed on it, and an unresolvable name is an error like
     `audio.wake.engine`.
     """
-    provider = ((doc.get("audio") or {}).get("stt") or {}).get("provider")
-    if not isinstance(provider, str) or registry.has_stt(provider):
-        return
-    installed = ", ".join(registry.stt_names) or "(none)"
-    report.error(
-        "missing_plugin",
-        f"no speech recognition provider provides {provider!r}. Installed: "
-        f"{installed}. `audio.stt.provider` is an open enum: this value is "
-        f"legal, the plugin simply is not installed. Omit it to let the soul's "
-        f"`models.stt` choose.",
-        "/audio/stt/provider",
-    )
+    models = doc.get("models") or {}
+    for stage, (query, what) in _MODEL_STAGE_GROUPS.items():
+        provider = (models.get(stage) or {}).get("provider")
+        if not isinstance(provider, str) or getattr(registry, query)(provider):
+            continue
+        names = getattr(registry, f"{query[4:]}_names")
+        installed = ", ".join(names) or "(none)"
+        report.error(
+            "missing_plugin",
+            f"no {what} provides {provider!r}. Installed: {installed}. "
+            f"`models.{stage}.provider` is an open enum: this value is legal, "
+            f"the plugin simply is not installed. Omit it to let the soul's "
+            f"`models.{stage}` choose.",
+            f"/models/{stage}/provider",
+        )
 
 
 def _check_unique_ids(caps: Sequence[Mapping[str, Any]], report: ValidationReport) -> None:

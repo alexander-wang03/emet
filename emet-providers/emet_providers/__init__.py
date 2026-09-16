@@ -13,13 +13,21 @@ not install them. Keeping them here keeps the HAL a HAL.
 
 Layering, enforced in CI: this package imports `emet_sdk` and nothing else.
 
-Shipped:
+Shipped, speech recognition (`emet.stt`):
 
     mock        a transcriber that reads words out of the bytes it is given
     deepgram    streaming recognition through Deepgram      (extra: deepgram)
 
-The mock came first, so that the first real provider was written against the
-contract rather than the contract against the provider.
+Shipped, language models (`emet.llm`):
+
+    mock        repeats what it heard, or says a scripted line, a word a delta
+    anthropic   Claude through the Messages API              (extra: anthropic)
+    openai      GPT, or any Chat Completions server          (extra: openai)
+
+In each group the mock came first, so that the real providers were written
+against the contract rather than the contract against a provider, and the
+language models came as a pair, because a seam with one implementation is
+untested as a seam.
 """
 
 from importlib import metadata as _metadata

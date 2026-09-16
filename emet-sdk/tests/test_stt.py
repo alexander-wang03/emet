@@ -45,7 +45,7 @@ def codes(report) -> set[str]:
 def manifest(**stt: Any) -> dict:
     doc = {"audio": {"input": {"device": "x"}, "output": {"device": "y"}}}
     if stt:
-        doc["audio"]["stt"] = stt
+        doc["models"] = {"stt": stt}
     return doc
 
 
@@ -278,18 +278,18 @@ def test_the_reference_soul_names_a_provider_that_ships():
 def test_an_absent_body_block_is_the_common_case():
     report = validate_manifest(load_yaml(EXAMPLES / "bodiless.yaml"))
     assert report.ok, report.errors
-    assert "stt" not in load_yaml(EXAMPLES / "bodiless.yaml")["audio"]
+    assert "models" not in load_yaml(EXAMPLES / "bodiless.yaml")
 
 
 def test_a_body_naming_an_uninstalled_provider_is_an_error():
     """Like `wake.engine`, `input.source` and `output.sink`: a body is one
     machine, and it has named software that has to be installed on it."""
     doc = load_yaml(EXAMPLES / "bodiless.yaml")
-    doc["audio"]["stt"] = {"provider": "carrier_pigeon"}
+    doc["models"] = {"stt": {"provider": "carrier_pigeon"}}
     report = validate_manifest(doc)
     assert not report.ok
     assert "missing_plugin" in codes(report)
-    assert any(f.path == "/audio/stt/provider" for f in report.errors)
+    assert any(f.path == "/models/stt/provider" for f in report.errors)
 
 
 def test_the_invalid_fixture_says_the_same():
@@ -300,25 +300,25 @@ def test_the_invalid_fixture_says_the_same():
 
 def test_a_body_naming_the_shipped_provider_validates_clean():
     doc = load_yaml(EXAMPLES / "bodiless.yaml")
-    doc["audio"]["stt"] = {"provider": "mock", "params": {"transcript": "hello"}}
+    doc["models"] = {"stt": {"provider": "mock", "params": {"transcript": "hello"}}}
     assert validate_manifest(doc).ok
 
 
 def test_the_mocked_example_body_takes_speech_recognition_over():
     doc = load_yaml(EXAMPLES / "mock-scout.yaml")
-    assert doc["audio"]["stt"]["provider"] == "mock"
+    assert doc["models"]["stt"]["provider"] == "mock"
     assert validate_manifest(doc).ok
 
 
 def test_a_body_may_carry_params_alone():
     doc = load_yaml(EXAMPLES / "bodiless.yaml")
-    doc["audio"]["stt"] = {"params": {"endpoint": "eu"}}
+    doc["models"] = {"stt": {"params": {"endpoint": "eu"}}}
     assert validate_manifest(doc).ok
 
 
 def test_an_unknown_key_under_the_body_block_is_a_schema_error():
     doc = load_yaml(EXAMPLES / "bodiless.yaml")
-    doc["audio"]["stt"] = {"provider": "mock", "api_key": "never-in-a-manifest"}
+    doc["models"] = {"stt": {"provider": "mock", "api_key": "never-in-a-manifest"}}
     report = validate_manifest(doc)
     assert "schema" in codes(report)
 
