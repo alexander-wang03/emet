@@ -85,6 +85,7 @@ def args(**overrides) -> argparse.Namespace:
         "stats": True,
         "transcribe": False,
         "reply": False,
+        "keys": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -314,3 +315,51 @@ def test_a_false_wake_gets_no_reply(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "said nothing the provider could make out" in out
     assert "reply:" not in out
+
+
+# ------------------------------------------------------------------ --keys
+
+
+def test_keys_are_read_from_a_file_before_the_providers_start(tmp_path, monkeypatch, capsys):
+    """The BYOK noun: a key file, loaded once, names printed and values not."""
+    monkeypatch.delenv("EMET_TEST_KEY", raising=False)
+    keys = tmp_path / "keys.env"
+    keys.write_text("EMET_TEST_KEY=hunter2\n", encoding="utf-8")
+    wav = write_wav(tmp_path / "k.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--keys", str(keys)])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert f"  keys     EMET_TEST_KEY from {keys}" in out
+    assert "hunter2" not in out
+    import os
+
+    assert os.environ["EMET_TEST_KEY"] == "hunter2"
+
+
+def test_a_missing_keys_file_stops_the_run_with_its_path(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "m.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    rc = cli.main(["body.yaml", "soul.yaml", "--keys", str(tmp_path / "absent.env")])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "absent.env" in err and "no keys file" in err
+
+
+def test_without_keys_and_without_default_files_the_header_says_nothing_about_keys(
+    tmp_path, monkeypatch, capsys
+):
+    from emet_engine import keys as keys_module
+
+    monkeypatch.setattr(keys_module, "default_paths", lambda: [tmp_path / "none.env"])
+    monkeypatch.delenv("EMET_KEYS", raising=False)
+    wav = write_wav(tmp_path / "q.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    asyncio.run(cli._run(args(keys=None)))
+
+    assert "  keys " not in capsys.readouterr().out

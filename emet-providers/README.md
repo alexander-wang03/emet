@@ -30,15 +30,24 @@ came as a pair: a seam with one implementation is untested as a seam.
 Bring your own. The soul names the environment variable per stage (`key_env`;
 the reference soul says `EMET_DEEPGRAM_KEY` and `EMET_OPENAI_KEY`, and the
 Anthropic plugin reads `EMET_ANTHROPIC_KEY` when a soul names nothing); the
-key itself is never written into a soul or a manifest. Export them in the
-shell that runs the robot:
+key itself is never written into a soul or a manifest. Put them in a keys
+file, once, and `emet-listen` reads it before any provider starts:
 
 ```sh
-export EMET_DEEPGRAM_KEY=...        # from console.deepgram.com
-export EMET_OPENAI_KEY=...          # from platform.openai.com
-export EMET_ANTHROPIC_KEY=...       # from console.anthropic.com
+mkdir -p ~/.config/emet
+cat > ~/.config/emet/keys.env <<'EOF'
+EMET_DEEPGRAM_KEY=...        # from console.deepgram.com
+EMET_OPENAI_KEY=...          # from platform.openai.com
+EMET_ANTHROPIC_KEY=...       # from console.anthropic.com
+EOF
+chmod 600 ~/.config/emet/keys.env
 pip install -e "emet-providers[deepgram,openai,anthropic]"
 ```
+
+An installed robot reads `/etc/emet/keys.env` too, and `--keys FILE` names
+any other. A variable already exported in the shell always wins over the
+file, so a one-off key for one run still works. `keys.env` is in the
+repository's `.gitignore`, whatever directory it lands in.
 
 At boot each plugin makes one cheap request (a connection for Deepgram, a
 model listing for the language models), so a missing key, a rejected key

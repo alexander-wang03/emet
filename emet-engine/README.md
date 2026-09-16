@@ -33,6 +33,13 @@ prints as `said`. With `--stats`, an `stt final` line reports the wait from
 the endpoint to the final transcript, which is the first latency a person
 feels.
 
+Keys are read from a file rather than exported in every shell: put
+`NAME=value` lines in `~/.config/emet/keys.env` (or `/etc/emet/keys.env` for
+an installed robot, or a file named with `--keys`), `chmod 600` it, and
+`emet-listen` loads them before any provider starts. An exported variable
+always wins over the file. The header prints which names were loaded and from
+where; values are never printed.
+
 `--reply` goes one step further and implies `--transcribe`: what was said
 goes to the language model the soul names under `models.chat`, with the
 soul's persona as the system prompt and the run's conversation so far, and

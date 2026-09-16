@@ -137,7 +137,7 @@ The consequence to hold onto: **anyone may fork Emet, close their fork, and ship
 
 **Layering is enforced by CI, not by a license wall.** An import linter asserts that `emet-sdk` imports nothing internal, and that `emet-hal`, `emet-providers` and `emet-engine` each import only `emet-sdk`. Previously this invariant was maintained by the engine being a separate closed artifact; that structural guarantee is now a test, and it must actually run in CI or it will rot.
 
-Python import namespaces: `emet_sdk`, `emet_hal`, `emet_providers`, `emet_engine`. CLI binaries: `emet` and `emet-listen`. Config root: `/etc/emet/`. Soul bundles: `*.emet` directories.
+Python import namespaces: `emet_sdk`, `emet_hal`, `emet_providers`, `emet_engine`. CLI binaries: `emet` and `emet-listen`. Config root: `/etc/emet/`. Provider keys: `/etc/emet/keys.env` for the machine, `~/.config/emet/keys.env` for a person, `NAME=value` a line, read into the environment at start-up and never written into a soul or a manifest (§8.1). Soul bundles: `*.emet` directories.
 
 ---
 

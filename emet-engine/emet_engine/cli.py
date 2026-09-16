@@ -32,6 +32,7 @@ from emet_sdk.validate import (
     validate_soul,
 )
 
+from emet_engine.keys import load_keys
 from emet_engine.session import EngineError, ListenSession
 from emet_engine.turn import EndReason
 
@@ -89,6 +90,16 @@ async def _run(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # Keys before providers: the plugins read the environment in start().
+    # Names are printed, values never are.
+    try:
+        loaded = load_keys(args.keys)
+    except (FileNotFoundError, ValueError) as exc:
+        raise EngineError(str(exc)) from exc
+    for entry in loaded:
+        if entry.warning:
+            print(f"  ! {entry.warning}", file=sys.stderr)
+
     manifest = _load(Path(args.manifest), "manifest", registry)
     soul = _load(Path(args.soul), "soul", registry)
     if args.replay:
@@ -133,6 +144,9 @@ async def _run(args: argparse.Namespace) -> int:
             described_llm = session.llm_descriptor
             model = f", model {described_llm.model}" if described_llm and described_llm.model else ""
             lines.append(f"  llm      {session.chat_name}{model}")
+        for entry in loaded:
+            names = ", ".join(entry.names) or "nothing new"
+            lines.append(f"  keys     {names} from {entry.path}")
         print("\n".join(lines))
         print("  (ctrl-c to stop)\n" if not args.replay else "")
 
@@ -248,6 +262,14 @@ def main(argv: list[str] | None = None) -> int:
         "final. The reference soul names deepgram, which needs "
         "emet-providers[deepgram] and a key in EMET_DEEPGRAM_KEY; `mock` reads "
         "words out of the bytes it is given and needs neither",
+    )
+    parser.add_argument(
+        "--keys",
+        metavar="FILE",
+        help="read provider keys from this file, one NAME=value a line, into the "
+        "environment before anything starts. Without it, /etc/emet/keys.env and "
+        "~/.config/emet/keys.env are read when they exist. A variable already "
+        "exported is never overwritten. Values are never printed",
     )
     parser.add_argument(
         "--reply",
