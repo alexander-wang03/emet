@@ -82,9 +82,10 @@ class SessionStats:
     #: first thing to check when a live run's clock skew looks like drift.
     overflows: int = 0
     #: Of `dropped`, the frames lost while the loop was deliberately not
-    #: reading: playing audio, or waiting on a language model. Those are the
-    #: loop's own doing until barge-in arrives, and they say nothing about
-    #: whether it keeps up while listening, so the verdict leaves them out.
+    #: reading: playing audio, waiting on a language model, or waiting for
+    #: the final transcript after the person stopped. Those are the loop's
+    #: own doing until barge-in arrives, and they say nothing about whether
+    #: it keeps up while listening, so the verdict leaves them out.
     dropped_busy: int = 0
 
     process_ms_total: float = 0.0
@@ -267,10 +268,19 @@ class SessionStats:
             pct = (skew / self.audio_ms * 100.0) if self.audio_ms else 0.0
             # A steady percentage across runs is the card's clock against the
             # system's, a property of the hardware. A growing offset with
-            # overflows or drops beside it is audio being lost.
+            # overflows or drops beside it is audio being lost, and every
+            # dropped frame is one frame's worth of skew: on the reference
+            # body 141 dropped frames read as an 18.9% "drift" until the
+            # arithmetic was done by hand. So it is done here.
+            lost_ms = self.dropped * self.frame_ms
+            explained = ""
+            if self.dropped:
+                explained = (
+                    f"; {lost_ms / 1000:.2f}s of it is the {self.dropped} dropped frame(s)"
+                )
             lines.append(
                 f"  clock         wall {self.wall_ms / 1000:.1f}s vs audio "
-                f"{self.audio_ms / 1000:.1f}s   skew {skew / 1000:+.2f}s ({pct:+.2f}%)"
+                f"{self.audio_ms / 1000:.1f}s   skew {skew / 1000:+.2f}s ({pct:+.2f}%{explained})"
             )
         else:
             lines.append(

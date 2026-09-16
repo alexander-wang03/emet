@@ -1082,3 +1082,28 @@ def test_without_asking_no_voice_is_built(tmp_path):
 
     assert run(scenario()) == (None, None)
     assert session.tts_name == "mock", "the selection is still reported"
+
+
+def test_frames_dropped_while_waiting_for_the_final_are_the_loops_own_choice(tmp_path):
+    """On the reference body the transcriber once waited five seconds for a
+    final that never came. The loop does not read the microphone through
+    that wait, 37 frames were lost, and the verdict blamed the listening
+    loop for them. They are charged to the wait, like a reply's."""
+    session = transcribing(tmp_path, "w.wav", spoken(b"hello", b"there"))
+
+    async def scenario():
+        async with session:
+            real_finish = session._stt.finish
+
+            async def slow_finish():
+                session._audio.dropped = 37  # lost while the provider stalled
+                return await real_finish()
+
+            session._stt.finish = slow_finish
+            turns = [u async for _, u in session.turns()]
+            return turns, session.stats
+
+    turns, stats = run(scenario())
+    assert turns[0].transcript is not None and turns[0].transcript.text == "hello there"
+    assert stats.dropped == 37 and stats.dropped_busy == 37
+    assert stats.kept_up, "the loop kept up while it was listening"

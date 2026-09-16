@@ -530,11 +530,21 @@ class ListenSession:
         Timed, and kept apart from the per-frame budget: this is the wait
         between the person stopping and the words existing, which is the
         first latency 0.4 has to answer for.
+
+        The microphone is not read while this waits, the same as during a
+        reply, so frames dropped meanwhile are the loop's own choice and are
+        charged as such. A provider that took five seconds to send a final
+        on the reference body cost 37 frames, and the verdict blamed the
+        listening loop for them.
         """
         if self._stt is None:
             return utterance
-        with Stopwatch() as watch:
-            final = await self._stt.finish()
+        before = self.dropped
+        try:
+            with Stopwatch() as watch:
+                final = await self._stt.finish()
+        finally:
+            self._charge_busy(before)
         self.stats.record_final(watch.elapsed_ms)
         return replace(utterance, transcript=final)
 
