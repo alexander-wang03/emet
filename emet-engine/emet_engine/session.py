@@ -334,7 +334,11 @@ class ListenSession:
         """
         if self._sink is None:
             raise EngineError("session was not started")
-        await self._sink.play(pcm)
+        before = self.dropped
+        try:
+            await self._sink.play(pcm)
+        finally:
+            self._charge_busy(before)
 
     async def hush(self) -> None:
         """Stop talking immediately, mid-word.
@@ -469,16 +473,28 @@ class ListenSession:
         self.conversation.add_user(text)
         prompt = self.conversation.prompt(self.system_prompt, max_tokens=DEFAULT_MAX_TOKENS)
 
+        before = self.dropped
         first_ms: float | None = None
-        with Stopwatch() as watch:
-            async for event in self._llm.reply(prompt):
-                if isinstance(event, TextDelta) and first_ms is None:
-                    first_ms = watch.peek_ms()
-                if isinstance(event, ReplyDone):
-                    if event.stop_reason != "error" and event.text.strip():
-                        self.conversation.add_assistant(event.text.strip())
-                yield event
-        self.stats.record_reply(first_ms, watch.elapsed_ms)
+        try:
+            with Stopwatch() as watch:
+                async for event in self._llm.reply(prompt):
+                    if isinstance(event, TextDelta) and first_ms is None:
+                        first_ms = watch.peek_ms()
+                    if isinstance(event, ReplyDone):
+                        if event.stop_reason != "error" and event.text.strip():
+                            self.conversation.add_assistant(event.text.strip())
+                    yield event
+            self.stats.record_reply(first_ms, watch.elapsed_ms)
+        finally:
+            self._charge_busy(before)
+
+    def _charge_busy(self, dropped_before: int) -> None:
+        """Attribute frames dropped during `say()` or `answer()` to the loop's
+        own choice not to read, so the verdict judges listening alone."""
+        lost = self.dropped - dropped_before
+        if lost > 0:
+            self.stats.dropped_busy += lost
+        self.stats.dropped = self.dropped
 
     # -------------------------------------------------------------- honesty
 

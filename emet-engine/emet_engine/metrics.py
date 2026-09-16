@@ -81,6 +81,11 @@ class SessionStats:
     #: reported an input overflow. A different cause, the same loss, and the
     #: first thing to check when a live run's clock skew looks like drift.
     overflows: int = 0
+    #: Of `dropped`, the frames lost while the loop was deliberately not
+    #: reading: playing audio, or waiting on a language model. Those are the
+    #: loop's own doing until barge-in arrives, and they say nothing about
+    #: whether it keeps up while listening, so the verdict leaves them out.
+    dropped_busy: int = 0
 
     process_ms_total: float = 0.0
     process_ms_max: float = 0.0
@@ -173,11 +178,18 @@ class SessionStats:
     def kept_up(self) -> bool:
         """Whether this run is evidence the loop is viable here.
 
-        Three conditions, and all of them matter. Nothing was dropped, no frame
-        blew the budget, and there is real margin rather than a bare pass. A
-        run at 0.99 kept up on a quiet machine and will not on a busy one.
+        Three conditions, and all of them matter. Nothing was dropped while
+        listening, no frame blew the budget, and there is real margin rather
+        than a bare pass. A run at 0.99 kept up on a quiet machine and will not
+        on a busy one. Frames dropped while the robot was speaking or thinking
+        are counted, printed, and left out of this: the loop chose not to read
+        the microphone then, and barge-in is what changes that.
         """
-        return self.dropped == 0 and self.over_budget == 0 and self.realtime_factor < 0.5
+        return (
+            self.dropped - self.dropped_busy == 0
+            and self.over_budget == 0
+            and self.realtime_factor < 0.5
+        )
 
     # -------------------------------------------------------------- report
 
@@ -199,7 +211,9 @@ class SessionStats:
             f"{self.over_budget} frame(s) over",
             f"  realtime      {self.realtime_factor:.4f}  "
             f"({self.headroom:.0f}x faster than realtime)",
-            f"  dropped       {self.dropped}   (card overflows {self.overflows})",
+            f"  dropped       {self.dropped}   (card overflows {self.overflows}"
+            + (f"; {self.dropped_busy} while speaking or thinking" if self.dropped_busy else "")
+            + ")",
         ]
         if self.final_ms:
             lines.append(

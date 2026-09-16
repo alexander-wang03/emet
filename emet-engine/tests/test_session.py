@@ -761,3 +761,45 @@ def test_the_body_takes_the_language_model_over_from_the_soul(tmp_path):
             return (await drain(session.answer("anything")))[-1].text
 
     assert run(scenario()) == "As you wish."
+
+
+# ------------------------------------------------------- honest verdicts
+
+
+def test_frames_dropped_while_answering_are_charged_to_the_loops_own_choice(tmp_path):
+    """The reference body dropped 11 frames during a two-second reply and
+    the verdict said the loop did not keep up. It kept up fine; it was not
+    reading, on purpose. Those frames are counted, labelled, and left out of
+    the verdict."""
+    session = answering(tmp_path, "d.wav", frame())
+
+    async def scenario():
+        async with session:
+            session._audio.dropped = 3  # lost while listening: the loop's fault
+            real_reply = session._llm.reply
+
+            async def slow_reply(prompt):
+                session._audio.dropped = 8  # five more, lost while the model thought
+                async for event in real_reply(prompt):
+                    yield event
+
+            session._llm.reply = slow_reply
+            await drain(session.answer("hello"))
+            return session.stats
+
+    stats = run(scenario())
+    assert stats.dropped == 8 and stats.dropped_busy == 5
+    assert "5 while speaking or thinking" in stats.report(live=False)
+    assert not stats.kept_up, "three frames were lost while listening, and that still counts"
+
+
+def test_a_run_that_only_dropped_frames_while_busy_kept_up():
+    from emet_engine.metrics import SessionStats
+
+    stats = SessionStats()
+    for _ in range(10):
+        stats.record_frame(1.0)
+    stats.dropped = 11
+    stats.dropped_busy = 11
+    assert stats.kept_up
+    assert "11 while speaking or thinking" in stats.report(live=False)
