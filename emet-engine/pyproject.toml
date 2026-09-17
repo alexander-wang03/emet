@@ -23,6 +23,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 emet-listen = "emet_engine.cli:main"
+emet-talk = "emet_engine.talk:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["emet_engine"]

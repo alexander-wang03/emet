@@ -74,6 +74,9 @@ class SessionStats:
     frames: int = 0
     wakes: int = 0
     turns: int = 0
+    #: Turns whose silence window was extended once because the words so
+    #: far looked unfinished.
+    extended: int = 0
     #: Frames the source discarded because the loop fell behind. Not the same
     #: as being slow: this is audio that was never seen at all.
     dropped: int = 0
@@ -221,7 +224,8 @@ class SessionStats:
         """
         lines = [
             f"  frames        {self.frames}  ({self.audio_ms / 1000:.1f}s of audio)",
-            f"  wakes         {self.wakes}   turns {self.turns}",
+            f"  wakes         {self.wakes}   turns {self.turns}"
+            + (f"   extended {self.extended}" if self.extended else ""),
             f"  per frame     mean {self.mean_ms:.2f} ms   "
             f"p50 {self.percentile(50):.2f}   p95 {self.percentile(95):.2f}   "
             f"max {self.process_ms_max:.2f}",

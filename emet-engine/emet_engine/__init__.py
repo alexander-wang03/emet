@@ -12,8 +12,8 @@ They are dependencies of a working robot, which is a different thing: install
 them alongside.
 """
 
-from emet_engine.session import EngineError, ListenSession
-from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance
+from emet_engine.session import EngineError, Exchange, ListenSession
+from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance, looks_incomplete
 from emet_engine.vad import EnergyVad, VadTuning
 
 from importlib import metadata as _metadata
@@ -31,8 +31,10 @@ except _metadata.PackageNotFoundError:  # pragma: no cover - source checkout
 
 __all__ = [
     "EngineError",
+    "Exchange",
     "ListenSession",
     "Endpointer",
+    "looks_incomplete",
     "Utterance",
     "EndReason",
     "EnergyVad",

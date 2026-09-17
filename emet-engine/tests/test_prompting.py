@@ -64,3 +64,28 @@ def test_the_defaults_suit_a_spoken_reply():
     assert DEFAULT_MAX_TOKENS == 300
     assert DEFAULT_TURNS == 24
     assert Conversation().prompt("s").max_tokens == DEFAULT_MAX_TOKENS
+
+
+# ------------------------------------------------------------------- lines
+
+
+from emet_engine.prompting import DEFAULT_LINES, persona_lines  # noqa: E402
+
+
+def test_the_engine_has_words_for_the_moments_the_model_has_none():
+    lines = persona_lines({})
+    assert lines == dict(DEFAULT_LINES)
+    assert lines["declined"] and lines["failed"]
+    assert lines["nothing_heard"] is None, "a false wake is met with silence unless the soul says otherwise"
+
+
+def test_a_soul_overrides_them_in_its_own_voice():
+    lines = persona_lines({"persona": {"lines": {"declined": "Not that.", "nothing_heard": "Yes?"}}})
+    assert lines["declined"] == "Not that."
+    assert lines["nothing_heard"] == "Yes?"
+    assert lines["failed"] == DEFAULT_LINES["failed"]
+
+
+def test_a_soul_can_silence_a_line():
+    lines = persona_lines({"persona": {"lines": {"failed": None, "declined": "  "}}})
+    assert lines["failed"] is None and lines["declined"] is None

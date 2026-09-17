@@ -233,3 +233,93 @@ def test_the_documented_default_is_what_the_spec_says():
     """A bundle written against the specification must behave as it reads."""
     assert DEFAULT_PATIENCE_MS == 900
     assert Endpointer(FMT).patience_ms == 900
+
+
+# ------------------------------------------------------------ trailing clause
+
+
+from emet_engine.turn import looks_incomplete  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("text", "incomplete"),
+    [
+        ("", False),
+        ("Where are my keys?", False),
+        ("where are my keys", False),
+        ("where are my", True),
+        ("Can you tell me where the", True),
+        ("I would like tea,", True),
+        ("Fine. And then the", True),
+        ("Fine. And then the cat", True),
+        ("what time is it", False),
+        ("Tell me.", False),
+        ("Hmm, um", True),
+        ("It costs 3.5 dollars", False),
+        ("Thank you", False),
+        ('He said "and', True),
+    ],
+)
+def test_a_transcript_reads_as_finished_or_not(text, incomplete):
+    assert looks_incomplete(text) is incomplete
+
+
+def quiet_frames_until_end(ep: Endpointer) -> int:
+    """Speak, then count the quiet frames until the turn ends."""
+    for _ in range(5):
+        assert ep.feed(loud()) is None
+    n = 0
+    while True:
+        n += 1
+        if ep.feed(quiet()) is not None:
+            return n
+
+
+def test_an_unfinished_transcript_earns_one_more_window():
+    plain = quiet_frames_until_end(Endpointer(FMT, patience_ms=900))
+    extended = quiet_frames_until_end(Endpointer(FMT, patience_ms=900, extend_if=lambda: True))
+    assert extended == 2 * plain or extended == 2 * plain - 1 or extended == 2 * plain + 1
+    assert extended > plain
+
+
+def test_a_finished_transcript_earns_nothing():
+    plain = quiet_frames_until_end(Endpointer(FMT, patience_ms=900))
+    asked: list[int] = []
+
+    def no() -> bool:
+        asked.append(1)
+        return False
+
+    assert quiet_frames_until_end(Endpointer(FMT, patience_ms=900, extend_if=no)) == plain
+    assert len(asked) == 1, "asked once, at the moment silence ran out the patience"
+
+
+def test_the_extension_is_granted_once_per_turn():
+    """Speech resumes inside the extension, then stops: the next silence is
+    judged by plain patience, with no second extension."""
+    ep = Endpointer(FMT, patience_ms=900, extend_if=lambda: True)
+    for _ in range(5):
+        ep.feed(loud())
+    patience_frames = quiet_frames_until_end(Endpointer(FMT, patience_ms=900))
+    for _ in range(patience_frames):
+        assert ep.feed(quiet()) is None, "the first silence was extended"
+    for _ in range(5):
+        assert ep.feed(loud()) is None
+    n = 0
+    utterance = None
+    while utterance is None:
+        n += 1
+        utterance = ep.feed(quiet())
+    assert n == patience_frames
+    assert utterance.extended
+    assert utterance.reason is EndReason.SILENCE
+
+
+def test_the_utterance_says_whether_it_was_extended():
+    ep = Endpointer(FMT, patience_ms=900)
+    for _ in range(5):
+        ep.feed(loud())
+    utterance = None
+    while utterance is None:
+        utterance = ep.feed(quiet())
+    assert not utterance.extended

@@ -47,6 +47,13 @@ persona:
     enabled: false
     rate: 0.0
     locked_traits: []
+  # Its own words for the moments the model has none. Said aloud, in
+  # character, so a refusal or a dropped connection is heard rather than
+  # met with silence. `nothing_heard` is null: a false wake gets nothing.
+  lines:
+    declined: "I'd rather not answer that one. Ask me something else."
+    failed: "I lost the thread there. Say it again?"
+    nothing_heard: null
 
 interaction:
   patience_ms: 900

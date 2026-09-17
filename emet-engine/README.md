@@ -5,6 +5,24 @@ The listen loop and the runtime that drives a body.
 Imports `emet_sdk` only. Hardware reaches it by name through entry-point
 discovery, never by import. See the layering check in `tools/check_layering.py`.
 
+Two commands. `emet-talk` is the robot: wake, words, answer, voice, speaker,
+one exchange after another, everything read from the two documents and
+nothing behind a flag.
+
+```sh
+emet-talk path/to/manifest.yaml path/to/soul.yaml
+emet-talk path/to/manifest.yaml path/to/soul.yaml --replay recording.wav --stats
+```
+
+It prints `you:` and the robot's name as the words arrive, says what the
+soul's `persona.lines` say when a provider declines or fails, waits one more
+window when the words so far look unfinished (`interaction.extend_on_incomplete`),
+and lists the intents the model tagged into its reply. Every stage has to be
+configured; a missing one names the field to set.
+
+`emet-listen` is the same loop with each stage behind a flag, for finding out
+which one is wrong:
+
 ```sh
 emet-listen path/to/manifest.yaml path/to/soul.yaml
 emet-listen path/to/manifest.yaml path/to/soul.yaml --replay recording.wav

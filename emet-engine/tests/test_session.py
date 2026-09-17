@@ -1107,3 +1107,190 @@ def test_frames_dropped_while_waiting_for_the_final_are_the_loops_own_choice(tmp
     assert turns[0].transcript is not None and turns[0].transcript.text == "hello there"
     assert stats.dropped == 37 and stats.dropped_busy == 37
     assert stats.kept_up, "the loop kept up while it was listening"
+
+
+# --------------------------------------------------------- trailing clause
+
+
+def test_a_transcript_ending_mid_clause_gets_one_more_window(tmp_path):
+    """The mock hears "tell me about the"; "the" ends no sentence, so the
+    endpointer waits one more window, and the utterance says so."""
+    soul_doc = soul(provider="mock")
+    soul_doc["interaction"] = {"extend_on_incomplete": True}
+    pcm = spoken(b"tell me", b"about the") + frame() * 20  # room for the second window
+    extended: list[str] = []
+    session = ListenSession(
+        body(write_wav(tmp_path / "x.wav", pcm)), soul_doc, transcribe=True, on_extended=extended.append
+    )
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()], session.stats
+
+    (utterance,), stats = run(scenario())
+    assert utterance.extended
+    assert extended == ["tell me about the"]
+    assert stats.extended == 1
+    assert "extended 1" in stats.report(live=False)
+
+
+def test_a_finished_transcript_is_not_extended(tmp_path):
+    soul_doc = soul(provider="mock")
+    soul_doc["interaction"] = {"extend_on_incomplete": True}
+    session = ListenSession(
+        body(write_wav(tmp_path / "y.wav", spoken(b"what", b"time"))), soul_doc, transcribe=True
+    )
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert not utterance.extended
+
+
+def test_the_soul_has_to_ask_for_the_trailing_clause(tmp_path):
+    session = ListenSession(
+        body(write_wav(tmp_path / "z.wav", spoken(b"about the"))), soul(provider="mock"), transcribe=True
+    )
+    assert not session.extend_on_incomplete
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    assert not run(scenario())[0].extended
+
+
+def test_without_a_transcriber_nothing_is_judged(tmp_path):
+    """The heuristic reads the transcript. With no transcriber there is
+    none, and the soul's flag changes nothing."""
+    soul_doc = soul()
+    soul_doc["interaction"] = {"extend_on_incomplete": True}
+    pcm = frame() + frame(PHRASE.encode()) + loud_frame() * 5 + frame() * 20
+    session = ListenSession(body(write_wav(tmp_path / "v.wav", pcm)), soul_doc)
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    assert not run(scenario())[0].extended
+
+
+# ------------------------------------------------------------ intent tags
+
+
+def test_tags_in_the_reply_are_lifted_out_before_the_voice_and_reported(tmp_path):
+    out = str(tmp_path / "tagged.wav")
+    manifest = wav_body(write_wav(tmp_path / "i.wav", frame()), out)
+    manifest["models"] = {
+        "chat": {"provider": "mock", "params": {"reply": "[express.curiosity] Oh! [laughs] Tell me more. [attend.speaker]"}},
+        "tts": {"provider": "mock"},
+    }
+    seen = []
+    session = speaking(tmp_path, "i.wav", frame(), manifest=manifest, on_intent=seen.append)
+
+    async def scenario():
+        async with session:
+            events = await drain(session.answer_aloud("hello"))
+            return events, session.last_intents, session.last_spoken
+
+    events, intents, spoken = run(scenario())
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "Oh! Tell me more. "
+    assert [i.name for i in intents] == ["express.curiosity", "attend.speaker"]
+    assert [i.name for i in seen] == ["express.curiosity", "attend.speaker"]
+    assert [s.text for s in spoken] == ["Oh!", "Tell me more."]
+    from emet_providers.mock import read_back
+
+    assert read_back(read_wav(out)[1]) == "Oh! Tell me more."
+    done = events[-1]
+    assert isinstance(done, ReplyDone) and "[express.curiosity]" in done.text, "the model's own text is kept whole"
+
+
+# ------------------------------------------------------------------ talk
+
+
+def talking(tmp_path, name: str, pcm: bytes, *, manifest=None, soul_doc=None, out: str | None = None, **kw):
+    manifest = manifest or (wav_body(write_wav(tmp_path / name, pcm), out) if out else body(write_wav(tmp_path / name, pcm)))
+    manifest.setdefault("models", {})
+    for stage in ("stt", "chat", "tts"):
+        manifest["models"].setdefault(stage, {"provider": "mock"})
+    return ListenSession(manifest, soul_doc or soul(), transcribe=True, reply=True, speak=True, **kw)
+
+
+def test_talk_runs_the_whole_loop_and_reports_each_exchange(tmp_path):
+    out = str(tmp_path / "talk.wav")
+    session = talking(tmp_path, "t.wav", spoken(b"what", b"time") + false_wake_pcm(), out=out)
+    said: list[str] = []
+    deltas: list[str] = []
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk(on_said=said.append, on_delta=deltas.append)]
+
+    exchanges = run(scenario())
+    assert [x.heard for x in exchanges] == ["what time", ""]
+    first, second = exchanges
+    assert first.reply is not None and first.reply.text == "You said: what time"
+    assert [s.text for s in first.spoken] == ["You said: what time"] and first.line is None
+    assert second.reply is None and second.spoken == () and second.line is None
+    assert said == ["what time"] and "".join(deltas) == "You said: what time"
+
+
+def false_wake_pcm() -> bytes:
+    return frame() + frame(PHRASE.encode()) + frame() * 50
+
+
+def test_talk_says_the_souls_line_for_a_false_wake(tmp_path):
+    soul_doc = soul()
+    soul_doc["persona"] = {"lines": {"nothing_heard": "Yes?"}}
+    session = talking(tmp_path, "f.wav", false_wake_pcm(), soul_doc=soul_doc)
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.line == "Yes?" and [s.text for s in exchange.spoken] == ["Yes?"]
+
+
+def test_talk_says_the_souls_line_after_a_refusal_and_after_a_failure(tmp_path):
+    soul_doc = soul()
+    soul_doc["persona"] = {"lines": {"declined": "Not that one.", "failed": "Lost it."}}
+    # Two words a turn: the energy detector needs two loud frames in a row,
+    # and a turn that never counted as speech waits out the lead-in, which
+    # would swallow the second wake.
+    session = talking(tmp_path, "r.wav", spoken(b"hello", b"there") + spoken(b"once", b"again"), soul_doc=soul_doc)
+
+    async def scenario():
+        async with session:
+            real_reply = session._llm.reply
+            calls = 0
+
+            async def moody_reply(prompt):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    yield ReplyDone(text="", stop_reason="refusal", model="mock")
+                    return
+                yield TextDelta("Half a")
+                yield ReplyDone(text="Half a", stop_reason="error", error="boom", model="mock")
+
+            session._llm.reply = moody_reply
+            return [x async for x in session.talk()]
+
+    refused, failed = run(scenario())
+    assert refused.line == "Not that one." and [s.text for s in refused.spoken] == ["Not that one."]
+    assert failed.line == "Lost it." and [s.text for s in failed.spoken] == ["Half a", "Lost it."]
+
+
+def test_talk_needs_every_stage(tmp_path):
+    session = ListenSession(body(write_wav(tmp_path / "s.wav", frame())), soul(provider="mock", chat={"provider": "mock"}), transcribe=True, reply=True)
+
+    async def scenario():
+        async with session:
+            with pytest.raises(EngineError, match="speak=True"):
+                async for _ in session.talk():
+                    pass
+
+    run(scenario())

@@ -38,7 +38,7 @@ on the same terms: what people say would go nowhere, and P0 fails loudly.
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, AsyncIterator, Callable, Mapping
 
 from emet_sdk.discovery import PluginRegistry
@@ -47,6 +47,7 @@ from emet_sdk.types import (
     AudioFormat,
     AudioSink,
     AudioSource,
+    Intent,
     LanguageModelDescriptor,
     ReplyDone,
     ReplyEvent,
@@ -63,18 +64,42 @@ from emet_sdk.validate import (
     DEFAULT_WAKE_ENGINE,
 )
 
+from emet_engine.intent_tags import IntentTags
 from emet_engine.metrics import SessionStats, Stopwatch
-from emet_engine.prompting import DEFAULT_MAX_TOKENS, Conversation, system_prompt
+from emet_engine.prompting import DEFAULT_MAX_TOKENS, Conversation, persona_lines, system_prompt
 from emet_engine.speech import Mouth, Sentences, SpokenSentence
-from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance
+from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance, looks_incomplete
 
-__all__ = ["EngineError", "ListenSession"]
+__all__ = ["EngineError", "ListenSession", "Exchange"]
 
 log = logging.getLogger("emet_engine.session")
 
 
 class EngineError(RuntimeError):
     """The engine cannot run, with a message naming what to fix."""
+
+
+@dataclass(frozen=True, slots=True)
+class Exchange:
+    """One turn of `talk()`: what was heard, what was answered, what was said.
+
+    `reply` is None for a turn with no words in it. `line` is a fallback
+    from the soul's `persona.lines` that was spoken (after a refusal, a
+    failure, or a false wake), or None. `intents` are the tags the model
+    put in its text, lifted out before the words were spoken.
+    """
+
+    wake: WakeEvent
+    utterance: Utterance
+    reply: ReplyDone | None
+    spoken: tuple[SpokenSentence, ...]
+    line: str | None = None
+    intents: tuple[Intent, ...] = ()
+
+    @property
+    def heard(self) -> str:
+        """The final transcript, or an empty string."""
+        return self.utterance.transcript.text.strip() if self.utterance.transcript else ""
 
 
 class ListenSession:
@@ -111,6 +136,8 @@ class ListenSession:
         speak: bool = False,
         on_wake: Callable[[WakeEvent], None] | None = None,
         on_partial: Callable[[Transcript], None] | None = None,
+        on_extended: Callable[[str], None] | None = None,
+        on_intent: Callable[[Intent], None] | None = None,
     ) -> None:
         self.manifest = manifest
         self.soul = soul
@@ -137,6 +164,11 @@ class ListenSession:
         self.transcribe = transcribe
         self.on_wake = on_wake
         self.on_partial = on_partial
+        #: Fires with the words so far when a turn's silence window is
+        #: extended because they looked unfinished.
+        self.on_extended = on_extended
+        #: Fires with each intent the model tagged into its reply.
+        self.on_intent = on_intent
 
         #: The language model the soul and the body agree on, and whether to
         #: bring it up. The persona becomes the system prompt here, once; the
@@ -160,6 +192,15 @@ class ListenSession:
         # reason the number lives on the soul rather than in this file.
         interaction = soul.get("interaction") or {}
         self.patience_ms = int(interaction.get("patience_ms") or DEFAULT_PATIENCE_MS)
+        #: The trailing clause: wait one more window when the words so far
+        #: look unfinished. Needs a transcriber to judge by; without one it
+        #: is off whatever the soul says.
+        self.extend_on_incomplete = bool(interaction.get("extend_on_incomplete"))
+        #: The soul's words for the moments the model has none.
+        self.lines = persona_lines(soul)
+        self._latest_partial = ""
+        #: The intents the model tagged into its most recent spoken reply.
+        self.last_intents: list[Intent] = []
 
         self._wake: Any = None
         self._stt: Any = None
@@ -490,7 +531,10 @@ class ListenSession:
                     # The source ran out mid-turn. Hand over what was caught
                     # rather than dropping it: a truncated question is still
                     # more useful than silence.
-                    yield pending, await self._transcribed(endpointer.close())
+                    closed = endpointer.close()
+                    if closed.extended:
+                        self.stats.extended += 1
+                    yield pending, await self._transcribed(closed)
                 return
 
             if endpointer is None:
@@ -501,7 +545,12 @@ class ListenSession:
                     self.stats.wakes += 1
                     await self._wake.reset()
                     pending = event
-                    endpointer = Endpointer(self.format, patience_ms=self.patience_ms)
+                    self._latest_partial = ""
+                    endpointer = Endpointer(
+                        self.format,
+                        patience_ms=self.patience_ms,
+                        extend_if=self._extend_if if self.extend_on_incomplete and self._stt is not None else None,
+                    )
                     if self.on_wake is not None:
                         self.on_wake(event)
                 continue
@@ -515,14 +564,26 @@ class ListenSession:
                     # should say so rather than flatter it.
                     partial = await self._stt.feed(frame)
             self._record(watch.elapsed_ms)
-            if partial is not None and self.on_partial is not None:
-                self.on_partial(partial)
+            if partial is not None:
+                self._latest_partial = partial.text
+                if self.on_partial is not None:
+                    self.on_partial(partial)
             if utterance is not None:
                 assert pending is not None
                 self.stats.turns += 1
+                if utterance.extended:
+                    self.stats.extended += 1
                 yield pending, await self._transcribed(utterance)
                 endpointer = None
                 pending = None
+
+    def _extend_if(self) -> bool:
+        """The endpointer's question: do the words so far look unfinished?"""
+        if not looks_incomplete(self._latest_partial):
+            return False
+        if self.on_extended is not None:
+            self.on_extended(self._latest_partial)
+        return True
 
     async def _transcribed(self, utterance: Utterance) -> Utterance:
         """Close the transcriber's utterance and attach what it heard.
@@ -603,6 +664,8 @@ class ListenSession:
         if self._mouth is None:
             raise EngineError("the voice was not started; construct the session with speak=True")
         sentences = Sentences()
+        tags = IntentTags()
+        self.last_intents = []
         mouth = self._mouth
         first_ms: float | None = None
         watch = Stopwatch()
@@ -618,12 +681,26 @@ class ListenSession:
             try:
                 async for event in self.answer(text):
                     if isinstance(event, TextDelta):
-                        for sentence in sentences.feed(event.text):
+                        # Tags are lifted out before the words reach the voice
+                        # or the caller; the intents they name are reported.
+                        clean, intents = tags.feed(event.text)
+                        for intent in intents:
+                            self.last_intents.append(intent)
+                            if self.on_intent is not None:
+                                self.on_intent(intent)
+                        if not clean:
+                            continue
+                        for sentence in sentences.feed(clean):
                             await mouth.say(sentence)
+                        yield TextDelta(clean)
+                        continue
                     yield event
                 # `answer()` charged the frames dropped while the model wrote;
                 # what follows is the voice's, and is charged below.
                 after_reply = self.dropped
+                held = tags.flush()
+                if held:
+                    sentences.feed(held)
                 rest = sentences.flush()
                 if rest:
                     await mouth.say(rest)
@@ -643,6 +720,59 @@ class ListenSession:
     def last_spoken(self) -> list[SpokenSentence]:
         """What happened to each sentence of the most recent spoken reply."""
         return list(self._mouth.spoken) if self._mouth is not None else []
+
+    # ----------------------------------------------------------------- talk
+
+    async def talk(
+        self,
+        *,
+        on_said: Callable[[str], None] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> AsyncIterator[Exchange]:
+        """The whole loop: wake, words, answer, voice, speaker, one exchange
+        at a time, until the source ends.
+
+        Every stage has to be up, which `start()` guarantees when the session
+        was built with `transcribe`, `reply` and `speak` all on. A turn with
+        no words in it (a false wake, a cough) gets the soul's
+        `nothing_heard` line, or silence. A reply the provider declined or
+        the network broke gets the soul's `declined` or `failed` line after
+        whatever was heard, so the robot fails loudly and in its own voice.
+
+        `on_said` fires with the final transcript before the reply begins;
+        `on_delta` with each piece of the reply's text as it streams, tags
+        already lifted out.
+        """
+        if not (self.transcribe and self.reply and self.speak):
+            raise EngineError(
+                "talk() needs every stage: construct the session with "
+                "transcribe=True, reply=True and speak=True."
+            )
+        async for wake, utterance in self.turns():
+            text = utterance.transcript.text.strip() if utterance.transcript else ""
+            if not text:
+                line = self.lines.get("nothing_heard")
+                spoken = await self.speak_text(line) if line else []
+                yield Exchange(wake, utterance, None, tuple(spoken), line, ())
+                continue
+            if on_said is not None:
+                on_said(text)
+            done: ReplyDone | None = None
+            async for event in self.answer_aloud(text):
+                if isinstance(event, TextDelta) and on_delta is not None:
+                    on_delta(event.text)
+                elif isinstance(event, ReplyDone):
+                    done = event
+            spoken = list(self.last_spoken)
+            intents = tuple(self.last_intents)
+            line: str | None = None
+            if done is not None and done.stop_reason == "refusal":
+                line = self.lines.get("declined")
+            elif done is not None and done.stop_reason == "error":
+                line = self.lines.get("failed")
+            if line:
+                spoken += await self.speak_text(line)
+            yield Exchange(wake, utterance, done, tuple(spoken), line, intents)
 
     def _charge_busy(self, dropped_before: int) -> None:
         """Attribute frames dropped during `say()` or `answer()` to the loop's

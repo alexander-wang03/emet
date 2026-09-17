@@ -142,6 +142,7 @@ jobs:
           cd /tmp
           emet --version
           emet-listen --help > /dev/null
+          emet-talk --help > /dev/null
           emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/bodiless.yaml"
           emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --verify-drivers
           emet explain  "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --why

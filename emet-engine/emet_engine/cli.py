@@ -37,7 +37,7 @@ from emet_engine.keys import load_keys
 from emet_engine.session import EngineError, ListenSession
 from emet_engine.turn import EndReason
 
-__all__ = ["main"]
+__all__ = ["main", "print_run_footer"]
 
 
 def _load(path: Path, kind: str, registry: PluginRegistry) -> dict[str, Any]:
@@ -78,6 +78,10 @@ def _on_wake(event: WakeEvent) -> None:
 
 def _on_partial(transcript: Transcript) -> None:
     print(f"    hearing {transcript.text!r}")
+
+
+def _on_extended(text: str) -> None:
+    print("    (sounds unfinished; waiting one more window)")
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -129,6 +133,7 @@ async def _run(args: argparse.Namespace) -> int:
         speak=args.speak,
         on_wake=_on_wake,
         on_partial=_on_partial if transcribe else None,
+        on_extended=_on_extended if transcribe else None,
     )
     async with session:
         assert session.descriptor is not None and session.format is not None
@@ -137,7 +142,8 @@ async def _run(args: argparse.Namespace) -> int:
             f"  engine   {session.engine_name}",
             f"  source   {session.source_name}",
             f"  audio    {session.format.sample_rate} Hz, {session.format.frame_ms:.0f} ms frames",
-            f"  patience {session.patience_ms} ms",
+            f"  patience {session.patience_ms} ms"
+            + (", extends once on a trailing clause" if transcribe and session.extend_on_incomplete else ""),
         ]
         if transcribe:
             described = session.stt_descriptor
@@ -228,8 +234,17 @@ async def _print_reply(session: ListenSession, text: str, *, speak: bool = False
 
 
 def _finish(session: ListenSession, args: argparse.Namespace) -> None:
-    """Report what the run cost, if asked, and always report what it lost."""
-    if args.stats:
+    print_run_footer(session, stats=args.stats, busy=bool(args.echo or args.reply or args.speak))
+
+
+def print_run_footer(session: ListenSession, *, stats: bool, busy: bool) -> None:
+    """Report what the run cost, if asked, and always report what it lost.
+
+    `busy` says whether the run had reason to stop reading the microphone
+    (playback, a reply, a voice), in which case dropped frames are explained
+    rather than blamed on the loop. Shared by `emet-listen` and `emet-talk`.
+    """
+    if stats:
         # `live` from the source that actually ran, not from the flag: only a
         # real sound card can drift, and claiming otherwise for a file would
         # be inventing a measurement.
@@ -237,11 +252,12 @@ def _finish(session: ListenSession, args: argparse.Namespace) -> None:
     hint = session.warm_start_hint()
     if hint:
         print("\n" + hint)
-    if session.dropped and (args.echo or args.reply or args.speak):
+    if session.dropped and busy:
         print(
             f"\nnote: {session.dropped} frame(s) were dropped while the robot was "
             f"speaking or thinking. The loop does not read the microphone during "
-            f"playback or a reply; barge-in, in 1.0, is what changes that."
+            f"playback, a reply, or the wait for a final transcript; barge-in, in "
+            f"1.0, is what changes that."
         )
     elif session.dropped:
         print(

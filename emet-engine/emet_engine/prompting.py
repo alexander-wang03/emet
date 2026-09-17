@@ -18,7 +18,15 @@ from typing import Any, Mapping, Sequence
 
 from emet_sdk.types import Message, Prompt, ToolSpec
 
-__all__ = ["SPOKEN_ALOUD", "DEFAULT_MAX_TOKENS", "DEFAULT_TURNS", "system_prompt", "Conversation"]
+__all__ = [
+    "SPOKEN_ALOUD",
+    "DEFAULT_MAX_TOKENS",
+    "DEFAULT_TURNS",
+    "DEFAULT_LINES",
+    "system_prompt",
+    "persona_lines",
+    "Conversation",
+]
 
 #: Appended to every system prompt. A reply is heard, so it has to be
 #: listenable: short, plain, said rather than laid out. Honesty about limits
@@ -38,6 +46,18 @@ DEFAULT_MAX_TOKENS = 300
 #: How many recent messages travel with each request. Twelve turns each way.
 DEFAULT_TURNS = 24
 
+#: What the robot says when the model does not. `declined`: the provider
+#: refused the request; `failed`: the network or the provider broke mid-turn;
+#: `nothing_heard`: the name was heard and no words followed, where None
+#: means stay quiet. A soul overrides any of them under `persona.lines`, in
+#: its own voice: the design says the robot fails loudly and in character,
+#: and these are the words.
+DEFAULT_LINES: Mapping[str, str | None] = {
+    "declined": "I would rather not answer that.",
+    "failed": "I lost my train of thought. Ask me again.",
+    "nothing_heard": None,
+}
+
 
 def system_prompt(soul: Mapping[str, Any]) -> str:
     """The soul's persona, then the rule about speaking aloud.
@@ -55,6 +75,21 @@ def system_prompt(soul: Mapping[str, Any]) -> str:
         summary = " ".join(str(persona.get("summary") or "").split())
         written = f"You are {name}." + (f" {summary}" if summary else "")
     return f"{written}\n\n{SPOKEN_ALOUD}"
+
+
+def persona_lines(soul: Mapping[str, Any]) -> dict[str, str | None]:
+    """The soul's own words for the moments a model has none, over the defaults.
+
+    A key set to null in the soul means silence for that moment, which is
+    how a soul turns `nothing_heard` off after turning it on.
+    """
+    lines: dict[str, str | None] = dict(DEFAULT_LINES)
+    given = (soul.get("persona") or {}).get("lines") or {}
+    for key in lines:
+        if key in given:
+            value = given[key]
+            lines[key] = str(value).strip() or None if value is not None else None
+    return lines
 
 
 class Conversation:

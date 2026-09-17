@@ -140,7 +140,7 @@ The consequence to hold onto: **anyone may fork Emet, close their fork, and ship
 
 **Layering is enforced by CI, not by a license wall.** An import linter asserts that `emet-sdk` imports nothing internal, and that `emet-hal`, `emet-providers` and `emet-engine` each import only `emet-sdk`. Previously this invariant was maintained by the engine being a separate closed artifact; that structural guarantee is now a test, and it must actually run in CI or it will rot.
 
-Python import namespaces: `emet_sdk`, `emet_hal`, `emet_providers`, `emet_engine`. CLI binaries: `emet` and `emet-listen`. Config root: `/etc/emet/`. Provider keys: `/etc/emet/keys.env` for the machine, `~/.config/emet/keys.env` for a person, `NAME=value` a line, read into the environment at start-up and never written into a soul or a manifest (§8.1). Soul bundles: `*.emet` directories.
+Python import namespaces: `emet_sdk`, `emet_hal`, `emet_providers`, `emet_engine`. CLI binaries: `emet` (validate, explain), `emet-listen` (the loop with each stage behind a flag, for finding out which one is wrong) and `emet-talk` (the loop with no flags, for the robot). Config root: `/etc/emet/`. Provider keys: `/etc/emet/keys.env` for the machine, `~/.config/emet/keys.env` for a person, `NAME=value` a line, read into the environment at start-up and never written into a soul or a manifest (§8.1). Soul bundles: `*.emet` directories.
 
 ---
 
@@ -660,10 +660,15 @@ persona:
     enabled: false
     rate: 0.0
     locked_traits: []
+  lines:                         # P0  its own words when the model has none
+    declined: "..."              #     the provider refused the request
+    failed: "..."                #     the network or the provider broke mid-turn
+    nothing_heard: null          #     the name, then no words; null stays quiet
 
 interaction:
   patience_ms: 900               # P0  silence threshold before responding
-  extend_on_incomplete: true     # P0  one extra window on a trailing clause
+  extend_on_incomplete: true     # P0  one extra window on a trailing clause,
+                                 #     judged on the transcript (§13)
   barge_in: true                 # P0  requires audio.input.aec != none
   backchannel: true              # P0  local micro-model filler
   greeting:
@@ -1093,10 +1098,20 @@ the whole reply. A provider that cannot stream sends one delta and says
 text. What is *done*, a memory written with its sensitivity (§9.2), a fact
 looked up, comes back as a `ToolCall`, and the engine answers it with a `tool`
 message and asks again. The vocabulary of tools is the engine's; the plugin
-translates each `ToolSpec` to its vendor's shape and back. Expressive intents
-(§5) are a separate question, decided when the conversation loop is built: a
-tool round trip ends the text, so an intent that should land on a sentence
-cannot travel as a call without stopping the speech it belongs to.
+translates each `ToolSpec` to its vendor's shape and back.
+
+**Expressive intents leave the model as tags in the text.** Decided with the
+conversation loop. A tool round trip ends the text, so an intent that should
+land on a sentence (§5) cannot travel as a call without stopping the speech it
+belongs to; a tag in the text stream arrives with the words around it, at the
+place the model put it. The form is the intent's dotted name in square
+brackets, `[express.curiosity]`, anywhere in the reply. The engine lifts every
+bracketed token out of the stream before the words reach the voice, so a tag
+is never spoken (and neither is a stage direction a model writes despite the
+prompt); tokens that name an intent in the closed vocabulary are reported,
+the rest are dropped. What a reported intent does is 0.5's question, when the
+self-model and the chains give a body something to do with it; in 0.4 the
+prompt does not yet ask for tags, and the engine collects the ones it gets.
 
 **Stop reasons are the seam's, in five words.** `end`, `tool`, `length`,
 `refusal`, `error`. A vendor's own names map onto them and anything new maps
@@ -1207,7 +1222,9 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 1. **Endpoint:** silence threshold, default `patience_ms: 900`, exposed as a persona trait so a thoughtful soul (Neuma) waits longer than an eager one (Hugr).
 2. **Barge-in:** on. Speech during playback stops audio *mid-word* and starts listening. Requires mic-array AEC.
 3. **Thinking gap:** local micro-model backchannel within 300ms, so a sound arrives before the cloud answer.
-4. **Trailing clause:** if the transcript looks incomplete, extend the silence window once (`extend_on_incomplete`). Cheap heuristic, big perceived-intelligence payoff.
+4. **Trailing clause:** if the transcript looks incomplete, extend the silence window once (`extend_on_incomplete`). Cheap heuristic, big perceived-intelligence payoff. Since 0.4: judged on the words so far at the moment silence runs out the patience, by `emet_engine.turn.looks_incomplete`, which reads a last word no sentence ends on ("where are my", "and then"), a trailing comma, or a clause with no end mark from a provider that has been supplying them. One extra window per turn; speech resuming inside it returns the turn to plain patience. Off without a transcriber, whatever the soul says.
+
+**When the model has no words, the soul does.** A provider that declines, a network that breaks mid-reply, a name heard with nothing after it: each gets a line from `persona.lines` (§8.1), spoken in the robot's own voice, so it fails loudly and in character rather than in silence. The engine has plain defaults for the first two and stays quiet on the third unless the soul says otherwise.
 
 ---
 

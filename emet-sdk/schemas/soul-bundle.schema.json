@@ -104,6 +104,16 @@
               "items": { "type": "string" }
             }
           }
+        },
+        "lines": {
+          "description": "P0. What the robot says when the model does not, in its own voice: the design says it fails loudly and in character. declined: the provider refused the request. failed: the network or the provider broke mid-turn. nothing_heard: the name was heard and no words followed; null, the default, means stay quiet. Each has an engine default; a soul overrides any of them.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "declined": { "type": ["string", "null"] },
+            "failed": { "type": ["string", "null"] },
+            "nothing_heard": { "type": ["string", "null"] }
+          }
         }
       }
     },
@@ -118,7 +128,10 @@
           "type": "integer",
           "minimum": 0
         },
-        "extend_on_incomplete": { "type": "boolean" },
+        "extend_on_incomplete": {
+          "description": "P0. The trailing clause: when silence has run out the patience and the words so far look unfinished (a last word that cannot end a sentence, a trailing comma), wait one more window, once per turn. Judged on the transcript, so it does nothing without speech recognition. Default false.",
+          "type": "boolean"
+        },
         "barge_in": {
           "description": "Requires audio.input.aec != none. Cross-document rule, checked when a bundle is paired with a manifest.",
           "type": "boolean"
