@@ -11,11 +11,12 @@ term in Android's sense: the abstraction itself lives here in
 `emet_sdk.plugin`, and `emet-hal` is the collection of per-device
 implementations that satisfy it.
 
-## What is in 0.3
+## What is in 0.4
 
-Schema, validation, the plugin contracts, and chain resolution. This package
-still runs nothing: it is the layer the engine and every plugin agree on, and
-it deliberately contains almost no logic.
+Schema, validation, the plugin and provider contracts, the rule for which
+provider runs each stage, and chain resolution. This package still runs
+nothing: it is the layer the engine and every plugin agree on, and it
+deliberately contains almost no logic.
 
 | | |
 |---|---|

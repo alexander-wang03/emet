@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-providers"
-version = "0.3.0"
+version = "0.4.0"
 description = "Emet providers: speech recognition, language model and voice plugins that reach a service, or a model on disk."
 readme = "README.md"
 requires-python = ">=3.11"

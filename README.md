@@ -13,29 +13,37 @@ is a promise: the thing you are talking to is honest about what it is.
 
 ---
 
-## Status: 0.3 (early)
+## Status: 0.4 (early)
 
-Emet listens. It does not yet understand, remember, or move, and nothing here
-drives a servo.
+Emet talks. Say its name, ask it something, and a voice answers. It does not
+yet remember or move, and nothing here drives a servo.
 
-What it does today is two things. It hears its own name and works out when you
-have finished speaking:
+What it does today is two things. It holds a conversation: it hears its own
+name, works out when you have finished speaking, sends the words to a speech
+recognition provider, hands the transcript to a language model with its
+persona as the prompt, and speaks the reply a sentence at a time while the
+rest is still being written. The providers are plugins the soul chooses, the
+keys are your own, and there is no default provider.
 
 ```sh
-$ emet-listen examples/scout-01.yaml examples/emet-soul.yaml
-listening for 'hey emet'
-  engine   pocketsphinx
-  source   microphone
-  audio    16000 Hz, 80 ms frames
-  patience 900 ms
+$ emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml
+Emet is listening for 'hey emet'
+  wake     pocketsphinx on microphone, 16000 Hz
+  words    deepgram, nova-3
+  answers  openai, gpt-5.6-terra
+  voice    piper, en_US-ljspeech-medium (22050 Hz)
+  patience 900 ms, extends once on a trailing clause
   (ctrl-c to stop)
 
-  heard 'hey emet'  (confidence 1.00)
-    then 4.0s of speech, ended on silence
+  (heard 'hey emet')
+  you:  Do you know where the capital of Mongolia is?
+  emet: The capital of Mongolia is Ulaanbaatar.
 ```
 
-There is no speech recognition yet, so it cannot tell you *what* you said. That
-arrives in 0.4.
+It does not remember what you said last time, and it cannot act on anything
+it says: the intents its reply carries are lifted out and reported, and
+nothing moves until 0.5 gives it a self-model and a body something to do
+with them.
 
 And it answers the question the whole design rests on: **given a robot, what
 would each intent mean on it?**
@@ -106,6 +114,16 @@ pip install -e "emet-hal[audio,wake]"
 emet-listen examples/scout-01.yaml examples/emet-soul.yaml
 ```
 
+To hear it answer, install the providers the reference soul names, put your
+keys in `~/.config/emet/keys.env`, download the voice once, and run the whole
+loop with no flags. `emet-providers/README.md` has the details.
+
+```sh
+pip install -e "emet-providers[deepgram,openai,piper]"
+python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
+emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml
+```
+
 `--why` is the one to remember. When a robot is not doing what you expected, it
 tells you which rungs were skipped and what was wrong with each:
 
@@ -121,7 +139,7 @@ tells you which rungs were skipped and what was wrong with each:
 | `emet-sdk/` | Types, schemas, the intent vocabulary, chain resolution. The contract everything agrees on. |
 | `emet-hal/` | Drivers and locomotion plugins. Where hardware support goes. |
 | `emet-providers/` | The plugins that reach a service, or a model on disk: speech recognition, language models and voices. |
-| `emet-engine/` | The listen loop: wake, endpointing, audio in and out. Personality, memory and arbitration arrive from 0.4. |
+| `emet-engine/` | The loop: wake, endpointing, words, answer, voice, audio in and out. The self-model, memory and arbitration arrive from 0.5. |
 
 ## Documentation
 
@@ -138,7 +156,8 @@ tells you which rungs were skipped and what was wrong with each:
 
 ## Licence
 
-Apache 2.0 throughout: SDK, HAL, and engine alike. Fork it, ship it, sell it.
+Apache 2.0 throughout: SDK, HAL, providers and engine alike. Fork it, ship
+it, sell it.
 
 The name is the deliberate exception. A permissive licence means anyone may
 fork Emet and close their fork, so the mark is the only thing keeping "I run

@@ -34,14 +34,14 @@ emet-listen path/to/manifest.yaml path/to/soul.yaml --speak
 Needs `emet-hal[audio,wake]` installed alongside for a microphone and a
 detector to exist, and `emet-providers` for `--transcribe` to have a speech
 recognition provider to hand the speech to. The soul names the provider under
-`models.stt`; a body may take the choice over under `audio.stt`. The reference
+`models.stt`; a body may take the choice over under its own `models.stt`. The reference
 soul names `deepgram`, which needs `emet-providers[deepgram]` and a key
 exported as `EMET_DEEPGRAM_KEY`. Without a key, or offline, the body can take
 over with `mock`, which reads words out of the bytes it is given, so on a real
 microphone give it a line to say:
 
 ```yaml
-audio:
+models:
   stt:
     provider: mock
     params: {transcript: "testing the seam"}
