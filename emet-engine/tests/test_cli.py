@@ -217,7 +217,7 @@ def test_transcribe_with_no_provider_configured_says_which_field_to_set(
     err = capsys.readouterr().err
     assert rc == 1
     assert "models.stt.provider" in err
-    assert "audio.stt.provider" in err
+    assert "in the body" in err
 
 
 def test_transcribe_with_an_uninstalled_provider_is_a_missing_plugin(

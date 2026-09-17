@@ -469,7 +469,7 @@ def test_asking_with_no_provider_anywhere_names_the_fields_to_set(tmp_path):
     with pytest.raises(EngineError) as exc:
         run(session.start())
     message = str(exc.value)
-    assert "models.stt.provider" in message and "audio.stt.provider" in message
+    assert "models.stt.provider" in message and "in the body" in message
     assert "mock" in message  # what is installed
     run(session.stop())
 

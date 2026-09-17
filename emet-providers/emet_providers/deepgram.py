@@ -36,7 +36,7 @@ at boot, in the terms the owner can act on, rather than at the first
 question. A failure during an utterance is logged and the final carries what
 was heard before it; a transient network fault is not a broken plugin.
 
-Params, all optional, from the body's `audio.stt.params`:
+Params, all optional, from the body's `models.stt.params`:
 
     query        mapping of extra Deepgram query parameters (`language`,
                  `keyterm`, `endpointing`, ...), passed through as strings.

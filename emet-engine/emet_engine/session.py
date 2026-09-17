@@ -298,7 +298,7 @@ class ListenSession:
             raise EngineError(
                 "speech recognition was asked for and no provider is configured. "
                 "Name one under `models.stt.provider` in the soul, or take it over "
-                f"with `audio.stt.provider` in the body. Installed: {installed}."
+                f"with `models.stt.provider` in the body. Installed: {installed}."
             )
         stt_cls = self.registry.load_stt(self.stt_name)
         self._stt = stt_cls(self.stt, self.format)

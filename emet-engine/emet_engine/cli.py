@@ -291,8 +291,8 @@ def main(argv: list[str] | None = None) -> int:
         "--transcribe",
         action="store_true",
         help="hand the speech after each wake to the speech recognition provider "
-        "the soul names under models.stt (or the body takes over under "
-        "audio.stt), and print what was said: partials as they arrive, then the "
+        "the soul names under models.stt (or the body takes over under its own "
+        "models.stt block), and print what was said: partials as they arrive, then the "
         "final. The reference soul names deepgram, which needs "
         "emet-providers[deepgram] and a key in EMET_DEEPGRAM_KEY; `mock` reads "
         "words out of the bytes it is given and needs neither",

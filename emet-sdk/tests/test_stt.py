@@ -219,7 +219,7 @@ def test_the_soul_chooses_when_the_body_says_nothing():
 
 
 def test_the_body_tunes_the_souls_choice():
-    """`audio.stt.params` ride along with whichever provider runs."""
+    """`models.stt.params` ride along with whichever provider runs."""
     chosen = stt_selection(
         manifest(params={"endpoint": "eu"}), soul(provider="deepgram", model="nova-2")
     )

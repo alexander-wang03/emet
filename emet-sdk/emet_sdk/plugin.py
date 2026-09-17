@@ -326,9 +326,9 @@ class TranscriberPlugin(Plugin):
     and the name of the environment variable holding the key. Keys are the
     owner's (BYOK) and travel with the soul, so this is a soul field without
     breaching principle 1: a cloud account is not hardware. The body may take
-    the choice over through `audio.stt.provider` (a test rig running the
+    the choice over through its own `models.stt.provider` (a test rig running the
     mock, an owner whose key is for a different provider), and it tunes
-    whichever provider runs through `audio.stt.params`. The merged result is
+    whichever provider runs through `models.stt.params`. The merged result is
     what this constructor receives; `emet_sdk.models.stt_selection` is the
     one place the merge is written down.
 
@@ -348,7 +348,7 @@ class TranscriberPlugin(Plugin):
     """
 
     #: The string matched against `models.stt.provider` in the soul (or
-    #: `audio.stt.provider` in the body), and the entry-point name this
+    #: the body's own `models.stt.provider`), and the entry-point name this
     #: plugin registers under.
     provider: ClassVar[str] = ""
 
