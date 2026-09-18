@@ -27,6 +27,18 @@ __all__ = [
     "LocomotionDescriptor",
     "WakeDescriptor",
     "WakeEvent",
+    "Transcript",
+    "TranscriberDescriptor",
+    "ToolSpec",
+    "ToolCall",
+    "Message",
+    "Prompt",
+    "TextDelta",
+    "ReplyDone",
+    "ReplyEvent",
+    "STOP_REASONS",
+    "LanguageModelDescriptor",
+    "VoiceDescriptor",
     "AudioFormat",
     "AudioSource",
     "AudioSink",
@@ -234,6 +246,237 @@ class WakeEvent:
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+@dataclass(frozen=True, slots=True)
+class Transcript:
+    """What speech recognition heard, so far or in full.
+
+    A streaming recogniser sends words back while the person is still talking,
+    and revises them: "what time" becomes "what time is it" becomes "what time
+    is it in Tokyo". Each revision arrives as a partial carrying the whole text
+    heard so far in this utterance, and `final=False`. When the turn ends, one
+    more arrives with `final=True`, and that is the text the engine acts on.
+
+    Cumulative rather than incremental on purpose. A caller showing a live
+    caption replaces the line; it does not have to splice fragments, and a
+    provider that reorders or retracts a word cannot leave a stale fragment
+    behind. A recogniser that does not stream sends no partials and one final.
+    """
+
+    text: str
+    final: bool = False
+    #: Advisory. Providers that report no calibrated score say 1.0, which is
+    #: honesty about the absence of a number rather than a claim of certainty.
+    confidence: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriberDescriptor:
+    """What a speech recogniser can actually do, reported after `start()`.
+
+    The boot check reads `healthy` and `sample_rate`. A recogniser is built
+    with the audio format the wake engine already fixed, because one
+    microphone feeds both, and it echoes back the rate it will actually run
+    at. If the two differ the engine refuses to start rather than letting a
+    16 kHz stream be heard at 8 kHz, which does not fail, it just produces
+    nonsense. Same rule as the detector: the consumer states the format, and
+    a mismatch is loud.
+    """
+
+    provider: str
+    #: The model this instance loaded, if the provider has such a thing. What
+    #: was asked for is in the config; this is what answered.
+    model: str | None = None
+    #: Whether partial transcripts arrive while the person is still speaking.
+    #: A batch recogniser says False and sends one final per utterance.
+    streaming: bool = False
+    sample_rate: int = 16000
+    healthy: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    """A function the language model may ask to have run.
+
+    Vendor-neutral: `parameters` is a JSON Schema object and each provider
+    translates it to its own tool format. Tools are how side effects leave
+    the model (a memory to write, a fact to look up); what is *said* comes
+    back as text.
+    """
+
+    name: str
+    description: str
+    parameters: Mapping[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """The model asking for a tool to run, with parsed arguments.
+
+    Streamed once the arguments are complete. The caller runs the tool and
+    answers with a `Message` of role `tool` carrying this call's `id`.
+    """
+
+    id: str
+    name: str
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+
+
+#: Roles a `Message` may carry. The system prompt is not a message: it sits
+#: on the `Prompt`, because every provider treats it differently.
+MESSAGE_ROLES: frozenset[str] = frozenset({"user", "assistant", "tool"})
+
+
+@dataclass(frozen=True, slots=True)
+class Message:
+    """One turn of the conversation as the model sees it.
+
+    `user` and `assistant` carry text. An `assistant` turn that asked for
+    tools carries the calls beside its text; a `tool` turn answers one call
+    and names it. Providers that want tool results in a different wrapper
+    (a user turn holding result blocks, say) do the wrapping themselves.
+    """
+
+    role: str
+    content: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.role not in MESSAGE_ROLES:
+            raise ValueError(f"role must be one of {sorted(MESSAGE_ROLES)}, got {self.role!r}")
+        if self.role == "tool" and not self.tool_call_id:
+            raise ValueError("a tool message must name the call it answers (tool_call_id)")
+        if self.tool_calls and self.role != "assistant":
+            raise ValueError("only an assistant message carries tool_calls")
+
+
+@dataclass(frozen=True, slots=True)
+class Prompt:
+    """Everything one request to a language model needs.
+
+    Assembled by the engine: the persona, and in later releases the
+    self-model and the memories the sensitivity floor lets through, become
+    `system`; the conversation so far and the words just heard become
+    `messages`. Nothing about which vendor answers is in here.
+
+    `max_tokens` bounds one reply. A reply is spoken aloud, so the engine
+    sets this low on purpose; a provider that hits it reports `length`.
+    """
+
+    system: str
+    messages: tuple[Message, ...]
+    tools: tuple[ToolSpec, ...] = ()
+    max_tokens: int = 1024
+
+    def __post_init__(self) -> None:
+        if self.max_tokens < 1:
+            raise ValueError("max_tokens must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta:
+    """A piece of the reply, as it is generated. Concatenate in order."""
+
+    text: str
+
+
+#: Why a reply ended, in words every provider maps onto. `end` is the
+#: natural finish; `tool` means the model wants tool results before it goes
+#: on; `length` means `max_tokens` cut it off; `refusal` means the provider
+#: declined to answer; `error` means the reply is incomplete and `error`
+#: says why.
+STOP_REASONS: frozenset[str] = frozenset({"end", "tool", "length", "refusal", "error"})
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyDone:
+    """The last event of a reply: the whole text, why it stopped, what it cost.
+
+    Always the final event, on success and on failure alike. A caller that
+    only wants the text reads it here; a caller that streamed the deltas
+    reads `stop_reason` and the token counts.
+    """
+
+    text: str
+    stop_reason: str = "end"
+    tool_calls: tuple[ToolCall, ...] = ()
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    error: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.stop_reason not in STOP_REASONS:
+            raise ValueError(
+                f"stop_reason must be one of {sorted(STOP_REASONS)}, got {self.stop_reason!r}"
+            )
+
+
+#: What `LanguageModelPlugin.reply()` yields: text as it arrives, a tool call
+#: once its arguments are complete, and one `ReplyDone` last.
+ReplyEvent = TextDelta | ToolCall | ReplyDone
+
+
+@dataclass(frozen=True, slots=True)
+class LanguageModelDescriptor:
+    """What a language model plugin can actually do, reported after `start()`.
+
+    `healthy` is what the boot check reads: a provider whose key is missing,
+    rejected, or unreachable says so here and in `health().detail`, and the
+    engine refuses to run a robot that would hear and never answer.
+    """
+
+    provider: str
+    #: The model this instance will ask for. What answered is on each
+    #: `ReplyDone`, because a provider may substitute one.
+    model: str | None = None
+    #: Whether `TextDelta`s arrive before `ReplyDone`. A provider that does
+    #: not stream sends the whole text as one delta.
+    streaming: bool = True
+    #: Whether `Prompt.tools` will be honoured. A provider without tool use
+    #: says False and the engine leaves tools out of its prompts.
+    tools: bool = True
+    healthy: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceDescriptor:
+    """What a speech synthesis plugin can actually do, reported after `start()`.
+
+    The third provider descriptor, and the one the output side is built
+    from. `sample_rate` is the rate the audio from `speak()` will arrive at,
+    and the engine opens the sink at that rate rather than asking the voice
+    to match a card: a local voice produces one rate and only one, and
+    resampling in the engine would be a second place for audio to go
+    wrong. The same rule as the wake engine, the other way round: the
+    detector states the format and the microphone conforms; the voice states
+    the format and the speaker conforms.
+
+    `healthy` is what the boot check reads. A voice whose model file is
+    missing, whose key is rejected or whose library is not installed says so
+    here and in `health().detail`, and the engine refuses to run a robot that
+    would answer and never be heard.
+    """
+
+    provider: str
+    #: The voice this instance loaded: a Piper model name, a vendor's voice
+    #: id. What was asked for is in the config; this is what will speak.
+    model: str | None = None
+    #: The rate of the audio `speak()` yields. Mono int16, always.
+    sample_rate: int = 22050
+    #: Whether audio arrives in pieces before the sentence is finished. A
+    #: provider that synthesises a whole sentence at once yields one chunk
+    #: and says False; the engine cannot tell them apart except by latency.
+    streaming: bool = False
+    healthy: bool = True
 
 
 #: Audio is int16 throughout. Two bytes a sample, everywhere.

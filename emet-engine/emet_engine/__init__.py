@@ -4,15 +4,16 @@ Layering, enforced in CI: this package imports `emet_sdk` and nothing else.
 Not for tidiness. The engine is where somebody would reach for a concrete
 servo or a concrete microphone, and one `from emet_hal.differential import ...`
 would quietly end the claim that the engine holds no hardware knowledge. Every
-driver, detector and audio source arrives by name through entry-point
-discovery instead.
+driver, detector, audio source, transcriber and language model arrives by
+name through entry-point discovery instead.
 
-`emet-hal` is therefore not a dependency of this package. It is a dependency of
-a working robot, which is a different thing: install it alongside.
+`emet-hal` and `emet-providers` are therefore not dependencies of this package.
+They are dependencies of a working robot, which is a different thing: install
+them alongside.
 """
 
-from emet_engine.session import EngineError, ListenSession
-from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance
+from emet_engine.session import EngineError, Exchange, ListenSession
+from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance, looks_incomplete
 from emet_engine.vad import EnergyVad, VadTuning
 
 from importlib import metadata as _metadata
@@ -30,8 +31,10 @@ except _metadata.PackageNotFoundError:  # pragma: no cover - source checkout
 
 __all__ = [
     "EngineError",
+    "Exchange",
     "ListenSession",
     "Endpointer",
+    "looks_incomplete",
     "Utterance",
     "EndReason",
     "EnergyVad",

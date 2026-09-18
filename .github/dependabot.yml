@@ -40,3 +40,13 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "build"
+
+  - package-ecosystem: pip
+    directory: /emet-providers
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"

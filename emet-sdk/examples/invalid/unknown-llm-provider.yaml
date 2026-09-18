@@ -1,0 +1,35 @@
+# INVALID: a language model provider that is not installed, named by the body.
+#
+# `models.chat.provider` on a body resolves against installed `emet.llm`
+# plugins, exactly as `models.stt.provider` resolves against `emet.stt`. The
+# value below is legal and does not resolve, and on a body that is an error:
+# a body is one machine, and it has named software that has to be installed
+# on it. The soul's `models.chat.provider` is never checked this way; a soul
+# has to be valid on every machine or on none.
+#
+# Expected: missing_plugin, /models/chat/provider
+
+manifest_version: "0.1"
+
+body:
+  id: oracle_less
+  name: "a body whose brain is on order"
+  scale: desk
+  power: plugged_in
+
+audio:
+  input:
+    device: "plughw:1,0"
+    sample_rate: 16000
+    channels: 1
+    aec: hardware
+    doa: false
+  output:
+    device: "plughw:1,0"
+    gain_db: -6.0
+
+models:
+  chat:
+    provider: abacus
+
+capabilities: []

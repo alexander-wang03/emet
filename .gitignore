@@ -5,3 +5,7 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+
+# Keys are bring-your-own and never enter history, whatever they are called.
+keys.env
+.env

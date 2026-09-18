@@ -90,6 +90,37 @@ firing.
 
 ---
 
+## Piper, and the LJ Speech voice
+
+**Michael Hansen and the Open Home Foundation.** Piper, a fast local neural
+text-to-speech engine. <https://github.com/OHF-Voice/piper1-gpl>,
+**GPL-3.0-or-later** (the package `piper-tts`, 1.8.0 on 2026-09-04). The
+licence is the GPL because espeak-ng, the phonemiser, is compiled into the
+wheel; the earlier `rhasspy/piper` was MIT and is no longer where releases
+come from. Depends on ONNX Runtime (Microsoft, **MIT**).
+
+The shipped local voice
+([`emet_providers/piper.py`](emet-providers/emet_providers/piper.py)), used as
+a dependency behind the optional extra `emet-providers[piper]`. Emet imports
+it and does not copy, bundle or redistribute it, so the Apache-2.0 terms of
+this repository are unaffected and a body installed without the extra
+carries no GPL code. Anyone packaging Emet *with* Piper inside one
+distribution takes on the GPL's terms for that distribution, and should know
+it. Facts verified against PyPI and the repository on 2026-09-15.
+
+**Keith Ito and Linda Johnson.** The LJ Speech Dataset.
+<https://keithito.com/LJ-Speech-Dataset/>, **public domain**. The reference
+soul's voice, `en_US-ljspeech-medium`, is a Piper model trained on it
+(model card in `rhasspy/piper-voices` on Hugging Face, read 2026-09-15). It
+was chosen over Amy, the earlier reference voice, because Amy's model card
+says it is fine-tuned from the Lessac voice, and the Blizzard 2013 Lessac
+corpus licence excludes "the development, marketing, commercialisation, sale
+or licencing of voice synthesis" products; a default a project promises
+people may fork and sell cannot rest on that. The voice files themselves are
+downloaded by the owner and are not in this repository.
+
+---
+
 ## Adding to this file
 
 If a change takes an idea, a finding, a number, or a data format from outside

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Assert the package layering that the architecture depends on.
 
-    emet_sdk     imports nothing internal
-    emet_hal     imports emet_sdk only
-    emet_engine  imports emet_sdk only
+    emet_sdk         imports nothing internal
+    emet_hal         imports emet_sdk only
+    emet_providers   imports emet_sdk only
+    emet_engine      imports emet_sdk only
 
 Under the earlier closed-engine plan this was structural: an outside
 contributor had no engine source to couple to. In a monorepo with everything
@@ -34,6 +35,7 @@ from pathlib import Path
 ALLOWED: dict[str, frozenset[str]] = {
     "emet_sdk": frozenset(),
     "emet_hal": frozenset({"emet_sdk"}),
+    "emet_providers": frozenset({"emet_sdk"}),
     "emet_engine": frozenset({"emet_sdk"}),
 }
 

@@ -2,7 +2,7 @@
 """Make the release tag the way the project makes release tags.
 
 Signed, annotated, from the release-notes file, on a clean master that
-matches origin, at the version the three packages declare. Every check here
+matches origin, at the version the four packages declare. Every check here
 is a mistake that has been made or nearly made:
 
     unsigned tag     v0.3 first went up with `git tag -a`, no `-s`, and showed
@@ -33,7 +33,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-PACKAGES = ("emet-sdk", "emet-hal", "emet-engine")
+PACKAGES = ("emet-sdk", "emet-hal", "emet-providers", "emet-engine")
 
 
 def git(root: Path, *args: str) -> str:
@@ -72,7 +72,7 @@ def main(argv: list[str]) -> int:
     if not first.startswith(f"{series}:"):
         return fail(f"first line of {notes.name} is {first!r}; expected it to start with {series + ':'!r}")
 
-    # The three packages agree with the tag.
+    # The four packages agree with the tag.
     for pkg in PACKAGES:
         data = tomllib.loads((root / pkg / "pyproject.toml").read_text(encoding="utf-8"))
         declared = data["project"]["version"]

@@ -28,24 +28,77 @@ starts speaking before you have finished. That is a deliberate trade, not a
 tuned value, and it is the right way round while the only evidence available is
 energy.
 
-**Scope.** `extend_on_incomplete`, the trailing-clause heuristic, is not here.
-The specification is precise that it triggers when *the transcript* looks
-unfinished, and there is no transcript until speech recognition exists. Trying
-to guess incompleteness from audio alone would be a different and much worse
-heuristic wearing the same name.
+**The trailing clause.** `extend_on_incomplete`, the fourth decision in
+`DESIGN.md` section 13, waited for a transcript to exist. It does now, so the
+endpointer takes a hook: at the moment silence has run out the patience, it
+asks whether the words so far look unfinished, and if they do it waits one
+more patience window, once per turn. `looks_incomplete()` is the judgement,
+made on the transcript rather than the audio: a last word that cannot end a
+sentence ("where are my", "and then"), a trailing comma, or a clause with no
+end mark from a provider that has been supplying them. A wrong guess costs
+one more window of silence; a missed one cuts a person off mid-clause, which
+is the rudeness this exists to avoid.
 """
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Callable
 
-from emet_sdk.types import AudioFormat
+from emet_sdk.types import AudioFormat, Transcript
 
 from emet_engine.vad import EnergyVad, VadTuning
 
-__all__ = ["Endpointer", "Utterance", "EndReason", "DEFAULT_PATIENCE_MS"]
+__all__ = ["Endpointer", "Utterance", "EndReason", "DEFAULT_PATIENCE_MS", "DANGLING_WORDS", "looks_incomplete"]
+
+#: Words a sentence does not end on. A transcript whose last word is one of
+#: these was cut mid-clause, whatever the punctuation says: articles,
+#: conjunctions, prepositions, the determiners that lead an object, the
+#: auxiliaries that lead a verb, and the sounds a person makes while finding
+#: the next word.
+DANGLING_WORDS: frozenset[str] = frozenset(
+    """
+    a an the
+    and or but so nor yet because if when while although though unless until
+    whether that which who whom whose where how why what
+    to of in on at by for with from into onto about over under after before
+    between through without within like than as per
+    my your his her its our their this these those some any every each no
+    is are was were be been being am do does did can could will would shall
+    should may might must have has had
+    um uh er
+    """.split()
+)
+
+_END_MARK = re.compile(r"[.?!](?=\s|$)")
+
+
+def looks_incomplete(text: str) -> bool:
+    """Whether a transcript reads as cut off mid-clause.
+
+    Three signs, checked in order: an end mark on the last word means it
+    is finished; a comma, colon or semicolon there, or a last word from
+    `DANGLING_WORDS`, means it is not; and a last clause with no end mark
+    from a provider that has been punctuating the earlier ones means it is
+    not either. Nothing at all, or one clause with no punctuation anywhere,
+    is taken as finished: a provider that never punctuates would otherwise
+    make every turn one window longer.
+    """
+    words = text.split()
+    if not words:
+        return False
+    last = words[-1].rstrip("\"')]")
+    if last.endswith((".", "?", "!")):
+        return False
+    if last.endswith((",", ";", ":")):
+        return True
+    bare = last.strip("\"'([").lower()
+    if bare in DANGLING_WORDS:
+        return True
+    return bool(_END_MARK.search(" ".join(words[:-1])))
 
 #: `interaction.patience_ms` when a soul does not say. Matches the documented
 #: default so that a bundle written against the spec behaves as it reads.
@@ -69,6 +122,13 @@ class Utterance:
     audio: bytes
     duration_ms: float
     reason: EndReason
+    #: What speech recognition made of it, when a transcriber was listening.
+    #: None means nobody asked, which is different from an empty final: that
+    #: means a provider listened and heard no words it could make out.
+    transcript: Transcript | None = None
+    #: Whether the silence window was extended once because the words so
+    #: far looked unfinished.
+    extended: bool = False
 
     @property
     def had_speech(self) -> bool:
@@ -98,11 +158,16 @@ class Endpointer:
         preroll_frames: int = 4,
         vad: EnergyVad | None = None,
         tuning: VadTuning | None = None,
+        extend_if: Callable[[], bool] | None = None,
     ) -> None:
         self.format = fmt
         self.patience_ms = patience_ms
         self.lead_in_ms = lead_in_ms
         self.max_utterance_ms = max_utterance_ms
+        #: Asked once per turn, at the moment silence has run out the
+        #: patience: True means wait one more window. The session answers it
+        #: from the transcript so far. None means never extend.
+        self.extend_if = extend_if
         # Detection lags onset by `onset_frames`, so without a pre-roll the
         # first consonant of the reply is clipped and the transcript starts
         # mid-word. Cheap to keep, expensive to lose.
@@ -113,6 +178,10 @@ class Endpointer:
         self._started = False
         self._waited_ms = 0.0
         self._speech_ms = 0.0
+        #: Whether this turn's one extension has been granted, and whether
+        #: the silence it was granted in is still running.
+        self._extended = False
+        self._extending = False
 
     @property
     def frame_ms(self) -> float:
@@ -149,7 +218,17 @@ class Endpointer:
         # the debounced flag flipped: the VAD's hangover would otherwise be
         # charged to the persona's patience, making every soul slower than the
         # number in its own bundle.
-        if not speaking and self.vad.quiet_ms >= self.patience_ms:
+        if speaking:
+            # Speech resumed inside an extension: the extension did its job,
+            # and the next silence is judged by plain patience again.
+            self._extending = False
+            return None
+        needed = self.patience_ms * 2 if self._extending else self.patience_ms
+        if self.vad.quiet_ms >= needed:
+            if not self._extended and self.extend_if is not None and self.extend_if():
+                self._extended = True
+                self._extending = True
+                return None
             return self._finish(EndReason.SILENCE)
 
         return None
@@ -171,11 +250,14 @@ class Endpointer:
             audio=audio,
             duration_ms=len(self._frames) * self.frame_ms,
             reason=reason,
+            extended=self._extended,
         )
         self._frames = []
         self._started = False
         self._waited_ms = 0.0
         self._speech_ms = 0.0
+        self._extended = False
+        self._extending = False
         self._preroll.clear()
         self.vad.reset()
         return utterance

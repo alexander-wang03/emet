@@ -6,8 +6,8 @@ changes here are versioned carefully.
 
     from emet_sdk import Intent, Action, CapabilityDescriptor
 
-Layering, enforced in CI: `emet_sdk` imports nothing internal. `emet_hal`
-imports `emet_sdk` only. `emet_engine` imports `emet_sdk` only.
+Layering, enforced in CI: `emet_sdk` imports nothing internal. `emet_hal`,
+`emet_providers` and `emet_engine` import `emet_sdk` only.
 """
 
 from importlib import metadata as _metadata
@@ -16,8 +16,11 @@ from emet_sdk.plugin import (
     ActuatorPlugin,
     CapabilityPlugin,
     LocomotionPlugin,
+    LanguageModelPlugin,
     PluginError,
     SensorPlugin,
+    TranscriberPlugin,
+    VoicePlugin,
     WakePlugin,
 )
 from emet_sdk.types import (
@@ -27,15 +30,26 @@ from emet_sdk.types import (
     CapabilityDescriptor,
     Health,
     Intent,
+    LanguageModelDescriptor,
     LocomotionDescriptor,
     MemoryKind,
+    Message,
     Pose,
     Priority,
+    Prompt,
     Reading,
+    ReplyDone,
+    ReplyEvent,
     Sensitivity,
     Target,
     TargetKind,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+    Transcript,
+    TranscriberDescriptor,
     Twist,
+    VoiceDescriptor,
     WakeDescriptor,
     WakeEvent,
 )
@@ -68,18 +82,32 @@ __all__ = [
     "PluginError",
     "Reading",
     "SensorPlugin",
+    "TranscriberPlugin",
+    "LanguageModelPlugin",
+    "VoicePlugin",
     "WakePlugin",
     "CapabilityDescriptor",
     "Health",
     "Intent",
+    "LanguageModelDescriptor",
     "LocomotionDescriptor",
     "MemoryKind",
+    "Message",
     "Pose",
     "Priority",
+    "Prompt",
+    "ReplyDone",
+    "ReplyEvent",
     "Sensitivity",
     "Target",
     "TargetKind",
+    "TextDelta",
+    "ToolCall",
+    "ToolSpec",
+    "Transcript",
+    "TranscriberDescriptor",
     "Twist",
+    "VoiceDescriptor",
     "WakeDescriptor",
     "WakeEvent",
 ]

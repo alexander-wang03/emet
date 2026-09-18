@@ -54,9 +54,12 @@ audio:
     device: "USB"
     gain_db: -6.0
     # Playback runs at this rate except under `--echo`, which plays captured
-    # 16 kHz audio and switches the sink to 16 kHz for that run. 48 kHz is
-    # what nearly every USB DAC does natively, so a `--stats` run never waits
-    # on a rate the card refuses.
+    # 16 kHz audio and switches the sink to 16 kHz for that run, and under
+    # `--speak`, where the voice states the rate (22050 Hz for a Piper medium
+    # voice, 24000 Hz for Deepgram Aura) and the sink is opened to match.
+    # 48 kHz is what nearly every USB DAC does natively, so a `--stats` run
+    # never waits on a rate the card refuses; the card converts the others
+    # through ALSA's plug layer.
     sample_rate: 48000
   wake:
     engine: pocketsphinx
@@ -68,6 +71,26 @@ audio:
     # wakes from two in three to three in three.
     # params:
     #   cmninit: "43.0,6.0,5.6,8.1,-5.9,-1.9,-8.2,-0.5,-0.9,3.4,7.6,-1.3,-0.4"
+
+# Speech recognition, the language model and the voice. The reference soul
+# names real providers under its `models` block; with
+# `emet-providers[deepgram,openai,piper]` installed, the keys in
+# ~/.config/emet/keys.env (EMET_DEEPGRAM_KEY, EMET_OPENAI_KEY) and the voice
+# downloaded once
+# (`python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices`),
+# `--transcribe --reply --speak` runs against them and this block stays
+# commented. Without keys, or offline, uncomment it and the body takes the
+# stages over with the mocks: the transcriber reads nothing out of a real
+# microphone and so is given a line to say, the language model repeats what
+# it heard, and the mock voice makes a sound no one could mistake for speech.
+# models:
+#   stt:
+#     provider: mock
+#     params: {transcript: "testing the seam"}
+#   chat:
+#     provider: mock
+#   tts:
+#     provider: mock
 
 capabilities: []
 

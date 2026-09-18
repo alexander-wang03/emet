@@ -23,10 +23,11 @@ identity:
   license: null                    # RSV
 
 voice:
-  engine: piper
-  model: "en_US-amy-medium"
+  # How it sounds, whichever voice produces the sound. `rate` is a persona
+  # trait like `patience_ms`: 1.0 is the voice's own pace. Which voice speaks
+  # is `models.tts` below, beside the other providers.
   rate: 1.0
-  pitch_shift_semitones: 0
+  pitch_shift_semitones: 0        # RSV
 
 persona:
   summary: >
@@ -46,6 +47,13 @@ persona:
     enabled: false
     rate: 0.0
     locked_traits: []
+  # Its own words for the moments the model has none. Said aloud, in
+  # character, so a refusal or a dropped connection is heard rather than
+  # met with silence. `nothing_heard` is null: a false wake gets nothing.
+  lines:
+    declined: "I'd rather not answer that one. Ask me something else."
+    failed: "I lost the thread there. Say it again?"
+    nothing_heard: null
 
 interaction:
   patience_ms: 900
@@ -69,7 +77,13 @@ memory:
   retention_days: 0                # 0 = forever
 
 models:
-  chat:  {provider: openai,   model: "gpt-4o", key_env: "EMET_OPENAI_KEY"}
-  stt:   {provider: deepgram, model: "nova-2", key_env: "EMET_DEEPGRAM_KEY"}
-  tts:   {provider: local_piper}
+  chat:  {provider: openai,   model: "gpt-5.6-terra", key_env: "EMET_OPENAI_KEY"}
+  stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}
+  # Local by design: synthesis is the stage a robot in a home should manage
+  # with the network down. The voice is a file the owner downloads once:
+  #     python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
+  # LJ Speech is public domain, which is why it is the reference voice and
+  # Amy, fine-tuned from a corpus licensed for research only, is not. A cloud
+  # voice is one line: {provider: deepgram, model: "aura-2-thalia-en", key_env: "EMET_DEEPGRAM_KEY"}
+  tts:   {provider: piper,    model: "en_US-ljspeech-medium"}
   micro: {provider: local,    model: "qwen3-0.6b-q4"}

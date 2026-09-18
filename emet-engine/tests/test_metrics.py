@@ -211,3 +211,15 @@ def test_the_clock_line_gives_the_skew_as_a_percentage_too():
     s = stats()
     s.record_frame(1.0)
     assert "%)" in s.report(live=True)
+
+
+def test_the_clock_line_says_how_much_skew_the_dropped_frames_explain():
+    """141 frames dropped on the reference body showed as +11.38 s of skew,
+    which is exactly 141 times 80 ms. The line now does that sum."""
+    s = stats(frame_ms=80.0)
+    for _ in range(10):
+        s.record_frame(1.0)
+    assert "dropped frame" not in s.report(live=True)
+    s.dropped = 141
+    line = next(l for l in s.report(live=True).splitlines() if "clock" in l)
+    assert "11.28s of it is the 141 dropped frame(s)" in line

@@ -24,6 +24,9 @@ for years.
 | `wav` | `emet.audio_out` | Writes what the robot said to a file |
 | `null` | `emet.audio_out` | Discards audio, so the loop can run silently |
 
+Plugins that reach a service rather than a chip (speech recognition,
+language models and voices) live in `emet-providers`, next door.
+
 **No hardware drivers yet.** The locomotion plugins are arithmetic: they turn
 a desired velocity into per-wheel speeds and touch no GPIO, so they need no
 robot and are fully testable against the mock. Wake and audio are optional

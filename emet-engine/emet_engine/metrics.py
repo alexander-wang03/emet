@@ -57,6 +57,11 @@ class Stopwatch:
     def __exit__(self, *exc: object) -> None:
         self.elapsed_ms = (time.perf_counter() - self._start) * 1000.0
 
+    def peek_ms(self) -> float:
+        """Milliseconds so far, without stopping. For a first-token mark
+        inside a block that keeps running."""
+        return (time.perf_counter() - self._start) * 1000.0
+
 
 @dataclass
 class SessionStats:
@@ -69,6 +74,9 @@ class SessionStats:
     frames: int = 0
     wakes: int = 0
     turns: int = 0
+    #: Turns whose silence window was extended once because the words so
+    #: far looked unfinished.
+    extended: int = 0
     #: Frames the source discarded because the loop fell behind. Not the same
     #: as being slow: this is audio that was never seen at all.
     dropped: int = 0
@@ -76,10 +84,38 @@ class SessionStats:
     #: reported an input overflow. A different cause, the same loss, and the
     #: first thing to check when a live run's clock skew looks like drift.
     overflows: int = 0
+    #: Of `dropped`, the frames lost while the loop was deliberately not
+    #: reading: playing audio, waiting on a language model, or waiting for
+    #: the final transcript after the person stopped. Those are the loop's
+    #: own doing until barge-in arrives, and they say nothing about whether
+    #: it keeps up while listening, so the verdict leaves them out.
+    dropped_busy: int = 0
 
     process_ms_total: float = 0.0
     process_ms_max: float = 0.0
     over_budget: int = 0
+
+    #: Milliseconds from the endpoint to the final transcript, one per
+    #: transcribed turn. The first number a person feels in 0.4: the robot
+    #: cannot start thinking until this has elapsed, so it is measured on
+    #: every turn rather than guessed from a vendor's page.
+    final_ms: list[float] = field(default_factory=list)
+
+    #: Per answered turn: milliseconds from the final transcript to the first
+    #: word of the reply, and to the whole reply. The first is what a person
+    #: waits in silence; the second is what a speaker would need to keep up.
+    reply_first_ms: list[float] = field(default_factory=list)
+    reply_done_ms: list[float] = field(default_factory=list)
+
+    #: Per spoken reply: milliseconds from the final transcript to the first
+    #: sound at the sink, and to the last. The first is the silence a person
+    #: actually sits through, measured where they hear it rather than where
+    #: the model produced it; the second is how long the robot held the
+    #: floor. Sentences the voice managed and lost are counted beside them.
+    speech_first_ms: list[float] = field(default_factory=list)
+    speech_done_ms: list[float] = field(default_factory=list)
+    sentences_spoken: int = 0
+    sentences_lost: int = 0
 
     _samples: deque[float] = field(default_factory=lambda: deque(maxlen=SAMPLE_CAP))
     #: Set by the first frame, so that loading the acoustic model and opening
@@ -98,6 +134,21 @@ class SessionStats:
         if process_ms > self.frame_ms:
             self.over_budget += 1
         self._samples.append(process_ms)
+
+    def record_final(self, wait_ms: float) -> None:
+        self.final_ms.append(wait_ms)
+
+    def record_reply(self, first_ms: float | None, done_ms: float) -> None:
+        if first_ms is not None:
+            self.reply_first_ms.append(first_ms)
+        self.reply_done_ms.append(done_ms)
+
+    def record_speech(self, first_ms: float | None, done_ms: float, *, spoken: int, lost: int) -> None:
+        if first_ms is not None:
+            self.speech_first_ms.append(first_ms)
+        self.speech_done_ms.append(done_ms)
+        self.sentences_spoken += spoken
+        self.sentences_lost += lost
 
     # ------------------------------------------------------------ readings
 
@@ -148,11 +199,18 @@ class SessionStats:
     def kept_up(self) -> bool:
         """Whether this run is evidence the loop is viable here.
 
-        Three conditions, and all of them matter. Nothing was dropped, no frame
-        blew the budget, and there is real margin rather than a bare pass. A
-        run at 0.99 kept up on a quiet machine and will not on a busy one.
+        Three conditions, and all of them matter. Nothing was dropped while
+        listening, no frame blew the budget, and there is real margin rather
+        than a bare pass. A run at 0.99 kept up on a quiet machine and will not
+        on a busy one. Frames dropped while the robot was speaking or thinking
+        are counted, printed, and left out of this: the loop chose not to read
+        the microphone then, and barge-in is what changes that.
         """
-        return self.dropped == 0 and self.over_budget == 0 and self.realtime_factor < 0.5
+        return (
+            self.dropped - self.dropped_busy == 0
+            and self.over_budget == 0
+            and self.realtime_factor < 0.5
+        )
 
     # -------------------------------------------------------------- report
 
@@ -166,7 +224,8 @@ class SessionStats:
         """
         lines = [
             f"  frames        {self.frames}  ({self.audio_ms / 1000:.1f}s of audio)",
-            f"  wakes         {self.wakes}   turns {self.turns}",
+            f"  wakes         {self.wakes}   turns {self.turns}"
+            + (f"   extended {self.extended}" if self.extended else ""),
             f"  per frame     mean {self.mean_ms:.2f} ms   "
             f"p50 {self.percentile(50):.2f}   p95 {self.percentile(95):.2f}   "
             f"max {self.process_ms_max:.2f}",
@@ -174,17 +233,58 @@ class SessionStats:
             f"{self.over_budget} frame(s) over",
             f"  realtime      {self.realtime_factor:.4f}  "
             f"({self.headroom:.0f}x faster than realtime)",
-            f"  dropped       {self.dropped}   (card overflows {self.overflows})",
+            f"  dropped       {self.dropped}   (card overflows {self.overflows}"
+            + (f"; {self.dropped_busy} while speaking or thinking" if self.dropped_busy else "")
+            + ")",
         ]
+        if self.final_ms:
+            lines.append(
+                f"  stt final     mean {sum(self.final_ms) / len(self.final_ms):.0f} ms   "
+                f"max {max(self.final_ms):.0f}   ({len(self.final_ms)} turn(s), "
+                f"endpoint to final transcript)"
+            )
+        if self.reply_first_ms:
+            lines.append(
+                f"  llm first     mean {sum(self.reply_first_ms) / len(self.reply_first_ms):.0f} ms   "
+                f"max {max(self.reply_first_ms):.0f}   ({len(self.reply_first_ms)} reply(ies), "
+                f"transcript to first word)"
+            )
+        if self.reply_done_ms:
+            lines.append(
+                f"  llm done      mean {sum(self.reply_done_ms) / len(self.reply_done_ms):.0f} ms   "
+                f"max {max(self.reply_done_ms):.0f}   (transcript to whole reply)"
+            )
+        if self.speech_first_ms:
+            lines.append(
+                f"  voice first   mean {sum(self.speech_first_ms) / len(self.speech_first_ms):.0f} ms   "
+                f"max {max(self.speech_first_ms):.0f}   ({len(self.speech_first_ms)} reply(ies), "
+                f"transcript to first sound)"
+            )
+        if self.speech_done_ms:
+            lost = f", {self.sentences_lost} lost" if self.sentences_lost else ""
+            lines.append(
+                f"  voice done    mean {sum(self.speech_done_ms) / len(self.speech_done_ms):.0f} ms   "
+                f"max {max(self.speech_done_ms):.0f}   (transcript to last sound; "
+                f"{self.sentences_spoken} sentence(s) spoken{lost})"
+            )
         if live:
             skew = self.wall_ms - self.audio_ms
             pct = (skew / self.audio_ms * 100.0) if self.audio_ms else 0.0
             # A steady percentage across runs is the card's clock against the
             # system's, a property of the hardware. A growing offset with
-            # overflows or drops beside it is audio being lost.
+            # overflows or drops beside it is audio being lost, and every
+            # dropped frame is one frame's worth of skew: on the reference
+            # body 141 dropped frames read as an 18.9% "drift" until the
+            # arithmetic was done by hand. So it is done here.
+            lost_ms = self.dropped * self.frame_ms
+            explained = ""
+            if self.dropped:
+                explained = (
+                    f"; {lost_ms / 1000:.2f}s of it is the {self.dropped} dropped frame(s)"
+                )
             lines.append(
                 f"  clock         wall {self.wall_ms / 1000:.1f}s vs audio "
-                f"{self.audio_ms / 1000:.1f}s   skew {skew / 1000:+.2f}s ({pct:+.2f}%)"
+                f"{self.audio_ms / 1000:.1f}s   skew {skew / 1000:+.2f}s ({pct:+.2f}%{explained})"
             )
         else:
             lines.append(

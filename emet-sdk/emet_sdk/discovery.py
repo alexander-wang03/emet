@@ -5,7 +5,7 @@ points. Nothing scans directories, nothing imports by convention, and the
 engine has no list of known drivers compiled into it; installing a package is
 what makes a driver exist.
 
-Six groups:
+Nine groups:
 
     emet.actuators    name = the string used in `driver.plugin`
     emet.sensors      name = the string used in `driver.plugin`
@@ -13,6 +13,12 @@ Six groups:
     emet.wake         name = the string used in `audio.wake.engine`
     emet.audio        name = the string used in `audio.input.source`
     emet.audio_out    name = the string used in `audio.output.sink`
+    emet.stt          name = the string used in `models.stt.provider`, on the
+                      soul or on the body
+    emet.llm          name = the string used in `models.chat.provider`, on the
+                      soul or on the body
+    emet.tts          name = the string used in `models.tts.provider`, on the
+                      soul or on the body
 
 `emet.audio` exists for a reason the others do not share. The engine may import
 `emet_sdk` and nothing else, so it cannot reach into `emet_hal` for a
@@ -28,6 +34,14 @@ reproduce a wake failure somebody reports without owning their room.
 For locomotion, wake and audio the entry-point name *is* the manifest value,
 which is what makes those enums genuinely open: `kinematics: legged` is legal today and
 resolves the moment somebody publishes a package registering `legged`.
+
+`emet.stt`, `emet.llm` and `emet.tts` are the groups whose names come from
+the *soul* rather than the body: `models.stt.provider`, `models.chat.provider`
+and `models.tts.provider`. Each is an account or a voice the owner brings,
+and that travels with the soul, so the soul names it. The body may override
+any of them, and a test rig does. Either way the name resolves here, against
+what is installed, and a provider nobody has packaged yet is a
+`MissingPluginError` on the day it is named, exactly like `legged`.
 
 That openness is not theoretical for wake. Picovoice disabled every free
 Porcupine access key on 30 June 2026, and every project that had wired one
@@ -55,6 +69,9 @@ __all__ = [
     "GROUP_WAKE",
     "GROUP_AUDIO",
     "GROUP_AUDIO_OUT",
+    "GROUP_STT",
+    "GROUP_LLM",
+    "GROUP_TTS",
     "PluginRegistry",
     "discover",
 ]
@@ -65,6 +82,9 @@ GROUP_LOCOMOTION = "emet.locomotion"
 GROUP_WAKE = "emet.wake"
 GROUP_AUDIO = "emet.audio"
 GROUP_AUDIO_OUT = "emet.audio_out"
+GROUP_STT = "emet.stt"
+GROUP_LLM = "emet.llm"
+GROUP_TTS = "emet.tts"
 
 
 def _entry_points(group: str) -> dict[str, EntryPoint]:
@@ -87,6 +107,9 @@ class PluginRegistry:
         wake: Mapping[str, EntryPoint] | None = None,
         audio: Mapping[str, EntryPoint] | None = None,
         audio_out: Mapping[str, EntryPoint] | None = None,
+        stt: Mapping[str, EntryPoint] | None = None,
+        llm: Mapping[str, EntryPoint] | None = None,
+        tts: Mapping[str, EntryPoint] | None = None,
         *,
         verify_drivers: bool = False,
     ) -> None:
@@ -96,6 +119,9 @@ class PluginRegistry:
         self._wake = dict(wake or {})
         self._audio = dict(audio or {})
         self._audio_out = dict(audio_out or {})
+        self._stt = dict(stt or {})
+        self._llm = dict(llm or {})
+        self._tts = dict(tts or {})
         #: When False, an unrecognised *driver* name is reported as a warning
         #: rather than an error. See `validate` for why the two callers differ:
         #: linting a manifest for hardware you have not wired yet is a normal
@@ -113,6 +139,9 @@ class PluginRegistry:
             wake=_entry_points(GROUP_WAKE),
             audio=_entry_points(GROUP_AUDIO),
             audio_out=_entry_points(GROUP_AUDIO_OUT),
+            stt=_entry_points(GROUP_STT),
+            llm=_entry_points(GROUP_LLM),
+            tts=_entry_points(GROUP_TTS),
         )
 
     def with_verification(self, verify_drivers: bool) -> "PluginRegistry":
@@ -128,6 +157,9 @@ class PluginRegistry:
             wake=self._wake,
             audio=self._audio,
             audio_out=self._audio_out,
+            stt=self._stt,
+            llm=self._llm,
+            tts=self._tts,
             verify_drivers=verify_drivers,
         )
 
@@ -147,6 +179,15 @@ class PluginRegistry:
 
     def has_audio_out(self, sink: str) -> bool:
         return sink in self._audio_out
+
+    def has_stt(self, provider: str) -> bool:
+        return provider in self._stt
+
+    def has_llm(self, provider: str) -> bool:
+        return provider in self._llm
+
+    def has_tts(self, provider: str) -> bool:
+        return provider in self._tts
 
     @property
     def driver_names(self) -> list[str]:
@@ -168,6 +209,18 @@ class PluginRegistry:
     def audio_out_names(self) -> list[str]:
         return sorted(self._audio_out)
 
+    @property
+    def stt_names(self) -> list[str]:
+        return sorted(self._stt)
+
+    @property
+    def llm_names(self) -> list[str]:
+        return sorted(self._llm)
+
+    @property
+    def tts_names(self) -> list[str]:
+        return sorted(self._tts)
+
     def __bool__(self) -> bool:
         return bool(
             self._actuators
@@ -176,6 +229,9 @@ class PluginRegistry:
             or self._wake
             or self._audio
             or self._audio_out
+            or self._stt
+            or self._llm
+            or self._tts
         )
 
     def __iter__(self) -> Iterator[tuple[str, str]]:
@@ -192,6 +248,12 @@ class PluginRegistry:
             yield ("audio", name)
         for name in sorted(self._audio_out):
             yield ("audio_out", name)
+        for name in sorted(self._stt):
+            yield ("stt", name)
+        for name in sorted(self._llm):
+            yield ("llm", name)
+        for name in sorted(self._tts):
+            yield ("tts", name)
 
     # ----------------------------------------------------------------- load
 
@@ -239,6 +301,44 @@ class PluginRegistry:
         ep = self._audio_out.get(sink)
         if ep is None:
             raise _missing(sink, self.audio_out_names, "audio sink")
+        return ep.load()
+
+    def load_stt(self, provider: str) -> type:
+        """Import and return the plugin class for a speech recognition provider.
+
+        Constructed as `cls(config, fmt)`, where `config` is the merged
+        provider reference from `emet_sdk.models.stt_selection` and `fmt` the
+        `AudioFormat` the wake engine fixed. Same shape as a source or a sink,
+        for the same reason: the engine holds a name and a mapping.
+        """
+        ep = self._stt.get(provider)
+        if ep is None:
+            raise _missing(provider, self.stt_names, "speech recognition provider")
+        return ep.load()
+
+    def load_llm(self, provider: str) -> type:
+        """Import and return the plugin class for a language model provider.
+
+        Constructed as `cls(config)`, where `config` is the merged provider
+        reference from `emet_sdk.models.chat_selection`. No audio format: a
+        language model never hears the microphone.
+        """
+        ep = self._llm.get(provider)
+        if ep is None:
+            raise _missing(provider, self.llm_names, "language model provider")
+        return ep.load()
+
+    def load_tts(self, provider: str) -> type:
+        """Import and return the plugin class for a speech synthesis provider.
+
+        Constructed as `cls(config, voice)`, where `config` is the merged
+        provider reference from `emet_sdk.models.tts_selection` and `voice`
+        the soul's `voice` block. The voice states its own sample rate after
+        `start()`, and the sink is opened to match.
+        """
+        ep = self._tts.get(provider)
+        if ep is None:
+            raise _missing(provider, self.tts_names, "speech synthesis provider")
         return ep.load()
 
 

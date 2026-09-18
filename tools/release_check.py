@@ -10,10 +10,10 @@ It is deliberately narrow. It does not re-run the test suites, because CI does
 that and duplicating it here would produce a slow script people stop running.
 It checks the *cross-cutting* invariants:
 
-    versions      all three packages agree
+    versions      all four packages agree
     plugins       every discovery group has a shipped implementation
     docs          nothing advertises a version the code no longer is
-    hal readme    every shipped entry point is named in emet-hal/README.md
+    readmes       every shipped entry point is named in its package's README
     markers       no TODO or FIXME left in shipped source
 
 **Why this exists.** 0.3's scope was "audio in/out, wake word, VAD,
@@ -36,11 +36,17 @@ import sys
 import tomllib
 from pathlib import Path
 
-PACKAGES = ("emet-sdk", "emet-hal", "emet-engine")
+PACKAGES = ("emet-sdk", "emet-hal", "emet-providers", "emet-engine")
 
 #: Docs that state a version and will lie if they are not updated. A stale
 #: README is the first thing a newcomer reads and the last thing anybody edits.
-VERSIONED_DOCS = ("README.md", "emet-sdk/README.md", "emet-hal/README.md", "emet-engine/README.md")
+VERSIONED_DOCS = (
+    "README.md",
+    "emet-sdk/README.md",
+    "emet-hal/README.md",
+    "emet-providers/README.md",
+    "emet-engine/README.md",
+)
 
 #: Groups the SDK knows how to discover. Each should have at least one shipped
 #: implementation, or the group is a promise nothing keeps.
@@ -51,6 +57,9 @@ EXPECTED_GROUPS = (
     "emet.wake",
     "emet.audio",
     "emet.audio_out",
+    "emet.stt",
+    "emet.llm",
+    "emet.tts",
 )
 
 problems: list[str] = []
@@ -78,7 +87,7 @@ def declared_versions(root: Path) -> dict[str, str]:
 
 
 def check_versions_agree(versions: dict[str, str]) -> str | None:
-    """One repository, one version. Three packages released together that
+    """One repository, one version. Four packages released together that
     disagree about which release they are is the kind of thing nobody notices
     until a bug report quotes two of them."""
     distinct = set(versions.values())
@@ -134,26 +143,28 @@ def check_groups(root: Path) -> None:
         notes.append(f"{total} entry points across {len(provided)} groups")
 
 
-def check_hal_readme(root: Path) -> None:
-    """Every entry point emet-hal registers is named in its README.
+def check_plugin_readmes(root: Path) -> None:
+    """Every entry point a package registers is named in that package's README.
 
-    0.3 shipped seven new plugins and the README's "what ships" table kept
+    0.3 shipped seven new plugins and emet-hal's "what ships" table kept
     listing the four from 0.2, through several rounds of "what is left".
-    A newcomer reads that table before anything else.
+    A newcomer reads that table before anything else. emet-providers has the
+    same table and the same exposure, so the rule covers every package.
     """
-    pyproject = root / "emet-hal" / "pyproject.toml"
-    readme = root / "emet-hal" / "README.md"
-    if not pyproject.exists() or not readme.exists():
-        return
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    text = readme.read_text(encoding="utf-8")
-    for group, entries in (data.get("project", {}).get("entry-points") or {}).items():
-        for name in entries:
-            if f"`{name}`" not in text:
-                problem(
-                    f"emet-hal/README.md does not name the {group} entry point `{name}`. "
-                    f"The 'what ships' table is the first thing a contributor reads."
-                )
+    for pkg in PACKAGES:
+        pyproject = root / pkg / "pyproject.toml"
+        readme = root / pkg / "README.md"
+        if not pyproject.exists() or not readme.exists():
+            continue
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        text = readme.read_text(encoding="utf-8")
+        for group, entries in (data.get("project", {}).get("entry-points") or {}).items():
+            for name in entries:
+                if f"`{name}`" not in text:
+                    problem(
+                        f"{pkg}/README.md does not name the {group} entry point `{name}`. "
+                        f"The 'what ships' table is the first thing a contributor reads."
+                    )
 
 
 def check_docs(root: Path, version: str | None) -> None:
@@ -201,7 +212,7 @@ def main(argv: list[str]) -> int:
     check_single_declaration(root)
     check_groups(root)
     check_docs(root, version)
-    check_hal_readme(root)
+    check_plugin_readmes(root)
     check_markers(root)
 
     for note in notes:

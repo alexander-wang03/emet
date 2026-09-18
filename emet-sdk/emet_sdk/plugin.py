@@ -1,6 +1,6 @@
 """The plugin contract. Breaking it is a major version bump.
 
-Four categories, and the split is not arbitrary:
+Seven categories, and the split is not arbitrary:
 
 * **Actuators** receive `Action`s and do something physical. The engine tells
   them what should happen; how is theirs.
@@ -12,9 +12,22 @@ Four categories, and the split is not arbitrary:
   Wheels solve it with arithmetic, treads with the same arithmetic and
   different slip assumptions, and a legged plugin with a gait generator. The
   engine above them does not know or care.
-* **Wake** plugins listen for the robot's name and nothing else. They are the
-  only category configured jointly by a body and a soul, and the only one with
+* **Wake** plugins listen for the robot's name and nothing else. They are
+  configured jointly by a body and a soul, and they are the only category with
   no fallback beneath it.
+* **Transcriber** plugins turn the speech after a wake into text. The soul
+  chooses the provider, because the keys are the owner's and travel with the
+  soul; the body may take the choice over, and tunes it. The engine feeds
+  frames in and reads partial and final transcripts out, so a streaming
+  provider and a batch one satisfy the same contract.
+* **Language model** plugins turn the conversation so far into the next
+  thing the robot says. Chosen the same way as a transcriber. The engine
+  hands over an assembled prompt and reads the reply as it streams, so a
+  sentence can be spoken before the paragraph exists.
+* **Voice** plugins turn that text into audio. Chosen the same way again.
+  The engine hands over one sentence at a time and plays the audio as it
+  arrives, at the rate the voice states, so the first sentence is heard
+  while the language model is still writing the second.
 
 **Why there is no VAD category.** Voice activity detection looks like it
 belongs beside wake, and does not. It is not a swap point: there is one real
@@ -41,15 +54,22 @@ it is why chains bind against descriptors rather than against the YAML.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Mapping
+from typing import Any, AsyncIterator, ClassVar, Mapping
 
 from emet_sdk.types import (
     Action,
+    AudioFormat,
     CapabilityDescriptor,
     Health,
+    LanguageModelDescriptor,
     LocomotionDescriptor,
+    Prompt,
     Reading,
+    ReplyEvent,
+    Transcript,
+    TranscriberDescriptor,
     Twist,
+    VoiceDescriptor,
     WakeDescriptor,
     WakeEvent,
 )
@@ -61,6 +81,9 @@ __all__ = [
     "SensorPlugin",
     "LocomotionPlugin",
     "WakePlugin",
+    "TranscriberPlugin",
+    "LanguageModelPlugin",
+    "VoicePlugin",
     "PluginError",
 ]
 
@@ -80,10 +103,11 @@ class Plugin(ABC):
 
     Every category starts, shuts down, and reports health the same way. What a
     plugin is *constructed from* differs: three categories are built from one
-    entry in a manifest's `capabilities` list, and wake is built from
-    `audio.wake` plus a phrase the soul supplies. Construction therefore
-    belongs to the subclasses, so that no category inherits a signature it has
-    to contradict.
+    entry in a manifest's `capabilities` list, wake is built from `audio.wake`
+    plus a phrase the soul supplies, and a transcriber or a language model
+    from the provider reference the soul and the body agree on. Construction
+    therefore belongs to the subclasses, so that no category inherits a
+    signature it has to contradict.
     """
 
     async def start(self) -> None:
@@ -286,4 +310,266 @@ class WakePlugin(Plugin):
 
         Default is a no-op. Streaming detectors holding a rolling buffer
         override it so that one utterance cannot trigger twice.
+        """
+
+
+class TranscriberPlugin(Plugin):
+    """What turns the speech after a wake into text.
+
+    The seam between Emet and a speech recognition vendor, and it exists
+    before any vendor does. There are credits enough at one provider to build
+    the whole of a release against its client library without noticing, and
+    the result would be an engine that speaks one company's dialect. Behind
+    this contract, the provider is one line of a soul.
+
+    **Who chooses.** The soul, through `models.stt`: the provider, the model,
+    and the name of the environment variable holding the key. Keys are the
+    owner's (BYOK) and travel with the soul, so this is a soul field without
+    breaching principle 1: a cloud account is not hardware. The body may take
+    the choice over through its own `models.stt.provider` (a test rig running the
+    mock, an owner whose key is for a different provider), and it tunes
+    whichever provider runs through `models.stt.params`. The merged result is
+    what this constructor receives; `emet_sdk.models.stt_selection` is the
+    one place the merge is written down.
+
+    **Streaming.** Frames go in one at a time, as they are captured. A
+    provider that streams answers with partial transcripts while the person
+    is still talking, and every partial carries the whole text heard so far.
+    `finish()` closes the utterance and returns the final. A provider that
+    does not stream returns None from every `feed()` and does its work in
+    `finish()`. Same contract, and the engine above cannot tell them apart
+    except by latency and by `describe().streaming`.
+
+    **Format.** The wake engine fixed the audio format before this plugin was
+    built, and one microphone feeds both, so the transcriber receives the
+    format rather than stating one. It reports the rate it will actually run
+    at in `describe()`, and the engine refuses a mismatch rather than letting
+    speech be heard at the wrong speed.
+    """
+
+    #: The string matched against `models.stt.provider` in the soul (or
+    #: the body's own `models.stt.provider`), and the entry-point name this
+    #: plugin registers under.
+    provider: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any], fmt: AudioFormat) -> None:
+        """Receive the merged provider reference and the audio format.
+
+        `config` has the shape of the soul's `models.stt` block plus the
+        body's `params`: `provider`, `model`, `key_env`, `params`. The key
+        itself is never in it. A plugin that needs one reads the environment
+        variable `key_env` names, in `start()`, and reports `healthy=False`
+        with a detail naming the variable when it is absent. The robot then
+        fails loudly and in the owner's terms, which is what P0 promises.
+        """
+        self.config: Mapping[str, Any] = config
+        self.model: str | None = (
+            str(config["model"]) if config.get("model") is not None else None
+        )
+        self.key_env: str | None = (
+            str(config["key_env"]) if config.get("key_env") is not None else None
+        )
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+        #: The audio the engine will feed: mono int16 at this rate and frame
+        #: size, fixed by the wake engine before this plugin was built.
+        self.format = fmt
+
+    @abstractmethod
+    def describe(self) -> TranscriberDescriptor:
+        """Report what this instance can actually do, after `start()`.
+
+        Report narrowly. A provider whose key is missing or whose network is
+        down says `healthy=False` and puts the reason in `health().detail`;
+        the boot check prints it. Claiming health and returning empty
+        transcripts forever is the silent failure this contract exists to
+        prevent.
+        """
+
+    @abstractmethod
+    async def feed(self, frame: bytes) -> Transcript | None:
+        """Consume one frame of the utterance. Return a partial if the text
+        heard so far changed, else None.
+
+        Frames arrive at the rate and size in `self.format`, in order, for one
+        utterance at a time. Return promptly: this runs inside the capture
+        loop, and a provider that blocks here on the network drops audio. Hand
+        the frame off and report whatever results have already come back.
+        """
+
+    @abstractmethod
+    async def finish(self) -> Transcript:
+        """The turn has ended. Flush, and return the final transcript.
+
+        Always returns one, with `final=True`, even when nothing was heard:
+        an empty final is a real answer (they said nothing the provider could
+        make out) and the engine treats it as one. After this the plugin is
+        ready for the next utterance's first `feed()`.
+        """
+
+
+class LanguageModelPlugin(Plugin):
+    """What turns the conversation so far into the next thing the robot says.
+
+    The second provider seam, built like the first: the contract and a mock
+    first, then the vendors, so that the engine is written against this
+    class and never against a vendor's client library. There are credits at
+    more than one vendor, and this is what keeps the choice one line of a
+    soul.
+
+    **Who chooses.** The soul, through `models.chat`, on the terms `models.stt`
+    set: provider, model, and the name of the environment variable holding
+    the key. The body may take the choice over through its own `models.chat`
+    and tunes whichever runs through `params`. `emet_sdk.models.chat_selection`
+    is the rule.
+
+    **What the model does and does not decide.** It receives a `Prompt` the
+    engine assembled and returns text. The persona is the engine's to write
+    into `system`, the memories are the engine's to retrieve, and what the
+    body does while the words are spoken is the engine's to resolve through
+    the chains. A vendor sees one turn at a time and nothing of the robot.
+
+    **Streaming.** `reply()` is an async iterator. Text arrives as
+    `TextDelta`s in order, a `ToolCall` arrives once its arguments are
+    complete, and exactly one `ReplyDone` arrives last, on success and on
+    failure alike, carrying the whole text and why it stopped. A caller that
+    speaks as it reads starts on the first sentence; a caller that wants the
+    text waits for the last event.
+
+    **Tools.** `Prompt.tools` are vendor-neutral specs; the plugin translates
+    them. When the model stops with `tool`, the caller runs the tools,
+    appends the assistant turn with its calls and one `tool` message per
+    result, and calls `reply()` again. The plugin keeps no conversation
+    state between calls.
+    """
+
+    #: The string matched against `models.chat.provider`, and the entry-point
+    #: name this plugin registers under.
+    provider: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        """Receive the merged provider reference: `provider`, `model`,
+        `key_env`, `params`. The key itself is never in it. A plugin that
+        needs one reads the environment variable `key_env` names, in
+        `start()`, and reports `healthy=False` naming the variable when it
+        is absent.
+        """
+        self.config: Mapping[str, Any] = config
+        self.model: str | None = (
+            str(config["model"]) if config.get("model") is not None else None
+        )
+        self.key_env: str | None = (
+            str(config["key_env"]) if config.get("key_env") is not None else None
+        )
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+
+    @abstractmethod
+    def describe(self) -> LanguageModelDescriptor:
+        """Report what this instance can actually do, after `start()`.
+
+        Report narrowly. A provider whose key is missing or whose network is
+        down says `healthy=False` and puts the reason in `health().detail`;
+        the boot check prints it, and the robot refuses to run rather than
+        hear questions it can never answer.
+        """
+
+    @abstractmethod
+    def reply(self, prompt: Prompt) -> AsyncIterator[ReplyEvent]:
+        """Generate one reply, as an async iterator of events.
+
+        Yields `TextDelta`s as text is generated, a `ToolCall` per completed
+        call, and one `ReplyDone` last. Never raises for a failure the
+        provider reported or the network caused: those end the stream with
+        `ReplyDone(stop_reason="error", error=...)` and whatever text came
+        first, so the engine can say something rather than crash mid-turn.
+        """
+
+
+class VoicePlugin(Plugin):
+    """What turns the words the robot will say into audio.
+
+    The third provider seam, built like the other two: the contract and a
+    mock first, then the local voice, then one cloud voice. `DESIGN.md`
+    section 14 keeps synthesis local by default, because it is the stage that
+    costs the most per turn in the cloud and the one a robot in a home should
+    be able to do with the network down, so the shipped default is a local
+    model and a cloud voice is a line of a soul.
+
+    **Who chooses.** The soul, through `models.tts`, on the terms `models.stt`
+    set: the provider, the model (a voice, here: a Piper model name, a
+    vendor's voice id), and the environment variable holding the key when
+    there is one. The body may take the choice over through its own
+    `models.tts` and tunes whichever runs through `params`.
+    `emet_sdk.models.tts_selection` is the rule.
+
+    **What else the soul says.** How fast it speaks. `voice.rate` on the soul
+    is a persona trait, like `patience_ms`: a reflective character talks
+    slower than an eager one, and that is true whichever voice produces the
+    sound. So the soul's `voice` block reaches this constructor beside the
+    provider reference, the way `identity.wake_word` reaches a wake plugin.
+    Principle 1 holds: the soul says how it sounds, never which library, on
+    what device, at what sample rate.
+
+    **Streaming.** `speak()` takes one sentence and is an async iterator of
+    audio chunks: mono int16 at `describe().sample_rate`, in order,
+    concatenable. A provider that streams yields the first chunk before the
+    sentence is finished; one that does not yields the whole sentence as one
+    chunk and says `streaming=False`. The engine plays each sentence as its
+    audio completes and asks for the next while it plays, which is what lets
+    the first sentence be heard while the reply is still being written.
+
+    **Format.** The voice states the sample rate; the engine opens the sink
+    to match. A local model produces one rate and only one, and the sink is
+    the side that can convert.
+    """
+
+    #: The string matched against `models.tts.provider`, and the entry-point
+    #: name this plugin registers under.
+    provider: ClassVar[str] = ""
+
+    def __init__(self, config: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> None:
+        """Receive the merged provider reference and the soul's `voice` block.
+
+        `config` is `provider`, `model`, `key_env`, `params`; the key itself is
+        never in it, and a plugin that needs one reads the environment
+        variable `key_env` names, in `start()`, and reports `healthy=False`
+        naming it when it is absent. `voice` is the soul's `voice` block:
+        `rate`, a multiplier on speaking speed, is the field every plugin
+        honours as far as its engine allows; the rest is advisory.
+        """
+        self.config: Mapping[str, Any] = config
+        self.model: str | None = (
+            str(config["model"]) if config.get("model") is not None else None
+        )
+        self.key_env: str | None = (
+            str(config["key_env"]) if config.get("key_env") is not None else None
+        )
+        self.params: Mapping[str, Any] = dict(config.get("params") or {})
+        self.voice: Mapping[str, Any] = dict(voice or {})
+        #: Speaking speed as a multiplier: 1.0 is the voice's own pace, 1.2 is
+        #: a fifth faster. From the soul; a persona trait.
+        rate = self.voice.get("rate")
+        self.rate: float = float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
+
+    @abstractmethod
+    def describe(self) -> VoiceDescriptor:
+        """Report what this instance can actually do, after `start()`.
+
+        Report narrowly. A voice whose model is not on disk, whose key is
+        missing or whose library is not installed says `healthy=False` and
+        puts the reason, and the command that fixes it, in `health().detail`;
+        the boot check prints it, and the robot refuses to run rather than
+        answer questions nobody will hear.
+        """
+
+    @abstractmethod
+    def speak(self, text: str) -> AsyncIterator[bytes]:
+        """Turn one sentence into audio, as an async iterator of chunks.
+
+        Each chunk is mono int16 PCM at `describe().sample_rate`, and the
+        chunks concatenate into the sentence. Empty or blank text yields
+        nothing. A failure the provider reported or the network caused
+        raises `PluginError` after whatever audio came first; the engine
+        treats that as one sentence lost, says so, and goes on with the
+        next, because a robot that drops a sentence is still a robot that
+        talks.
         """
