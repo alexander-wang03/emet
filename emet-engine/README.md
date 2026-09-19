@@ -71,7 +71,8 @@ the wait from the final transcript to the first word and to the whole reply.
 `--speak` goes the last step and implies `--reply`: the answer is said
 through the voice the soul names under `models.tts`, a sentence at a time as
 the model writes it, so the first sentence is heard while the second is still
-arriving. The reference soul names `piper`, the local voice, which needs
+arriving, and each sentence reaches the speaker a chunk at a time as the
+voice produces it. The reference soul names `piper`, the local voice, which needs
 `emet-providers[piper]` and a voice model downloaded once:
 
 ```sh

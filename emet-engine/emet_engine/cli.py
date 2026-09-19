@@ -252,6 +252,11 @@ def print_run_footer(session: ListenSession, *, stats: bool, busy: bool) -> None
     hint = session.warm_start_hint()
     if hint:
         print("\n" + hint)
+    if session.underflows:
+        print(
+            f"\nnote: the speaker reported {session.underflows} late callback(s): the "
+            f"card played silence it was not given, so playback may have stuttered."
+        )
     if session.dropped and busy:
         print(
             f"\nnote: {session.dropped} frame(s) were dropped while the robot was "

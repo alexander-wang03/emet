@@ -556,7 +556,13 @@ class AudioSink(Protocol):
     async def start(self) -> None: ...
 
     async def play(self, pcm: bytes) -> None:
-        """Play a whole buffer, returning when it has finished."""
+        """Play a buffer, returning when it has finished.
+
+        Consecutive calls are one continuous sound. The engine hands a
+        sentence over a chunk at a time as a voice produces it, so a sink
+        that clicks or pauses between calls is heard doing so: keep the
+        device open across calls, and treat an empty queue as silence.
+        """
         ...
 
     async def cancel(self) -> None:

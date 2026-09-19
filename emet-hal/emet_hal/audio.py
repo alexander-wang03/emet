@@ -41,6 +41,7 @@ import sys
 import threading
 import wave
 from array import array
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -428,14 +429,46 @@ class MicrophoneSource:
         self._queue = None
 
 
+def _wake(fut: "asyncio.Future[None]") -> None:
+    """Resolve a `play()`'s future once. Runs on the event loop's thread."""
+    if not fut.done():
+        fut.set_result(None)
+
+
 class Speaker:
     """Playback through a real sound card, so a voice rung is a sound rather
     than a promise.
 
-    Deliberately small. It takes int16 PCM at the format it was given and plays
-    it; how that audio came to exist is the business of whatever synthesises
-    speech.
+    **One stream, kept open.** `start()` checks the device and the rate; the
+    first `play()` opens one PortAudio output stream, and it stays open until
+    `stop()`. PortAudio pulls from a queue through a callback on its own
+    thread: whatever `play()` has queued, then zeros when the queue is empty.
+    A stream that never closes cannot click between buffers, and a stream fed
+    zeros rather than starved never underruns, so a sentence can be handed
+    over a chunk at a time as a voice produces it and a gap between chunks is
+    silence. That is what lets the engine play a cloud voice's first chunk
+    before its last has arrived. 0.4 opened a stream per buffer, which
+    clicked between chunks, so the engine gathered each sentence first and
+    the cloud voice cost 1.5 s before the first sound where the local one
+    cost 0.4.
+
+    `play()` returns when all but the last block of its audio has gone to
+    the card, which is the old promise less one block and the card's own
+    output latency; the last block is left in hand so the caller's next
+    chunk lands before the queue runs dry. `cancel()` empties the queue, so
+    playback stops within a block plus that latency, and the stream stays
+    open.
+
+    Deliberately small otherwise. It takes int16 PCM at the format it was
+    given and plays it; how that audio came to exist is the business of
+    whatever synthesises speech.
     """
+
+    #: Milliseconds of audio the callback asks for at a time. Smaller starts
+    #: a sentence sooner and costs a Python call more often; 20 ms is fifty
+    #: calls a second, which a Pi 5 does not notice. `params.block_ms`
+    #: overrides it.
+    BLOCK_MS = 20.0
 
     def __init__(self, config: dict[str, Any] | None = None, fmt: AudioFormat | None = None) -> None:
         """`config` is the manifest's `audio.output` block."""
@@ -444,84 +477,163 @@ class Speaker:
         # synthesis rate, and speech generated at 16 kHz sounds like a
         # telephone. The two directions are unrelated and need not agree.
         self.format = fmt or AudioFormat(sample_rate=22050)
+        params = self.config.get("params") or {}
+        self.block_ms = float(params.get("block_ms") or self.BLOCK_MS)
+        #: PortAudio's stream latency: "low", "high", or seconds. None takes
+        #: sounddevice's default, which is the device's high latency. A knob
+        #: rather than a measured choice; `params.latency` sets it.
+        self.latency: Any = params.get("latency")
         self._device: int | None = None
         self._sd: Any = None
         self._stream: Any = None
-        self._cancelled = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._opening: asyncio.Lock | None = None
+        # The queue and its bookkeeping are shared with PortAudio's thread.
+        self._lock = threading.Lock()
+        self._pending = bytearray()
+        self._queued = 0
+        self._played = 0
+        self._waiters: deque[tuple[int, asyncio.Future[None]]] = deque()
+        #: Callbacks PortAudio reported late, each a block of silence the
+        #: card played because this side was not ready. Zero on a machine
+        #: that keeps up; the first thing to check if playback stutters.
+        self.underflows = 0
 
     @property
     def sample_rate(self) -> int:
         return self.format.sample_rate
 
+    @property
+    def block_samples(self) -> int:
+        return max(1, int(self.sample_rate * self.block_ms / 1000.0))
+
+    @property
+    def block_bytes(self) -> int:
+        return self.block_samples * SAMPLE_BYTES
+
+    @property
+    def queued_bytes(self) -> int:
+        """Audio handed over and not yet given to the card."""
+        with self._lock:
+            return len(self._pending)
+
     async def start(self) -> None:
         self._sd = _sd()
         self._device = resolve_device(self.config.get("device"), want_input=False)
         _check_rate(self._device, self.sample_rate, 1, want_input=False)
+        self._loop = asyncio.get_running_loop()
+        self._opening = asyncio.Lock()
+
+    def _open(self) -> None:
+        """Open and start the one stream. Blocking, so it runs off the loop."""
+        extra: dict[str, Any] = {}
+        if self.latency is not None:
+            extra["latency"] = self.latency
+        try:
+            stream = self._sd.RawOutputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.block_samples,
+                channels=1,
+                dtype="int16",
+                device=self._device,
+                callback=self._on_output,
+                **extra,
+            )
+            stream.start()
+        except Exception as exc:
+            raise AudioError(f"could not open the speaker: {exc}") from exc
+        self._stream = stream
+
+    def _on_output(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
+        """PortAudio's thread. Fill the block from the queue, zeros after.
+
+        Never raises: an exception here aborts the stream, and a stream that
+        has to be reopened is the click this design exists to remove.
+        """
+        try:
+            if status and getattr(status, "output_underflow", False):
+                self.underflows += 1
+            want = len(outdata)
+            ready: list[asyncio.Future[None]] = []
+            with self._lock:
+                take = bytes(self._pending[:want])
+                del self._pending[: len(take)]
+                self._played += len(take)
+                while self._waiters and self._waiters[0][0] <= self._played:
+                    ready.append(self._waiters.popleft()[1])
+            outdata[: len(take)] = take
+            if len(take) < want:
+                outdata[len(take) :] = bytes(want - len(take))
+            loop = self._loop
+            if loop is not None:
+                for fut in ready:
+                    try:
+                        loop.call_soon_threadsafe(_wake, fut)
+                    except RuntimeError:  # pragma: no cover - the loop is closing
+                        pass
+        except Exception:  # pragma: no cover - a block that cannot be filled
+            log.exception("speaker callback failed")
 
     async def play(self, pcm: bytes) -> None:
-        """Play mono int16 PCM, returning when it has finished.
+        """Queue mono int16 PCM behind whatever is already queued, and return
+        when all but the last block of it has gone to the card.
 
-        Through a raw output stream, written in chunks from a worker thread.
-        `sounddevice.play()` needs numpy, which the HAL does not depend on,
-        and chunked writes are what let `cancel()` interrupt mid-word.
+        The last block is left in hand on purpose: the caller's next `play()`
+        then lands before the queue runs dry, so a sentence handed over a
+        chunk at a time is one continuous sound. What a person hears ends
+        one block plus the card's output latency after this returns.
         """
-        if self._sd is None:
+        if self._sd is None or self._loop is None or self._opening is None:
             raise AudioError("speaker was not started")
         if len(pcm) % SAMPLE_BYTES:
             raise AudioError("int16 audio has an even number of bytes")
-        self._cancelled.clear()
-        sd = self._sd
-        chunk = max(SAMPLE_BYTES, self.format.frame_bytes)
-
-        def blocking() -> None:
-            try:
-                stream = sd.RawOutputStream(
-                    samplerate=self.sample_rate,
-                    channels=1,
-                    dtype="int16",
-                    device=self._device,
-                )
-            except Exception as exc:
-                raise AudioError(f"could not open the speaker: {exc}") from exc
-            self._stream = stream
-            try:
-                stream.start()
-                for i in range(0, len(pcm), chunk):
-                    if self._cancelled.is_set():
-                        break
-                    stream.write(pcm[i : i + chunk])
-            except Exception as exc:
-                # An aborted stream makes the pending write raise. That is
-                # the cancel working, so it is only an error when nobody
-                # asked for it.
-                if not self._cancelled.is_set():
-                    raise AudioError(f"playback failed: {exc}") from exc
-            finally:
-                try:
-                    if self._cancelled.is_set():
-                        stream.abort()
-                    else:
-                        stream.stop()
-                finally:
-                    stream.close()
-                    self._stream = None
-
-        await asyncio.to_thread(blocking)
+        if not pcm:
+            return
+        async with self._opening:
+            if self._stream is None:
+                await asyncio.to_thread(self._open)
+        fut: asyncio.Future[None] = self._loop.create_future()
+        with self._lock:
+            self._pending += pcm
+            self._queued += len(pcm)
+            target = self._queued - min(len(pcm), self.block_bytes)
+            if target <= self._played:
+                fut.set_result(None)
+            else:
+                self._waiters.append((target, fut))
+        await fut
 
     async def cancel(self) -> None:
-        """Stop mid-word. This is what barge-in is made of."""
-        self._cancelled.set()
-        stream = self._stream
-        if stream is not None:
-            try:
-                stream.abort()
-            except Exception:  # pragma: no cover - the stream may already be closed
-                pass
+        """Stop within a block: empty the queue and free every waiting
+        `play()`. The stream stays open, playing silence, so the next
+        sentence starts without a click.
+
+        What PortAudio already holds, one block plus the card's output
+        latency, is still heard. That is the floor for barge-in.
+        """
+        with self._lock:
+            dropped = len(self._pending)
+            self._pending.clear()
+            self._played += dropped
+            waiting = list(self._waiters)
+            self._waiters.clear()
+        for _, fut in waiting:
+            _wake(fut)
 
     async def stop(self) -> None:
         await self.cancel()
-        self._sd = None
+        stream, self._stream = self._stream, None
+        if stream is not None:
 
+            def close() -> None:
+                try:
+                    stream.stop()
+                finally:
+                    stream.close()
+
+            await asyncio.to_thread(close)
+        self._sd = None
+        self._opening = None
 
 class WavSink:
     """Writes what the robot said to a file instead of playing it.

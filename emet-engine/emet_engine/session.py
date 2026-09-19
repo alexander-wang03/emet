@@ -810,6 +810,13 @@ class ListenSession:
         return int(getattr(self._audio, "overflows", 0) or 0)
 
     @property
+    def underflows(self) -> int:
+        """Blocks the card played as silence because the speaker's callback
+        was late. Read defensively, like `overflows`: only a real card can be
+        late, and only a sink that keeps a stream open counts."""
+        return int(getattr(self._sink, "underflows", 0) or 0)
+
+    @property
     def dropped(self) -> int:
         """Frames the source discarded because this loop fell behind.
 

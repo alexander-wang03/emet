@@ -919,7 +919,11 @@ def test_the_first_sentence_plays_before_the_reply_is_done(tmp_path):
     marks, spoken = run(scenario())
     assert marks.index("play") < marks.index("model done") < marks.index("reply done")
     assert [s.text for s in spoken] == ["First one.", "Second one."]
-    assert marks.count("play") == 2, "the second sentence was spoken after the reply ended"
+    # The mock voice makes a chunk a word, and each chunk reaches the sink
+    # as it is made: the first sentence's two before the model is done, the
+    # second sentence's two after.
+    assert marks[: marks.index("model done")].count("play") == 2
+    assert marks.count("play") == 4, "the second sentence was spoken after the reply ended"
 
 
 def test_a_reply_without_a_full_stop_is_still_spoken(tmp_path):

@@ -494,86 +494,217 @@ def test_off_linux_the_environment_is_left_alone(monkeypatch):
 
 
 class FakeOutputStream:
-    """Records what a RawOutputStream would have been asked to do."""
+    """Stands in for a `RawOutputStream` opened with a callback.
+
+    Records how it was opened, and `pump()` plays PortAudio's thread: it asks
+    the callback for one block and keeps whatever came out, zeros included,
+    so a test can see exactly what the card would have played.
+    """
 
     instances: list["FakeOutputStream"] = []
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.writes: list[bytes] = []
-        self.started = self.stopped = self.aborted = self.closed = False
+        self.callback = kwargs["callback"]
+        self.blocksize = int(kwargs.get("blocksize") or 64)
+        self.out = bytearray()
+        self.started = self.stopped = self.closed = False
         FakeOutputStream.instances.append(self)
 
     def start(self):
         self.started = True
 
-    def write(self, data):
-        self.writes.append(bytes(data))
-
     def stop(self, ignore_errors=True):
         self.stopped = True
-
-    def abort(self, ignore_errors=True):
-        self.aborted = True
 
     def close(self, ignore_errors=True):
         self.closed = True
 
+    def pump(self, status=None) -> bytes:
+        block = bytearray(2 * self.blocksize)
+        self.callback(block, self.blocksize, None, status)
+        self.out += block
+        return bytes(block)
 
-def speaker_with_fake_portaudio(rate: int = 16000) -> Speaker:
+
+def speaker_with_fake_portaudio(rate: int = 16000, **params) -> Speaker:
     FakeOutputStream.instances.clear()
-    spk = Speaker({"device": "USB"}, AudioFormat(sample_rate=rate))
+    spk = Speaker({"device": "USB", "params": params}, AudioFormat(sample_rate=rate))
     spk._sd = types.SimpleNamespace(RawOutputStream=FakeOutputStream)
     spk._device = 2
     return spk
 
 
-def test_playback_writes_the_whole_buffer_in_order_without_numpy():
-    """`--echo` on the Pi was the first machine to reach this code, and it
-    failed twice over: a memoryview cast that CPython refuses, and
-    `sounddevice.play()` underneath, which needs numpy the HAL does not
-    have. A raw stream written in chunks needs neither."""
+async def started(spk: Speaker) -> Speaker:
+    """The half of `start()` that needs no hardware: the loop and the lock."""
+    spk._loop = asyncio.get_running_loop()
+    spk._opening = asyncio.Lock()
+    return spk
+
+
+async def pumped(spk: Speaker, coro, *, blocks: int = 500):
+    """Run `coro` while pumping the stream the way PortAudio's thread would,
+    one block per turn of the loop."""
+    task = asyncio.ensure_future(coro)
+    for _ in range(blocks):
+        await asyncio.sleep(0.001)
+        if task.done():
+            break
+        if spk._stream is not None:
+            spk._stream.pump()
+    return await task
+
+
+def drained(spk: Speaker) -> bytes:
+    """Pump until the queue is empty, and return what the card was given
+    with the trailing silence trimmed."""
+    stream = spk._stream
+    while spk.queued_bytes:
+        stream.pump()
+    return bytes(stream.out).rstrip(b"\x00")
+
+
+def test_playback_goes_through_one_stream_that_stays_open():
+    """0.4 opened a stream per buffer, which clicked between chunks, so the
+    engine gathered each sentence before playing it and the cloud voice cost
+    1.5 s before the first sound. One stream, opened on the first play and
+    kept, is what lets a sentence be heard a chunk at a time."""
     spk = speaker_with_fake_portaudio()
-    pcm = bytes(range(256)) * 40  # 10240 bytes: four 2560-byte chunks at 16 kHz
-    run(spk.play(pcm))
+    first = bytes(range(1, 256)) * 20
+    second = bytes(range(255, 0, -1)) * 20
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(first))
+        await pumped(spk, spk.play(second))
+        return drained(spk)
+
+    heard = run(scenario())
     (stream,) = FakeOutputStream.instances
-    assert b"".join(stream.writes) == pcm
-    assert len(stream.writes) == 4
-    assert stream.kwargs == {"samplerate": 16000, "channels": 1, "dtype": "int16", "device": 2}
-    assert stream.started and stream.stopped and stream.closed
-    assert not stream.aborted
+    assert heard == first + second
+    assert stream.started and not stream.stopped and not stream.closed
+    assert stream.kwargs["samplerate"] == 16000 and stream.kwargs["channels"] == 1
+    assert stream.kwargs["dtype"] == "int16" and stream.kwargs["device"] == 2
+    assert stream.kwargs["blocksize"] == 320, "20 ms at 16 kHz"
+    assert "latency" not in stream.kwargs
+
+
+def test_play_returns_with_the_last_block_still_in_hand():
+    """So that the caller's next chunk lands before the queue runs dry."""
+    spk = speaker_with_fake_portaudio()
+    pcm = bytes(range(1, 256)) * 8  # 2040 bytes, a little over three blocks
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(pcm))
+        return spk.queued_bytes
+
+    left = run(scenario())
+    assert 0 < left <= spk.block_bytes
+
+
+def test_idle_blocks_are_silence_and_a_late_callback_is_counted():
+    spk = speaker_with_fake_portaudio()
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(b"\x01\x02"))
+        stream = spk._stream
+        first = stream.pump()
+        quiet = stream.pump()
+        late = stream.pump(status=types.SimpleNamespace(output_underflow=True))
+        return first, quiet, late
+
+    first, quiet, late = run(scenario())
+    assert first == b"\x01\x02" + bytes(638)
+    assert quiet == bytes(640) and late == bytes(640)
+    assert spk.underflows == 1
+
+
+def test_cancel_empties_the_queue_and_frees_the_waiting_play():
+    spk = speaker_with_fake_portaudio()
+    long_pcm = bytes(range(1, 256)) * 100
+    after_pcm = b"\x07\x07" * 40
+
+    async def scenario():
+        await started(spk)
+        task = asyncio.ensure_future(spk.play(long_pcm))
+        while spk._stream is None:
+            await asyncio.sleep(0.001)
+        spk._stream.pump()
+        await spk.cancel()
+        await asyncio.wait_for(task, 1.0)
+        silence = spk._stream.pump()
+        await pumped(spk, spk.play(after_pcm))
+        return silence, drained(spk)
+
+    silence, heard = run(scenario())
+    (stream,) = FakeOutputStream.instances
+    assert silence == bytes(640), "what was queued is gone"
+    assert heard.endswith(after_pcm), "and the next play goes through the same stream"
+    assert not stream.closed
+
+
+def test_stop_closes_the_stream_and_a_later_play_is_refused():
+    spk = speaker_with_fake_portaudio()
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(bytes(range(1, 256)) * 4))
+        await spk.stop()
+        (stream,) = FakeOutputStream.instances
+        assert stream.stopped and stream.closed
+        with pytest.raises(AudioError, match="not started"):
+            await spk.play(b"\x01\x02")
+
+    run(scenario())
+
+
+def test_the_block_and_the_latency_come_from_params():
+    spk = speaker_with_fake_portaudio(rate=22050, block_ms=10, latency="low")
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(bytes(range(1, 256)) * 4))
+
+    run(scenario())
+    (stream,) = FakeOutputStream.instances
+    assert stream.kwargs["blocksize"] == 220
+    assert stream.kwargs["latency"] == "low"
+
+
+def test_a_speaker_that_cannot_open_says_so():
+    spk = speaker_with_fake_portaudio()
+
+    class Refuses:
+        def __init__(self, **kwargs):
+            raise RuntimeError("device busy")
+
+    spk._sd = types.SimpleNamespace(RawOutputStream=Refuses)
+
+    async def scenario():
+        await started(spk)
+        with pytest.raises(AudioError, match="could not open the speaker"):
+            await spk.play(b"\x01\x02")
+
+    run(scenario())
 
 
 def test_playback_refuses_a_half_sample():
     spk = speaker_with_fake_portaudio()
-    with pytest.raises(AudioError):
-        run(spk.play(bytes(3)))
+
+    async def scenario():
+        await started(spk)
+        with pytest.raises(AudioError):
+            await spk.play(bytes(3))
+
+    run(scenario())
 
 
-def test_cancel_aborts_the_stream_that_is_playing():
-    spk = speaker_with_fake_portaudio()
-    stream = FakeOutputStream()
-    spk._stream = stream
-    run(spk.cancel())
-    assert stream.aborted
-
-
-def test_a_cancelled_play_ends_early_and_aborts():
-    spk = speaker_with_fake_portaudio()
-    pcm = bytes(2 * 1280 * 4)
-
-    class CancelOnSecondWrite(FakeOutputStream):
-        def write(self, data):
-            super().write(data)
-            if len(self.writes) == 2:
-                spk._cancelled.set()
-
-    spk._sd = types.SimpleNamespace(RawOutputStream=CancelOnSecondWrite)
-    run(spk.play(pcm))
-    (stream,) = FakeOutputStream.instances
-    assert len(stream.writes) == 2
-    assert stream.aborted and stream.closed
-    assert not stream.stopped
+def test_play_before_start_is_refused():
+    spk = Speaker({"device": "USB"}, AudioFormat(sample_rate=16000))
+    with pytest.raises(AudioError, match="not started"):
+        run(spk.play(b"\x01\x02"))
 
 
 def test_card_overflows_are_counted_from_the_callback():

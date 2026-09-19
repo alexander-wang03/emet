@@ -491,3 +491,19 @@ def test_a_false_wake_is_not_spoken_to(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "spoke" not in out and "reply:" not in out
+
+
+def test_the_footer_reports_late_speaker_callbacks(capsys):
+    """The persistent output stream counts the callbacks PortAudio reported
+    late; a run that stuttered should say so rather than sound like bad luck."""
+
+    class Session:
+        source_name = "wav"
+        dropped = 0
+        underflows = 3
+
+        def warm_start_hint(self):
+            return None
+
+    cli.print_run_footer(Session(), stats=False, busy=True)
+    assert "3 late callback(s)" in capsys.readouterr().out
