@@ -404,6 +404,13 @@ class TranscriberPlugin(Plugin):
         an empty final is a real answer (they said nothing the provider could
         make out) and the engine treats it as one. After this the plugin is
         ready for the next utterance's first `feed()`.
+
+        A failure goes in `Transcript.error`, with the words heard so far,
+        rather than raising. A network that went away costs one turn's words
+        and the run continues. The engine reads that field to tell a person
+        who said nothing from a service it could not reach, and says so in
+        the soul's voice rather than going quiet, which is what it did on the
+        reference body with the hotspot switched off.
         """
 
 
@@ -513,9 +520,19 @@ class VoicePlugin(Plugin):
     audio chunks: mono int16 at `describe().sample_rate`, in order,
     concatenable. A provider that streams yields the first chunk before the
     sentence is finished; one that does not yields the whole sentence as one
-    chunk and says `streaming=False`. The engine plays each sentence as its
-    audio completes and asks for the next while it plays, which is what lets
-    the first sentence be heard while the reply is still being written.
+    chunk and says `streaming=False`. The engine hands each chunk to the
+    speaker as it arrives and asks for the next while it plays, which is what
+    lets a sentence be heard before the voice has finished making it, and the
+    reply be heard before the model has finished writing it.
+
+    Every chunk is a whole number of samples, so an even number of bytes. A
+    boundary that falls between the two bytes of a sample is a click and a
+    byte out of step, and since the engine plays chunks rather than gathering
+    them the sink sees the boundary rather than the sentence. Carry a
+    dangling byte into the next chunk, as the Deepgram voice does.
+
+    Keep up with real time, or the card is given silence in the middle of a
+    word. `emet-talk --stats` counts those blocks and says so.
 
     **Format.** The voice states the sample rate; the engine opens the sink
     to match. A local model produces one rate and only one, and the sink is

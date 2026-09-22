@@ -185,8 +185,12 @@ async def _run(args: argparse.Namespace) -> int:
                 if utterance.transcript is not None:
                     if utterance.transcript.text:
                         print(f"    said {utterance.transcript.text!r}")
+                    elif utterance.transcript.error:
+                        print(f"    the words never arrived: {utterance.transcript.error}")
                     else:
                         print("    said nothing the provider could make out")
+                    if utterance.transcript.text and utterance.transcript.error:
+                        print(f"    and may be cut short: {utterance.transcript.error}")
                 if reply and utterance.transcript is not None and utterance.transcript.text.strip():
                     await _print_reply(session, utterance.transcript.text, speak=args.speak)
         except asyncio.CancelledError:
@@ -252,10 +256,16 @@ def print_run_footer(session: ListenSession, *, stats: bool, busy: bool) -> None
     hint = session.warm_start_hint()
     if hint:
         print("\n" + hint)
+    if session.starved:
+        print(
+            f"\nnote: the voice fell behind real time {session.starved} time(s) mid-sentence, "
+            f"so the speaker played silence inside a word. The card was served on time, so "
+            f"this is the voice or the network, not the loop."
+        )
     if session.underflows:
         print(
-            f"\nnote: the speaker reported {session.underflows} late callback(s): the "
-            f"card played silence it was not given, so playback may have stuttered."
+            f"\nnote: PortAudio reported {session.underflows} late callback(s): this process "
+            f"did not hand the card audio in time and it inserted a gap."
         )
     if session.dropped and busy:
         print(

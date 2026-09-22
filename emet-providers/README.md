@@ -147,7 +147,10 @@ answered, whether partials will arrive, and the sample rate the instance will
 actually run at; `feed(frame)` takes one frame and returns the newest partial
 if the text so far changed; `finish()` closes the utterance and returns the
 final. Every partial carries the whole text heard so far in the utterance, so
-a caption replaces its line rather than splicing fragments.
+a caption replaces its line rather than splicing fragments. A final whose
+words are missing because something broke says why in `Transcript.error` and
+does not raise: the engine answers that in the soul's own words, where an
+empty final with no error is a cough and stays silent.
 
 A language model has two: `describe()`, and `reply(prompt)`, an async
 iterator that yields `TextDelta`s as text arrives, a `ToolCall` per completed

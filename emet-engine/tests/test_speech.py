@@ -370,3 +370,88 @@ def test_a_text_stream_is_spoken_sentence_by_sentence_with_the_tail_last():
     spoken = run(speak_stream(mouth, deltas()))
     assert voice.asked == ["It is noon.", "Go now!", "And then"]
     assert [s.text for s in spoken] == voice.asked
+
+
+# ----------------------------------------------- a voice that falls behind
+
+
+class _PaddingSink(_Sink):
+    """A sink that pads like the real speaker: it fills a block with silence
+    whenever nothing was handed to it in time."""
+
+    def __init__(self, log: list[str] | None = None) -> None:
+        super().__init__(log)
+        self.padded = 0
+
+    def pad(self, blocks: int = 1) -> None:
+        self.padded += blocks
+
+
+def test_silence_inside_a_sentence_is_counted_and_silence_after_it_is_not():
+    """The card is served on time either way, so PortAudio reports nothing.
+    A gap inside a word is one a person hears; quiet between replies is not."""
+    sink = _PaddingSink()
+    mouth = Mouth(_Voice(), sink)
+    real_play = sink.play
+
+    async def play_then_fall_behind(pcm):
+        await real_play(pcm)
+        sink.pad()  # the voice was late with the next chunk
+
+    sink.play = play_then_fall_behind  # type: ignore[method-assign]
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One two.")
+        spoken = await mouth.finish()
+        sink.pad(5)  # nobody is speaking now
+        return spoken
+
+    spoken = run(scenario())
+    assert [s.ok for s in spoken] == [True]
+    assert mouth.starved == 2, "one per chunk played, and none of the five after"
+
+
+def test_a_sink_that_cannot_pad_is_read_defensively():
+    """A file has nothing to pad. `getattr`, like `dropped` on the source."""
+    mouth = Mouth(_Voice(), _Sink())
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One.")
+        return await mouth.finish()
+
+    run(scenario())
+    assert mouth.starved == 0
+
+
+def test_hush_after_finish_leaves_the_sink_alone():
+    """`ListenSession.stop()` hushes on the way out. A mouth that has already
+    finished has nothing to interrupt, and cancelling then throws away the
+    block the speaker keeps in hand, which is the end of the last word."""
+    sink = _Sink()
+    mouth = Mouth(_Voice(), sink)
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One.")
+        await mouth.finish()
+        await mouth.hush()
+
+    run(scenario())
+    assert sink.cancelled == 0
+
+
+def test_hush_while_speaking_still_cancels_the_sink():
+    sink = _Sink(delay_ms=200)
+    mouth = Mouth(_Voice(delay_ms=20), sink)
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One.")
+        await mouth.say("Two.")
+        await asyncio.sleep(0.05)
+        await mouth.hush()
+
+    run(scenario())
+    assert sink.cancelled == 1

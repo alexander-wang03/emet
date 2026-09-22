@@ -34,7 +34,10 @@ report healthy without one, naming the variable to set. It then opens and
 closes one connection, so a rejected key or an unreachable network is known
 at boot, in the terms the owner can act on, rather than at the first
 question. A failure during an utterance is logged and the final carries what
-was heard before it; a transient network fault is not a broken plugin.
+was heard before it, plus the reason in `Transcript.error`; a transient
+network fault costs one turn and leaves the plugin healthy. The engine reads
+that reason and says the soul's failure line, so a robot whose hotspot died
+mid-conversation tells the person instead of standing there.
 
 Params, all optional, from the body's `models.stt.params`:
 
@@ -344,23 +347,29 @@ class DeepgramTranscriber(TranscriberPlugin):
             # honest answer and costs no round trip.
             return Transcript(text="", final=True, confidence=1.0)
 
+        # This turn's failure, apart from `last_error`, which outlives the
+        # utterance. The transcript says what went wrong with *these* words,
+        # so a turn that went fine after one that did not is not blamed for it.
+        error: str | None = None
         utterance.queue.put_nowait(None)
         if utterance.task is not None:
             try:
                 await asyncio.wait_for(utterance.task, timeout=self.timeout_s)
             except asyncio.TimeoutError:
                 utterance.task.cancel()
-                self.last_error = f"no final within {self.timeout_s:.0f} s of CloseStream"
-                log.warning("deepgram: %s; returning what was heard", self.last_error)
+                error = f"no final within {self.timeout_s:.0f} s of CloseStream"
+                self.last_error = error
+                log.warning("deepgram: %s; returning what was heard", error)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - reported, and the words so far returned
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                log.warning("deepgram: %s; returning what was heard", self.last_error)
+                error = f"{type(exc).__name__}: {exc}"
+                self.last_error = error
+                log.warning("deepgram: %s; returning what was heard", error)
 
         confidences = utterance.final_confidences or [utterance.interim_confidence]
         confidence = max(0.0, min(1.0, sum(confidences) / len(confidences)))
-        return Transcript(text=utterance.text, final=True, confidence=confidence)
+        return Transcript(text=utterance.text, final=True, confidence=confidence, error=error)
 
     async def _pump(self, utterance: _Utterance) -> None:
         """Connect, then send frames and receive results until both sides end."""

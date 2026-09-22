@@ -461,3 +461,46 @@ def test_describe_before_start_is_unhealthy_and_after_is_streaming(monkeypatch):
     started(server, monkeypatch)
     d = make(server).describe()
     assert d.streaming and d.sample_rate == 16000 and d.provider == "deepgram"
+
+
+def test_a_connection_that_never_opens_reports_why_on_the_final(monkeypatch):
+    """The reference body with its hotspot switched off between boot and the
+    first question: the socket cannot resolve the host, no words arrive, and
+    the final says so rather than looking like a cough. Without this the
+    robot stands there in silence and the person cannot tell why."""
+
+    class UnreachableAfterBoot(FakeServer):
+        async def connect(self, url, **kwargs):
+            if not self.connections:
+                return await super().connect(url, **kwargs)  # the preflight, at boot
+            raise OSError("[Errno -3] Temporary failure in name resolution")
+
+    stt = started(UnreachableAfterBoot(), monkeypatch)
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        return await stt.finish()
+
+    final = run(scenario())
+    assert final.final and final.text == ""
+    assert final.error is not None and "name resolution" in final.error
+    assert stt.describe().healthy, "a dead network is not a broken plugin"
+
+
+def test_a_turn_that_went_fine_carries_no_error_after_one_that_did_not(monkeypatch):
+    """`last_error` outlives an utterance; the transcript must not. A turn
+    blamed for the previous turn's failure would have the robot apologising
+    for words it heard perfectly well."""
+    server = FakeServer({1: [results("hello", final=True)]})
+    stt = started(server, monkeypatch)
+    stt.last_error = "something from an earlier turn"
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        return await stt.finish()
+
+    final = run(scenario())
+    assert final.text == "hello"
+    assert final.error is None

@@ -31,9 +31,18 @@ called `say()` is back reading the language model. The sink is what makes
 consecutive chunks one continuous sound: `emet_hal.audio.Speaker` keeps one
 stream open across calls. 0.4 gathered each sentence into one buffer before
 playing it, because the speaker then opened a stream per buffer and clicked
-between chunks, and a cloud voice paid 1.5 s before its first sound for it.
-`finish()` waits for everything queued to be heard; `hush()` throws it all
-away and stops the sink mid-word, which is what barge-in will be made of.
+between chunks, and on the reference body a cloud voice paid 1762 ms before
+its first sound where a local one paid 456 ms. `finish()` waits until
+everything queued has reached the card, which is one block short of heard;
+`hush()` throws it all away and stops the sink mid-word, which is what
+barge-in will be made of.
+
+**A voice that falls behind is a gap in a word.** Chunks play as they
+arrive, so a voice slower than real time leaves the card with nothing and it
+plays silence. That is inaudible to PortAudio, which was served on time, so
+the mouth counts it instead: `starved` is the silence the sink filled
+between a sentence's first chunk and its last, and `emet-talk --stats`
+prints it.
 
 **A sentence lost is a sentence lost.** A voice that fails on one sentence
 (the network dropped, the model choked on a symbol) raises `PluginError`,
@@ -147,6 +156,10 @@ class _Job:
     #: Bytes the voice produced for this sentence, whatever became of them.
     audio_bytes: int = 0
     error: str | None = None
+    #: The sink's count of silence-filled blocks when this sentence's first
+    #: chunk was played. The difference at its last chunk is the silence a
+    #: person heard inside it.
+    padded_at: int | None = None
 
 
 #: What the synthesis stage hands the playback stage: a chunk of a
@@ -183,6 +196,11 @@ class Mouth:
         #: Every sentence handed over since `open()`, with its outcome, in
         #: the order it was heard.
         self.spoken: list[SpokenSentence] = []
+        #: Blocks of silence the sink played inside a sentence because the
+        #: voice had not produced the next chunk yet. Zero when the voice
+        #: keeps up with real time. Silence between sentences is not counted:
+        #: nobody is speaking then.
+        self.starved = 0
 
     # ------------------------------------------------------------ lifecycle
 
@@ -192,6 +210,7 @@ class Mouth:
         self._audio = asyncio.Queue()
         self._first_audio_reported = False
         self.spoken = []
+        self.starved = 0
         self._synth_task = asyncio.create_task(self._synthesise_all())
         self._play_task = asyncio.create_task(self._play_all())
 
@@ -218,7 +237,14 @@ class Mouth:
         return list(self.spoken)
 
     async def hush(self) -> None:
-        """Drop what is queued and stop the sink mid-word."""
+        """Drop what is queued and stop the sink mid-word.
+
+        Barge-in, and only that. A mouth that has already finished speaking
+        has nothing to interrupt, and cancelling the sink then would throw
+        away the block `play()` leaves in hand, which is the end of the last
+        word. `ListenSession.stop()` calls this on the way out.
+        """
+        running = self._synth_task is not None or self._play_task is not None
         for task in (self._synth_task, self._play_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -228,7 +254,8 @@ class Mouth:
                     await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-        await self.sink.cancel()
+        if running:
+            await self.sink.cancel()
         self._sentences = None
         self._audio = None
         self._synth_task = None
@@ -237,6 +264,14 @@ class Mouth:
     @property
     def failures(self) -> list[SpokenSentence]:
         return [s for s in self.spoken if not s.ok]
+
+    def _padded(self) -> int:
+        """Blocks the sink has filled with silence so far.
+
+        Read defensively, like `dropped` on the source: only a sink that
+        keeps one stream open has anything to pad, and a file has nothing.
+        """
+        return int(getattr(self.sink, "padded", 0) or 0)
 
     # ---------------------------------------------------------------- stages
 
@@ -270,6 +305,13 @@ class Mouth:
                 return
             job, chunk = item
             if chunk is None:
+                if job.padded_at is not None:
+                    # Silence the card was given between this sentence's
+                    # first chunk and its last: the voice fell behind real
+                    # time and a person heard a gap inside a word. Silence
+                    # after a sentence ends is not counted, because nobody is
+                    # speaking then.
+                    self.starved += max(0, self._padded() - job.padded_at)
                 outcome = SpokenSentence(text=job.text, audio_bytes=job.audio_bytes, error=job.error)
                 self.spoken.append(outcome)
                 if self.on_spoken is not None:
@@ -281,8 +323,18 @@ class Mouth:
                 # rest is dropped rather than played as half a sentence.
                 continue
             if not self._first_audio_reported and self.on_first_audio is not None:
+                # Before the sink, not after: `Speaker.play()` returns only
+                # once the card has the audio, so reporting afterwards would
+                # add the playback to the number that measures the wait
+                # before it. A chunk the sink then refuses leaves this mark
+                # early, which the session drops when nothing was spoken.
                 self._first_audio_reported = True
                 self.on_first_audio()
+            if job.padded_at is None:
+                # Taken before this sentence's first chunk goes over, so the
+                # window covers the whole time somebody was listening to it
+                # and none of the quiet that came before.
+                job.padded_at = self._padded()
             try:
                 await self.sink.play(chunk)
             except asyncio.CancelledError:

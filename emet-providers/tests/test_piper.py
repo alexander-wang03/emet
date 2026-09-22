@@ -333,3 +333,55 @@ def test_the_module_names_its_licence_and_packaging_facts():
     assert "GPL-3.0-or-later" in doc
     assert "2026-09-15" in doc
     assert "abi3" in doc and "aarch64" in doc
+
+
+def test_each_sentence_leaves_the_plugin_as_its_own_inference_finishes(monkeypatch, tmp_path):
+    """Espeak decides where a sentence ends and does not always agree with
+    the engine's splitter, so one call can still produce several chunks.
+    Draining the generator into a list first held the first chunk until the
+    last was made: 59 to 112 ms on the laptop, measured 2026-09-20."""
+    tts = started(monkeypatch, tmp_path)
+    order: list[str] = []
+    real = tts._voice.synthesize
+
+    def watched(text, syn_config=None, include_alignments=False):
+        for chunk in real(text, syn_config):
+            order.append("made")
+            yield chunk
+
+    tts._voice.synthesize = watched
+
+    async def scenario():
+        out = []
+        async for chunk in tts.speak("What time is it? It is noon."):
+            order.append("heard")
+            out.append(chunk)
+        return out
+
+    chunks = run(scenario())
+    assert len(chunks) == 2
+    assert order == ["made", "heard", "made", "heard"], (
+        "the first chunk waited for the last inference"
+    )
+
+
+def test_a_failure_after_the_first_sentence_keeps_what_was_already_made(monkeypatch, tmp_path):
+    """Stepping the generator changes this, so it is written down: the audio
+    already produced has left the plugin when the failure arrives, and the
+    engine keeps what was heard rather than losing the whole call."""
+    tts = started(monkeypatch, tmp_path)
+
+    def breaks_on_the_second(text, syn_config=None, include_alignments=False):
+        yield _Chunk("first", 22050)
+        raise RuntimeError("phonemizer choked")
+
+    tts._voice.synthesize = breaks_on_the_second
+
+    async def scenario():
+        out = []
+        with pytest.raises(PluginError, match="phonemizer choked"):
+            async for chunk in tts.speak("First one. Second one."):
+                out.append(chunk)
+        return out
+
+    assert run(scenario()) == [b"first" + bytes(2)]

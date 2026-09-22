@@ -31,8 +31,13 @@ soul names `en_US-ljspeech-medium` because LJ Speech is public domain.
 one sentence at a time, so `speak()` yields one chunk per sentence Piper
 finds in the text, after each is complete. `describe().streaming` is
 therefore False, honestly: the first byte arrives when the sentence does.
-Synthesis is CPU work and runs in a thread, so the event loop keeps reading
-the microphone meanwhile.
+Espeak decides where a sentence ends, and it does not always agree with the
+engine's splitter, so one call can still produce several chunks; each is
+yielded as its own inference finishes rather than after the last.
+Verified against piper-tts 1.8.0 on 2026-09-20: one sentence is one chunk
+whatever its internal punctuation, commas and semicolons included, and no
+public method goes below a sentence. Synthesis is CPU work and runs in a
+thread, so the event loop keeps reading the microphone meanwhile.
 
 **Warm at boot.** Piper loads espeak-ng on the first sentence it is given,
 which on a laptop cost the first reply 3.7 s more than the second (measured
@@ -230,18 +235,27 @@ class PiperVoice(VoicePlugin):
         if not self._started or self._voice is None:
             raise PluginError("the piper voice was not started")
 
-        def synthesise() -> list[bytes]:
-            return [
-                chunk.audio_int16_bytes
-                for chunk in self._voice.synthesize(text, self._synthesis_config)
-            ]
+        # One sentence's inference per call, on a worker thread, so the
+        # event loop keeps reading the microphone. Piper's generator yields
+        # each sentence as its own ONNX run finishes; draining it into a list
+        # first held every chunk until the last was done, which cost 59 to
+        # 112 ms on the laptop whenever espeak split the text further than
+        # the engine's own sentence splitter had (measured 2026-09-20).
+        chunks = self._voice.synthesize(text, self._synthesis_config)
+        exhausted = object()
 
-        try:
-            chunks = await asyncio.to_thread(synthesise)
-        except Exception as exc:  # noqa: BLE001 - one sentence lost, reported
-            self.last_error = f"{type(exc).__name__}: {exc}"
-            log.warning("piper: %s", self.last_error)
-            raise PluginError(f"piper could not say {text!r}: {self.last_error}") from exc
-        for chunk in chunks:
-            if chunk:
-                yield chunk
+        def step() -> Any:
+            return next(chunks, exhausted)
+
+        while True:
+            try:
+                chunk = await asyncio.to_thread(step)
+            except Exception as exc:  # noqa: BLE001 - one sentence lost, reported
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                log.warning("piper: %s", self.last_error)
+                raise PluginError(f"piper could not say {text!r}: {self.last_error}") from exc
+            if chunk is exhausted:
+                return
+            data = chunk.audio_int16_bytes
+            if data:
+                yield data

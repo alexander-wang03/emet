@@ -93,9 +93,13 @@ async def _run(args: argparse.Namespace) -> int:
                 on_delta=lambda text: print(text, end="", flush=True),
             ):
                 exchanges += 1
-                text = exchange.utterance.transcript.text.strip() if exchange.utterance.transcript else ""
+                transcript = exchange.utterance.transcript
+                text = transcript.text.strip() if transcript else ""
+                broke = transcript.error if transcript is not None else None
                 if not text:
-                    if exchange.utterance.reason is EndReason.SOURCE_ENDED:
+                    if broke:
+                        print(f"  (the words never arrived: {broke})")
+                    elif exchange.utterance.reason is EndReason.SOURCE_ENDED:
                         print("  (the recording ended before anything followed)")
                     else:
                         print("  (then nothing)")
@@ -105,6 +109,8 @@ async def _run(args: argparse.Namespace) -> int:
                 # The `you:` line and the streamed reply were printed by the
                 # two hooks above; this ends the reply's line.
                 print()
+                if broke:
+                    print(f"  (those words may be cut short: {broke})")
                 if exchange.reply is not None and exchange.reply.stop_reason == "refusal":
                     print("  (the provider declined)")
                 elif exchange.reply is not None and exchange.reply.stop_reason == "error":

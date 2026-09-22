@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from emet_sdk.types import Transcript
+
 from emet_engine import cli
 from emet_engine.session import ListenSession
 
@@ -493,17 +495,54 @@ def test_a_false_wake_is_not_spoken_to(tmp_path, monkeypatch, capsys):
     assert "spoke" not in out and "reply:" not in out
 
 
-def test_the_footer_reports_late_speaker_callbacks(capsys):
-    """The persistent output stream counts the callbacks PortAudio reported
-    late; a run that stuttered should say so rather than sound like bad luck."""
+def footer_session(**overrides):
+    fields = {"source_name": "wav", "dropped": 0, "underflows": 0, "starved": 0}
+    fields.update(overrides)
+    return type("Session", (), {**fields, "warm_start_hint": lambda self: None})()
 
-    class Session:
-        source_name = "wav"
-        dropped = 0
-        underflows = 3
 
-        def warm_start_hint(self):
-            return None
+def test_the_footer_reports_late_callbacks_and_a_voice_that_fell_behind(capsys):
+    """Two silences with different causes, and the footer used to blame one
+    counter for both. PortAudio reports a late callback when this process
+    missed the card's deadline. It reports nothing at all when the queue ran
+    dry, because it was served on time with silence, so the engine counts
+    that itself."""
+    cli.print_run_footer(footer_session(underflows=3, starved=7), stats=False, busy=True)
 
-    cli.print_run_footer(Session(), stats=False, busy=True)
-    assert "3 late callback(s)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "fell behind real time 7 time(s)" in out and "inside a word" in out
+    assert "3 late callback(s)" in out
+
+
+def test_a_clean_run_says_nothing_about_either(capsys):
+    cli.print_run_footer(footer_session(), stats=False, busy=True)
+
+    out = capsys.readouterr().out
+    assert "late callback" not in out and "fell behind" not in out
+
+
+def test_transcribe_says_when_the_words_never_arrived(tmp_path, monkeypatch, capsys):
+    """`emet-listen --transcribe` used to report a dead speech service as
+    "said nothing the provider could make out", which is a sentence about
+    the person when the fault is the network's."""
+    wav = write_wav(tmp_path / "gone.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+
+    real_start = ListenSession.start
+
+    async def start_then_cut_the_network(self):
+        await real_start(self)
+
+        async def finish():
+            return Transcript(text="", final=True, error="OSError: name resolution failed")
+
+        self._stt.finish = finish
+
+    monkeypatch.setattr(ListenSession, "start", start_then_cut_the_network)
+
+    rc = asyncio.run(cli._run(args(transcribe=True)))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "the words never arrived: OSError" in out
+    assert "said nothing the provider could make out" not in out
