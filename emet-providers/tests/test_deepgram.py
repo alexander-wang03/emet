@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 import types
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -504,3 +505,34 @@ def test_a_turn_that_went_fine_carries_no_error_after_one_that_did_not(monkeypat
     final = run(scenario())
     assert final.text == "hello"
     assert final.error is None
+
+
+def test_finish_does_not_wait_for_a_socket_that_will_not_unwind(monkeypatch):
+    """`wait_for` cancels the task and then waits for that cancellation to
+    finish. With mobile data off on the reference body it added ten seconds
+    to the five, and the person stood in silence for fifteen before the
+    robot said its failure line."""
+    stt = started(FakeServer(), monkeypatch, timeout_s=0.05)
+
+    async def will_not_unwind():
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(30)  # a dead socket, taking its time
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        stuck = asyncio.create_task(will_not_unwind())
+        stt._utterance.task.cancel()
+        stt._utterance.task = stuck
+        begun = time.perf_counter()
+        final = await stt.finish()
+        waited = time.perf_counter() - begun
+        stuck.cancel()
+        return final, waited
+
+    final, waited = run(scenario())
+    assert waited < 1.0, f"the person waited {waited:.1f} s"
+    assert final.final and final.error is not None
+    assert "no final within" in final.error
