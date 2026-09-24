@@ -76,9 +76,9 @@ are cheaper to get wrong.
 
 - **Drivers** in `emet-hal`: servos, displays, LEDs, sensors, motor drivers.
   None are written yet; `emet_hal.mock` shows the shape one takes.
-- **Providers** in `emet-providers`: speech recognition today, language
-  models and voices later. `emet_providers.mock` shows the shape, and
-  `DESIGN.md` section 12.3 says who chooses one.
+- **Providers** in `emet-providers`: speech recognition, language models
+  and voices. `emet_providers.mock` shows the shape of each, and `DESIGN.md`
+  sections 12.3 to 12.5 say who chooses one.
 - **Locomotion plugins**: new kinematics. `drive.kinematics` is an open enum
   precisely so that `legged`, `omni`, and things nobody has thought of can
   arrive as packages rather than as schema changes.
@@ -158,17 +158,38 @@ untangle a year later when nobody remembers where the number came from.
 Ordinary dependencies do not belong here. Declare those in the relevant
 `pyproject.toml`. This file is for what a lockfile cannot record.
 
-## Releasing
+## Versions, commits on master, and the changelog
 
-Minor and major releases follow [RELEASING.md](RELEASING.md). Two scripts do
-the mechanical half:
+Every merge to master is one version, one signed tag and one entry in
+[CHANGELOG.md](CHANGELOG.md). Master holds nothing that is not released.
+
+- **The number** follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+  A patch (`0.4.1`) fixes or improves what is already there. A minor
+  (`0.5.0`) adds a capability; before 1.0 that means a roadmap row met. A
+  major (`1.0.0`) overhauls a framework, so bundles, bodies or plugins
+  written before it may need migrating.
+- **The commit on master** is the pull request, squash-merged, titled
+  `X.Y.Z: What it does`. The summary after the colon is the first line of
+  the changelog entry, and `tools/tag_release.py` refuses a tag when the two
+  differ. No body beyond `Signed-off-by`.
+- **The pull request** bumps the four `pyproject.toml` files and writes the
+  entry: a heading `## [X.Y.Z] - YYYY-MM-DD`, one line saying what the
+  version does, then Added, Changed and Fixed, one line per change, each
+  naming its pull request. `tools/release_check.py` fails a pull request
+  that bumps the version without the entry.
+- **The evidence** stays in the pull request: what was run, on which
+  machine, and the numbers. The changelog carries the headline and the link.
+- **The tag** is signed, and its message is the entry. A minor or a major
+  gets a GitHub release page as well; a patch's tag is its release.
+
+Two scripts do the mechanical half of a release, and both run in CI:
 
 ```sh
 python tools/check_layering.py .
 python tools/release_check.py .
 ```
 
-Both run in CI, so they cannot quietly stop working.
+[RELEASING.md](RELEASING.md) is the checklist for what a script cannot check.
 
 ## Running things
 

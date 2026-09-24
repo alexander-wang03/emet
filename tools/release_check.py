@@ -14,6 +14,7 @@ It checks the *cross-cutting* invariants:
     plugins       every discovery group has a shipped implementation
     docs          nothing advertises a version the code no longer is
     readmes       every shipped entry point is named in its package's README
+    changelog     the declared version has its entry, dated, with a summary
     markers       no TODO or FIXME left in shipped source
 
 **Why this exists.** 0.3's scope was "audio in/out, wake word, VAD,
@@ -187,6 +188,42 @@ def check_docs(root: Path, version: str | None) -> None:
                 problem(f"{rel}:{n} still says {found[0]}, but this is {series}: {line.strip()}")
 
 
+def check_changelog(root: Path, version: str | None) -> None:
+    """The declared version has a changelog entry with a date and a summary.
+
+    Every merge to master is a version and every version is an entry, so a
+    pull request that bumps the four pyproject files without writing the
+    entry fails here, on the pull request, rather than at the tag, where the
+    person is holding a merge commit that cannot be amended without another
+    pull request. The summary line under the heading is the tag's first line
+    and the commit title on master, so it has to be there too.
+    """
+    if not version:
+        return
+    path = root / "CHANGELOG.md"
+    if not path.exists():
+        problem("CHANGELOG.md is missing")
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    heading = re.compile(r"^## \[" + re.escape(version) + r"\] - \d{4}-\d{2}-\d{2}\s*$")
+    for i, line in enumerate(lines):
+        if not heading.match(line):
+            continue
+        after = [entry.strip() for entry in lines[i + 1 : i + 4] if entry.strip()]
+        if not after or after[0].startswith(("#", "-", "[")):
+            problem(
+                f"CHANGELOG.md: the {version} entry needs a one-line summary under its "
+                f"heading. It is the tag's first line and the commit title on master."
+            )
+        else:
+            notes.append(f"changelog {version}: {after[0]}")
+        return
+    problem(
+        f"CHANGELOG.md has no entry `## [{version}] - YYYY-MM-DD`. Every merge to "
+        f"master is a version, and every version is an entry."
+    )
+
+
 def check_markers(root: Path) -> None:
     """No TODO or FIXME in shipped source. Notes to self are fine in a branch
     and are not fine in a tag."""
@@ -213,6 +250,7 @@ def main(argv: list[str]) -> int:
     check_groups(root)
     check_docs(root, version)
     check_plugin_readmes(root)
+    check_changelog(root, version)
     check_markers(root)
 
     for note in notes:
