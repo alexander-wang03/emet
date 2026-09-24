@@ -20,6 +20,7 @@ import threading
 import sys
 import types
 import wave
+from array import array
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from emet_hal.audio import (
     MicrophoneSource,
     WavSource,
     _downmix,
+    apply_gain,
     resolve_device,
 )
 
@@ -530,9 +532,12 @@ class FakeOutputStream:
         return bytes(block)
 
 
-def speaker_with_fake_portaudio(rate: int = 16000, **params) -> Speaker:
+def speaker_with_fake_portaudio(rate: int = 16000, *, gain_db: float | None = None, **params) -> Speaker:
     FakeOutputStream.instances.clear()
-    spk = Speaker({"device": "USB", "params": params}, AudioFormat(sample_rate=rate))
+    block = {"device": "USB", "params": params}
+    if gain_db is not None:
+        block["gain_db"] = gain_db
+    spk = Speaker(block, AudioFormat(sample_rate=rate))
     spk._sd = types.SimpleNamespace(RawOutputStream=FakeOutputStream)
     spk._device = 2
     return spk
@@ -553,7 +558,12 @@ async def pumped(spk: Speaker, coro, *, blocks: int = 500):
         await asyncio.sleep(0.001)
         if task.done():
             break
-        if spk._stream is not None:
+        # Only once something is queued. The worker thread assigns the stream
+        # a moment before `play()` resumes and queues, and a block pumped in
+        # that moment puts silence at the start of what the card heard. The
+        # speaker did nothing wrong, and the test failed on it now and then
+        # (seen on the development laptop, 2026-09-23).
+        if spk._stream is not None and spk.queued_bytes:
             spk._stream.pump()
     return await task
 
@@ -904,3 +914,245 @@ def test_the_stream_latency_is_recorded_when_it_opens():
 
     run(scenario())
     assert spk.stream_latency_s == pytest.approx(0.085)
+
+
+# --------------------------------------------------------------------------
+# Gain: `audio.output.gain_db`, which no sink read before 0.5
+# --------------------------------------------------------------------------
+
+
+def pcm_of(*samples: int) -> bytes:
+    return array("h", samples).tobytes()
+
+
+def samples_of(pcm: bytes) -> list[int]:
+    out = array("h")
+    out.frombytes(pcm)
+    return list(out)
+
+
+#: Samples between 12000 and 24000. -6 dB brings them to 6000 to 12000 and
+#: +6 dB pushes the upper half past full scale. None is zero after either,
+#: so trimming a drained stream's trailing silence cannot eat into them.
+LOUD = array("h", (12000 + (i * 97) % 12000 for i in range(2000))).tobytes()
+
+
+def test_minus_six_db_halves_every_sample():
+    """10 ** (-6 / 20) is 0.5012, so half to within rounding. Worked by hand:
+    32767 * 0.5012 is 16422.4, and -32768 * 0.5012 is -16422.9."""
+    heard = samples_of(apply_gain(pcm_of(1000, -1000, 32767, -32768, 1, 0), -6.0))
+    assert heard == [501, -501, 16422, -16423, 1, 0]
+
+
+def test_a_six_db_boost_clips_at_the_rails_rather_than_wrapping():
+    """+6 dB is 1.9953. 16000 doubles to 31924 and fits; 20000 would be
+    39905, which wrapped round is a loud click, so it stops at full scale."""
+    heard = samples_of(apply_gain(pcm_of(1000, 16000, 20000, -20000, -16500), 6.0))
+    assert heard == [1995, 31924, 32767, -32768, -32768]
+
+
+def test_zero_db_leaves_the_audio_untouched():
+    pcm = pcm_of(1, -2, 3)
+    assert apply_gain(pcm, 0.0) is pcm
+    assert apply_gain(pcm, 0) is pcm
+
+
+def test_the_gain_comes_from_the_manifests_output_block():
+    """`gain_db` sits beside `device` in `audio.output`, outside `params`.
+    Every example manifest sets it to -6.0, and until 0.5 no sink read it."""
+    assert Speaker({"device": "USB", "gain_db": -6.0}).gain_db == -6.0
+    assert Speaker({"device": "USB", "gain_db": None}).gain_db == 0.0
+    assert Speaker({"device": "USB"}).gain_db == 0.0
+
+
+@pytest.mark.parametrize("gain_db", [float("inf"), float("-inf"), float("nan"), 7000.0, "loud"])
+def test_a_gain_that_is_not_a_number_of_decibels_is_refused_at_construction(gain_db):
+    """Refused before the first sentence rather than by it. YAML spells
+    infinity `.inf`, and 7000 dB is a number the schema accepts whose factor
+    does not fit in a float, so `play()` would raise on every sentence."""
+    with pytest.raises(AudioError, match="gain_db"):
+        Speaker({"device": "USB", "gain_db": gain_db})
+
+
+@pytest.mark.parametrize("gain_db", [-6.0, 0.0, 6.0])
+def test_the_card_is_given_the_gained_samples(gain_db):
+    spk = speaker_with_fake_portaudio(gain_db=gain_db)
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(LOUD))
+        return drained(spk)
+
+    heard = run(scenario())
+    assert heard == apply_gain(LOUD, gain_db)
+    assert (heard == LOUD) == (gain_db == 0.0)
+
+
+def test_a_long_chunk_is_scaled_and_queued_a_block_at_a_time(monkeypatch):
+    """A local voice hands over a whole sentence, seconds of audio, as one
+    chunk. Scaled whole before any of it was queued, it could outlast the
+    block left in hand on a Pi, and the card would play silence inside the
+    reply. So each block is in the queue before the next one is scaled."""
+    from emet_hal import audio as audio_module
+
+    spk = speaker_with_fake_portaudio(gain_db=-6.0)
+    real = audio_module.apply_gain
+    seen: list[tuple[int, int]] = []
+
+    def watched(pcm, gain_db):
+        seen.append((len(pcm), spk.queued_bytes))
+        return real(pcm, gain_db)
+
+    monkeypatch.setattr(audio_module, "apply_gain", watched)
+
+    async def scenario():
+        await started(spk)
+        await pumped(spk, spk.play(LOUD))
+        return drained(spk)
+
+    heard = run(scenario())
+    assert heard == real(LOUD, -6.0)
+    assert len(seen) == 7, "4000 bytes in 640-byte blocks"
+    assert all(size <= spk.block_bytes for size, _ in seen)
+    assert [queued for _, queued in seen] == [i * spk.block_bytes for i in range(7)]
+
+
+def test_a_wav_sink_records_what_the_voice_made_whatever_the_gain(tmp_path):
+    """The gain is how loud one speaker plays. Engine tests read the mock
+    voice's words back out of this file, so it holds what the voice made."""
+    path = tmp_path / "said.wav"
+    block = {"sink": "wav", "gain_db": -6.0, "params": {"path": str(path)}}
+    sink = WavSink(block, AudioFormat(sample_rate=16000))
+
+    async def scenario():
+        await sink.start()
+        await sink.play(LOUD)
+        await sink.stop()
+
+    run(scenario())
+    with wave.open(str(path)) as w:
+        assert w.readframes(w.getnframes()) == LOUD
+
+
+# --------------------------------------------------------------------------
+# Device names, for the body's state file
+# --------------------------------------------------------------------------
+
+
+class FakeInputStream:
+    """Stands in for a `RawInputStream`. Opens nothing and never calls back."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.started = self.closed = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+#: Two one-way USB cards, named the way PortAudio names ALSA devices under
+#: `plughw:`.
+CARDS = [
+    {
+        "name": "USB PnP Sound Device: Audio (plughw:3,0)",
+        "hostapi": 0,
+        "max_input_channels": 1,
+        "max_output_channels": 0,
+        "default_samplerate": 48000.0,
+    },
+    {
+        "name": "USB Audio Device: - (plughw:2,0)",
+        "hostapi": 0,
+        "max_input_channels": 0,
+        "max_output_channels": 2,
+        "default_samplerate": 48000.0,
+    },
+]
+
+
+def fake_portaudio(monkeypatch, cards=CARDS, *, default_input=0, default_output=1, nameless=False):
+    """A `sounddevice` that lists `cards`, accepts every format and opens
+    nothing. `nameless` makes every lookup of a single device fail, the way
+    a card unplugged between listing and naming would."""
+
+    def query_devices(device=None, kind=None):
+        if device is None and kind is None:
+            return list(cards)
+        if nameless:
+            raise RuntimeError("Error querying device")
+        if device is None:
+            device = default_input if kind == "input" else default_output
+        return cards[device]
+
+    sd = types.ModuleType("sounddevice")
+    sd.query_devices = query_devices
+    sd.query_hostapis = lambda: [{"name": "ALSA"}]
+    sd.check_input_settings = lambda **kwargs: None
+    sd.check_output_settings = lambda **kwargs: None
+    sd.RawInputStream = FakeInputStream
+    sd.RawOutputStream = FakeOutputStream
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    # `_sd()` sets this on Linux. Setting it here first means the test leaves
+    # the environment as it found it.
+    monkeypatch.setenv("PA_ALSA_PLUGHW", "1")
+    return sd
+
+
+async def named(device):
+    """Start `device`, read its name, and stop it again."""
+    await device.start()
+    try:
+        return device.device_name
+    finally:
+        await device.stop()
+
+
+def test_nothing_is_named_before_start():
+    assert MicrophoneSource({"device": "USB"}).device_name is None
+    assert Speaker({"device": "USB"}).device_name is None
+
+
+def test_a_named_device_is_recorded_by_the_name_portaudio_gave_it(monkeypatch):
+    """"USB" in the manifest matched one card on this body and could match
+    another on the next. The state file keeps which."""
+    fake_portaudio(monkeypatch)
+    assert run(named(MicrophoneSource({"device": "USB", "channels": 1}))) == CARDS[0]["name"]
+    assert run(named(Speaker({"device": "USB"}))) == CARDS[1]["name"]
+
+
+def test_the_default_device_is_recorded_with_the_card_it_stood_for(monkeypatch):
+    """The default moves when a card is plugged in, so "default" alone would
+    not say which card a run heard through."""
+    fake_portaudio(monkeypatch)
+    assert run(named(MicrophoneSource({}))) == f"default ({CARDS[0]['name']})"
+    assert run(named(Speaker({"device": "default"}))) == f"default ({CARDS[1]['name']})"
+
+
+def test_a_default_that_is_itself_called_default_is_named_once(monkeypatch):
+    """ALSA's own default device is listed as "default"."""
+    alsa = [{**CARDS[0], "name": "default", "max_input_channels": 32, "max_output_channels": 32}]
+    fake_portaudio(monkeypatch, alsa, default_input=0, default_output=0)
+    assert run(named(MicrophoneSource({}))) == "default"
+    assert run(named(Speaker({}))) == "default"
+
+
+def test_a_device_portaudio_cannot_name_still_starts(monkeypatch):
+    """The name is a record. A boot that failed over a label would be the
+    wrong trade, so the name is None and the device runs."""
+    fake_portaudio(monkeypatch, nameless=True)
+
+    async def scenario():
+        mic = MicrophoneSource({"device": "USB"})
+        await mic.start()
+        opened = mic._stream.started
+        await mic.stop()
+        return mic.device_name, opened
+
+    assert run(scenario()) == (None, True)
+    assert run(named(Speaker({}))) is None

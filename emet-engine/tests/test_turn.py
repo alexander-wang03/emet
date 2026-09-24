@@ -323,3 +323,223 @@ def test_the_utterance_says_whether_it_was_extended():
     while utterance is None:
         utterance = ep.feed(quiet())
     assert not utterance.extended
+
+
+# ------------------------------------------------------------- its own click
+
+
+def click() -> list[bytes]:
+    """The listening click as the robot's own microphone hears it on a body
+    with no echo cancellation: loud, and long enough to be speech to the
+    detector, which wants two loud frames."""
+    return [loud(8000)] * 2
+
+
+def said(n: int) -> list[bytes]:
+    """`n` loud frames, each a different amplitude, so a test can find each
+    one in the captured audio."""
+    return [loud(3000 + 100 * i) for i in range(n)]
+
+
+def frames_until_end(ep: Endpointer, frames: list[bytes]):
+    """Feed until the turn ends; the utterance and how many frames it took."""
+    for n, frame in enumerate(frames, 1):
+        utterance = ep.feed(frame)
+        if utterance is not None:
+            return utterance, n
+    return None, len(frames)
+
+
+def test_the_click_without_deafen_starts_speech():
+    """The fault `deafen` exists for: the robot's own click opens the turn,
+    and the patience then runs from a sound nobody made."""
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=800)
+    for frame in click():
+        ep.feed(frame)
+    assert ep.started
+    utterance, _ = frames_until_end(ep, [quiet()] * 20)
+    assert utterance is not None
+    assert utterance.reason is EndReason.SILENCE
+    assert utterance.had_speech
+
+
+def test_a_click_inside_the_deaf_window_starts_nothing():
+    """Nobody spoke, so the turn ends as a false wake at the full lead-in,
+    exactly as it would have with no click at all."""
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=800)  # ten frames
+    ep.deafen(2 * FMT.frame_ms)
+    for frame in click():
+        assert ep.feed(frame) is None
+    assert not ep.started
+    utterance, n = frames_until_end(ep, [quiet()] * 20)
+    assert utterance is not None
+    assert utterance.reason is EndReason.NO_SPEECH
+    assert not utterance.had_speech
+    assert len(click()) + n == 10, "the deaf frames count toward the lead-in"
+
+
+def test_the_detector_never_hears_the_deaf_window():
+    """So the click cannot teach the noise floor that the room is loud."""
+    ep = Endpointer(FMT)
+    floor = ep.vad.noise_floor
+    ep.deafen(2 * FMT.frame_ms)
+    for frame in click():
+        ep.feed(frame)
+    assert ep.vad.frames == 0
+    assert ep.vad.noise_floor == floor
+
+
+def test_speech_that_runs_past_the_window_is_caught_with_its_pre_roll():
+    """Somebody who starts talking over the click loses nothing: the frames
+    inside the window wait in the pre-roll, and the turn starts with them."""
+    words = said(6)
+    ep = Endpointer(FMT, patience_ms=240, preroll_frames=4)
+    ep.deafen(2 * FMT.frame_ms)
+    utterance, _ = frames_until_end(ep, words + [quiet()] * 10)
+    assert utterance is not None
+    assert utterance.reason is EndReason.SILENCE
+    assert utterance.audio.startswith(b"".join(words))
+
+
+def test_after_the_window_the_endpointer_behaves_exactly_as_before():
+    """A window over frames that were quiet anyway changes nothing: the same
+    audio is captured and the turn ends on the same frame."""
+    frames = [quiet()] * 3 + said(5) + [quiet()] * 10
+    plain, plain_n = frames_until_end(Endpointer(FMT, patience_ms=240), frames)
+
+    ep = Endpointer(FMT, patience_ms=240)
+    ep.deafen(3 * FMT.frame_ms)
+    deafened, deaf_n = frames_until_end(ep, frames)
+
+    assert plain is not None and plain.reason is EndReason.SILENCE
+    assert deafened == plain
+    assert deaf_n == plain_n
+
+
+@pytest.mark.parametrize("ms", [0, -80])
+def test_deafen_zero_changes_nothing(ms):
+    frames = click() + said(3) + [quiet()] * 10
+    plain, plain_n = frames_until_end(Endpointer(FMT, patience_ms=240), frames)
+    ep = Endpointer(FMT, patience_ms=240)
+    ep.deafen(ms)
+    deafened, deaf_n = frames_until_end(ep, frames)
+    assert deafened == plain
+    assert deaf_n == plain_n
+
+
+def test_a_frame_that_begins_inside_the_window_is_ignored_whole():
+    """A window that ends partway through a frame still covers that frame:
+    the click may be in its first few milliseconds."""
+    ep = Endpointer(FMT)
+    ep.deafen(FMT.frame_ms + 1)
+    for frame in click():
+        ep.feed(frame)
+    assert ep.vad.frames == 0
+    ep.feed(loud())
+    assert ep.vad.frames == 1
+
+
+@pytest.mark.parametrize(("rate", "samples"), [(11025, 160), (16000, 1280), (44100, 1024)])
+def test_a_window_of_whole_frames_deafens_exactly_that_many(rate, samples):
+    """At any frame length. Found 2026-09-23: at 11025 Hz with 160-sample
+    frames, a three-frame window spent one frame at a time in floating point
+    left a crumb, and a fourth frame went unheard."""
+    fmt = AudioFormat(sample_rate=rate, frame_samples=samples)
+    frame = array("h", [8000, -8000] * (samples // 2)).tobytes()
+    for k in (1, 3, 5, 7):
+        ep = Endpointer(fmt, lead_in_ms=60000)
+        ep.deafen(k * fmt.frame_ms)
+        for _ in range(k):
+            ep.feed(frame)
+        assert ep.vad.frames == 0
+        ep.feed(frame)
+        assert ep.vad.frames == 1, f"{k} frames of window deafened {k + 1}"
+
+
+def loud_frames_until_speech(ep: Endpointer) -> int:
+    n = 0
+    while not ep.started:
+        n += 1
+        assert n < 50
+        ep.feed(loud())
+    return n
+
+
+def test_deafen_twice_keeps_the_larger_remaining_window():
+    onset = loud_frames_until_speech(Endpointer(FMT))
+
+    # Five frames, two spent, then a shorter call: three frames remain.
+    ep = Endpointer(FMT)
+    ep.deafen(5 * FMT.frame_ms)
+    ep.feed(quiet())
+    ep.feed(quiet())
+    ep.deafen(2 * FMT.frame_ms)
+    assert loud_frames_until_speech(ep) == 3 + onset
+
+    # The same, then a longer call: the longer one wins.
+    ep = Endpointer(FMT)
+    ep.deafen(5 * FMT.frame_ms)
+    ep.feed(quiet())
+    ep.feed(quiet())
+    ep.deafen(6 * FMT.frame_ms)
+    assert loud_frames_until_speech(ep) == 6 + onset
+
+
+def test_the_window_ends_with_the_turn():
+    """A window longer than the lead-in does not carry into the next turn,
+    which has its own click and its own window."""
+    ep = Endpointer(FMT, lead_in_ms=400)
+    ep.deafen(5000)
+    first, _ = frames_until_end(ep, [quiet()] * 20)
+    assert first is not None and first.reason is EndReason.NO_SPEECH
+    assert loud_frames_until_speech(ep) == loud_frames_until_speech(Endpointer(FMT))
+
+
+def test_deafen_once_speech_has_started_does_nothing():
+    """The frames after the start are the person's, and none of them may be
+    lost or kept from the silence that ends the turn."""
+    frames = said(4) + [quiet()] * 10
+    plain, plain_n = frames_until_end(Endpointer(FMT, patience_ms=240), frames)
+
+    ep = Endpointer(FMT, patience_ms=240)
+    for frame in frames[:3]:
+        ep.feed(frame)
+    assert ep.started
+    ep.deafen(800)
+    late, late_n = frames_until_end(ep, frames[3:])
+    assert late == plain
+    assert late_n + 3 == plain_n
+
+
+def test_the_room_heard_inside_the_window_still_sets_the_floor():
+    """The frames straight after a wake are often the quietest of the turn,
+    and the only chance a new turn's detector has to learn the room before
+    the person starts. Kept out of the floor, they left it at the absolute
+    floor, well above a quiet room, and a soft voice read as silence:
+    replaying the reference body's ten-minute recording on the laptop with a
+    three-frame window, 20 of 45 turns ended at a different frame
+    (2026-09-23). A quiet frame in the window still lowers the floor; the
+    click does not raise it."""
+    room = loud(60)
+    ep = Endpointer(FMT)
+    ep.deafen(3 * FMT.frame_ms)
+    for frame in [room] * 3:
+        ep.feed(frame)
+    assert ep.vad.noise_floor < ep.vad.tuning.absolute_floor
+    assert not ep.started
+
+
+def test_soft_speech_after_the_window_ends_where_it_would_have_without_it():
+    """The regression the floor fix is for, in miniature: the room, a word
+    at full voice, then the rest of the sentence softly. The window over the
+    room must not move the end of the turn."""
+    frames = [loud(60)] * 3 + [loud(2000)] * 4 + [loud(400)] * 14 + [quiet()] * 30
+
+    def end(deaf_frames: int) -> int:
+        ep = Endpointer(FMT, patience_ms=900)
+        if deaf_frames:
+            ep.deafen(deaf_frames * FMT.frame_ms)
+        _, n = frames_until_end(ep, frames)
+        return n
+
+    assert end(3) == end(0)

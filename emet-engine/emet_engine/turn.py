@@ -38,6 +38,15 @@ sentence ("where are my", "and then"), a trailing comma, or a clause with no
 end mark from a provider that has been supplying them. A wrong guess costs
 one more window of silence; a missed one cuts a person off mid-clause, which
 is the rudeness this exists to avoid.
+
+**Its own click.** The robot answers a wake with a soft click
+(`signal.listening`), and on a body with no echo cancellation its microphone
+hears it. A click heard across a frame boundary makes two loud frames, and
+two loud frames are speech to an energy detector, so the turn would start on
+the robot's own sound and the patience would run from there.
+`Endpointer.deafen()` gives the endpointer a window in which frames only
+wait: they fill the pre-roll and count toward the lead-in, cannot start
+speech, and teach the detector the room's level only when they are quiet.
 """
 
 from __future__ import annotations
@@ -103,6 +112,12 @@ def looks_incomplete(text: str) -> bool:
 #: `interaction.patience_ms` when a soul does not say. Matches the documented
 #: default so that a bundle written against the spec behaves as it reads.
 DEFAULT_PATIENCE_MS = 900
+
+#: A deaf window with less than this left is spent. Taking one frame at a time
+#: off a window in floating point can leave a crumb: three 160-sample frames
+#: at 11025 Hz leave 3.6e-15 ms of a three-frame window, which would deafen a
+#: fourth frame.
+_DEAF_CRUMB_MS = 1e-6
 
 
 class EndReason(StrEnum):
@@ -182,6 +197,9 @@ class Endpointer:
         #: the silence it was granted in is still running.
         self._extended = False
         self._extending = False
+        #: Audio still to arrive before the detector hears again, set by
+        #: `deafen()` and spent by `feed()`.
+        self._deaf_ms = 0.0
 
     @property
     def frame_ms(self) -> float:
@@ -189,10 +207,50 @@ class Endpointer:
 
     @property
     def started(self) -> bool:
-        """Whether speech has begun. Drives `signal.listening` later on."""
+        """Whether speech has begun.
+
+        `signal.listening` fires at the wake, before this can be true, and
+        its click is the sound `deafen()` keeps from making it true.
+        """
         return self._started
 
+    def deafen(self, ms: float) -> None:
+        """Keep the next `ms` of audio from starting speech.
+
+        For the robot's own tone: the listening click, heard by its own
+        microphone on a body with no echo cancellation (the reference body
+        says `aec: none`). Inside the window a frame goes to the pre-roll and
+        counts toward the lead-in, and it can neither start nor end speech.
+        A quiet one still lowers the noise floor as it would have
+        (`EnergyVad.learn_floor`), so the floor a turn starts from is the
+        room's; a loud one, the click, is left out of the floor, so it does
+        not teach the detector that the room is loud. A frame that begins
+        inside the window is judged that way whole. After the window, frames
+        are judged exactly as before.
+
+        Speech that begins inside the window is still caught: the pre-roll
+        holds the last frames when the detector fires after it, and the
+        transcriber, which the session feeds separately, hears every frame
+        regardless.
+
+        Called twice, the larger remaining window wins, and zero changes
+        nothing. The window belongs to the wait for speech: once speech has
+        started a call does nothing, and the end of the turn clears it.
+        """
+        if self._started:
+            return
+        self._deaf_ms = max(self._deaf_ms, float(ms))
+
     def feed(self, frame: bytes) -> Utterance | None:
+        if self._deaf_ms > _DEAF_CRUMB_MS:
+            # The robot's own tone, most likely. The frame waits in the
+            # pre-roll and cannot start speech; a quiet one still teaches the
+            # detector the room's level.
+            self._deaf_ms = max(0.0, self._deaf_ms - self.frame_ms)
+            self._preroll.append(frame)
+            self.vad.learn_floor(frame)
+            return self._wait()
+
         speaking = self.vad.feed(frame)
 
         if not self._started:
@@ -203,10 +261,7 @@ class Endpointer:
                 self._frames.extend(self._preroll)
                 self._speech_ms = len(self._frames) * self.frame_ms
                 return None
-            self._waited_ms += self.frame_ms
-            if self._waited_ms >= self.lead_in_ms:
-                return self._finish(EndReason.NO_SPEECH)
-            return None
+            return self._wait()
 
         self._frames.append(frame)
         self._speech_ms += self.frame_ms
@@ -244,6 +299,13 @@ class Endpointer:
         """
         return self._finish(EndReason.SOURCE_ENDED)
 
+    def _wait(self) -> Utterance | None:
+        """One more frame of the lead-in gone with nobody speaking."""
+        self._waited_ms += self.frame_ms
+        if self._waited_ms >= self.lead_in_ms:
+            return self._finish(EndReason.NO_SPEECH)
+        return None
+
     def _finish(self, reason: EndReason) -> Utterance:
         audio = b"".join(self._frames)
         utterance = Utterance(
@@ -258,6 +320,7 @@ class Endpointer:
         self._speech_ms = 0.0
         self._extended = False
         self._extending = False
+        self._deaf_ms = 0.0
         self._preroll.clear()
         self.vad.reset()
         return utterance

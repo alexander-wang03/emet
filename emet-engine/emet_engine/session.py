@@ -33,16 +33,39 @@ nothing still speaks. A robot that cannot hear its own name has no next rung,
 so `start()` refuses rather than running deaf. That check is the entire reason
 `WakeDescriptor.can_detect` exists. A transcriber that cannot start is refused
 on the same terms: what people say would go nowhere, and P0 fails loudly.
+
+**The body, since 0.5.** Before the microphone opens, every part the manifest
+declares is started and described (a reserved type has no plugin yet and is
+only listed), and every chain is resolved once against what the parts
+reported (`emet_engine.body`). The self-model is compiled from the same
+manifest and the same descriptors (`emet_engine.self_model`), and joins the
+persona in the system prompt with the tags this body can act on. From then
+on an intent is performed through its binding (`emet_engine.acting`): the
+reply's sentences as `speak` intents, the tags the model wrote at the place
+it wrote them, and the engine's own state as `signal` intents, `booting`
+when it is up, `listening` on a wake, `thinking` while the model works,
+`speaking` from the first sentence, `offline` when, in `talk()`, a
+provider's words or reply do not arrive, `error` when a declared part is not
+working, and `muted` when it stops listening for good.
+
+**Body-local state.** With a `body.id` in the manifest, what is true of this
+hardware and meaningless on the next is kept in the body's state file
+(`emet_engine.state`): the binding table, the audio devices that answered,
+each part's health, joint trims, and whatever a plugin asks to carry over,
+which for the shipped wake engine is its adapted cepstral mean.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, replace
-from typing import Any, AsyncIterator, Callable, Mapping
+from pathlib import Path
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 from emet_sdk.discovery import PluginRegistry
 from emet_sdk.models import chat_selection, stt_selection, tts_selection
+from emet_sdk.resolve import BindingTable, load_chains
 from emet_sdk.types import (
     AudioFormat,
     AudioSink,
@@ -51,6 +74,7 @@ from emet_sdk.types import (
     LanguageModelDescriptor,
     ReplyDone,
     ReplyEvent,
+    SelfModel,
     TextDelta,
     Transcript,
     TranscriberDescriptor,
@@ -64,15 +88,40 @@ from emet_sdk.validate import (
     DEFAULT_WAKE_ENGINE,
 )
 
+from emet_engine.acting import Actor, Performed, signal, speak
+from emet_engine.body import Body
 from emet_engine.intent_tags import IntentTags
 from emet_engine.metrics import SessionStats, Stopwatch
-from emet_engine.prompting import DEFAULT_MAX_TOKENS, Conversation, persona_lines, system_prompt
-from emet_engine.speech import Mouth, Sentences, SpokenSentence
+from emet_engine.prompting import (
+    DEFAULT_MAX_TOKENS,
+    Conversation,
+    offered_tags,
+    persona_lines,
+    system_prompt,
+)
+from emet_engine.self_model import compile_self_model
+from emet_engine.speech import Mouth, Sentences, SpokenSentence, split_sentences
+from emet_engine.state import BodyState
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance, looks_incomplete
 
-__all__ = ["EngineError", "ListenSession", "Exchange"]
+__all__ = ["EngineError", "ListenSession", "Exchange", "sentences_of"]
 
 log = logging.getLogger("emet_engine.session")
+
+#: The output latency assumed for a sink that plays into the room and has not
+#: said what its own is. The reference body's figure is unmeasured (the
+#: header prints the speaker's once its stream is open); this errs long,
+#: because a long guess costs a few frames the endpointer cannot start on,
+#: and a short one lets the robot hear its own click as somebody speaking.
+DEFAULT_OUTPUT_LATENCY_MS = 150.0
+
+
+def sentences_of(text: str) -> list[str]:
+    """A fixed piece of text as the sentences a voice is handed, in order."""
+    sentences = Sentences()
+    out = sentences.feed(text)
+    rest = sentences.flush()
+    return out + ([rest] if rest else [])
 
 
 class EngineError(RuntimeError):
@@ -138,6 +187,10 @@ class ListenSession:
         on_partial: Callable[[Transcript], None] | None = None,
         on_extended: Callable[[str], None] | None = None,
         on_intent: Callable[[Intent], None] | None = None,
+        on_performed: Callable[[Performed], None] | None = None,
+        chains: Sequence[str | Path] = (),
+        state: str | Path | None = None,
+        carry: bool | None = None,
     ) -> None:
         self.manifest = manifest
         self.soul = soul
@@ -152,6 +205,40 @@ class ListenSession:
         self.engine_name = str(self._wake_block.get("engine") or DEFAULT_WAKE_ENGINE)
         self.source_name = str(self._input_block.get("source") or DEFAULT_AUDIO_SOURCE)
         self.sink_name = str(self._output_block.get("sink") or DEFAULT_AUDIO_SINK)
+
+        body = manifest.get("body") or {}
+        #: The key to this body's state file, and its human label. `body.id`
+        #: is never a memory namespace; its one job is the state file.
+        self.body_id: str | None = str(body.get("id")) if body.get("id") else None
+        self.body_name: str | None = str(body.get("name")) if body.get("name") else None
+        #: Chain files laid over the SDK's, later winning, as `emet explain
+        #: --chains` does.
+        self.chain_files: list[str | Path] = list(chains)
+        #: An explicit state file, or None for the default place for this body.
+        self.state_arg = state
+        #: Whether plugins carry what they learned into and out of the state
+        #: file: the wake engine, every driver and the locomotion plugin. Off
+        #: by default for a recording, since a replay exists to reproduce a
+        #: run exactly and a mean adapted to somebody else's room is somebody
+        #: else's calibration. Trims still apply, and bindings, health and
+        #: devices are still recorded.
+        self.carry = (self.source_name != "wav") if carry is None else bool(carry)
+        self.body_state: BodyState | None = None
+        #: The started parts and the binding table, after `start()`.
+        self.body: Body | None = None
+        #: What the robot is told about its body, after `start()`.
+        self.self_model: SelfModel | None = None
+        #: The tags the system prompt offers on this body, after `start()`.
+        self.tags: list[str] = []
+        #: Fires with every intent performed, after it was.
+        self.on_performed = on_performed
+        self._actor: Actor | None = None
+        #: Where the wake engine's carried params live in the state file.
+        self._wake_key = f"wake.{self.engine_name}"
+        #: Names of the params the wake engine was handed from the state file.
+        self.wake_carried: list[str] = []
+        #: State-file keys `remember()` last wrote carried params under.
+        self.kept: list[str] = []
 
         #: The provider reference the soul and the body agree on, or None when
         #: neither names one. Resolved here, unconditionally, so that a caller
@@ -171,8 +258,9 @@ class ListenSession:
         self.on_intent = on_intent
 
         #: The language model the soul and the body agree on, and whether to
-        #: bring it up. The persona becomes the system prompt here, once; the
-        #: conversation accumulates across turns for the length of the run.
+        #: bring it up. The persona is the system prompt until `start()` adds
+        #: the body to it, once; the conversation accumulates across turns
+        #: for the length of the run.
         self.chat = chat_selection(manifest, soul)
         self.chat_name: str | None = self.chat["provider"] if self.chat else None
         self.reply = reply
@@ -229,6 +317,10 @@ class ListenSession:
                 "nothing to listen for."
             )
 
+        # First, because the wake engine is built from it: what the last run
+        # on this body learned. Never raises; a bad file is a warning.
+        self.body_state = BodyState.load(self.body_id, self.state_arg)
+
         self._wake = self._build_wake()
         await self._wake.start()
 
@@ -253,9 +345,10 @@ class ListenSession:
         if self.speak:
             await self._start_tts()
 
-        source_cls = self.registry.load_audio(self.source_name)
-        self._audio = source_cls(self._input_block, self.format)
-        await self._audio.start()
+        # The body, before the microphone too: a driver that is not installed
+        # stops the boot here, and a part that will not start is recorded
+        # and bound past.
+        await self._start_body()
 
         # The output rate is not the input rate and has no reason to be: one is
         # what the detector needs, the other is what synthesis produces. With
@@ -272,6 +365,31 @@ class ListenSession:
         if self._tts is not None:
             self._mouth = Mouth(self._tts, self._sink)
 
+        assert self.body is not None and self.self_model is not None
+        # Without a voice the words and the tones have nowhere to go, and the
+        # hardware rungs still act: `emet-listen` without `--speak` is quiet.
+        voiced = self._mouth is not None
+        self._actor = Actor(
+            self.body,
+            self.self_model,
+            say=self._voice_say if voiced else None,
+            play=self.say if voiced else None,
+            sample_rate=self.sink_format.sample_rate,
+            on_performed=self.on_performed,
+        )
+
+        # Booted, and said so, before the microphone opens: the rising pair is
+        # not in the first frames the wake engine hears, and no backlog of
+        # frames builds up while it plays to be counted as audio by the clock.
+        await self._signal("booting")
+        if self.body.faults:
+            await self._signal("error")
+
+        source_cls = self.registry.load_audio(self.source_name)
+        self._audio = source_cls(self._input_block, self.format)
+        await self._audio.start()
+        self._record_state()
+
         log.info(
             "listening for %r via %s on %s at %d Hz",
             self.phrase,
@@ -281,8 +399,126 @@ class ListenSession:
         )
 
     def _build_wake(self) -> Any:
+        """The wake engine, with whatever it carried over on this body laid
+        over the manifest's params. The state file wins: it holds what the
+        last run learned, and the manifest's value is the builder's guess."""
         wake_cls = self.registry.load_wake(self.engine_name)
-        return wake_cls(self._wake_block, self.phrase)
+        block = dict(self._wake_block)
+        carried = self.body_state.carried(self._wake_key) if self.body_state is not None and self.carry else {}
+        if carried:
+            block["params"] = {**dict(block.get("params") or {}), **carried}
+            self.wake_carried = sorted(carried)
+        return wake_cls(block, self.phrase)
+
+    async def _start_body(self) -> None:
+        """Start every declared part, resolve every chain once, compile the
+        self-model from the same answers, and put it in the system prompt."""
+        try:
+            chains = load_chains(self.chain_files)
+        except Exception as exc:  # noqa: BLE001 - a YAML error and a bad chain read the same to the person
+            raise EngineError(f"the chains could not be loaded: {type(exc).__name__}: {exc}") from exc
+        self.body = Body(self.manifest, self.registry, chains=chains, state=self.body_state, carry=self.carry)
+        await self.body.start()
+        self.self_model = compile_self_model(
+            self.manifest,
+            capabilities=self.body.capabilities,
+            locomotion=self.body.locomotion,
+            lines=self.lines,
+        )
+        self.tags = offered_tags(self.body.table)
+        self.system_prompt = system_prompt(self.soul, self_model=self.self_model, tags=self.tags)
+
+    def _record_state(self) -> None:
+        """Write what boot learned about this body: its bindings, its audio
+        devices, each part's health. A replay names no device, so a device
+        already on file is kept rather than overwritten with nothing."""
+        state = self.body_state
+        if state is None or not state.enabled or self.body is None:
+            return
+        state.record_bindings(self.body.table)
+        known = state.data.get("devices") or {}
+        state.record_devices(
+            getattr(self._audio, "device_name", None) or known.get("input"),
+            getattr(self._sink, "device_name", None) or known.get("output"),
+        )
+        state.record_health(self.body.health)
+        state.save()
+
+    @property
+    def binding_table(self) -> BindingTable | None:
+        """What each intent means on this body, resolved at boot."""
+        return self.body.table if self.body is not None else None
+
+    @property
+    def performed(self) -> list[Performed]:
+        """The most recent intents performed, oldest first."""
+        return list(self._actor.history) if self._actor is not None else []
+
+    def remember(self) -> Path | None:
+        """Keep what the plugins learned about this body for its next boot.
+
+        Asks the wake engine and every part for `carry_over()`, while they
+        are still running, and writes the state file. Returns where it was
+        written, or None when there is nothing to keep it in (no `body.id`,
+        or a file that could not be written; `body_state.warnings` says
+        which). An empty answer keeps what was carried before: a run that
+        learned nothing leaves the last lesson in place.
+        """
+        state = self.body_state
+        if state is None or not state.enabled or not self.carry:
+            return None
+        kept: dict[str, dict[str, Any]] = {}
+        if self._wake is not None:
+            try:
+                kept[self._wake_key] = dict(self._wake.carry_over() or {})
+            except Exception as exc:  # noqa: BLE001 - a plugin that cannot say keeps its old notes
+                log.warning("wake: carry_over failed: %s", exc)
+        if self.body is not None:
+            kept.update(self.body.carry_over())
+        # A key the state file refused (a value JSON cannot hold) is not
+        # reported as kept; the file's warning says why.
+        self.kept = sorted(key for key, params in kept.items() if params and state.carry(key, params))
+        if not self.kept:
+            return None
+        return state.save()
+
+    async def _signal(self, name: str) -> Performed | None:
+        """Perform one of the engine's own states through its binding."""
+        if self._actor is None:
+            return None
+        return await self._actor.perform(signal(name))
+
+    async def _voice_say(self, text: str, *, from_reply: bool = True) -> list[SpokenSentence]:
+        """The actor's way into the voice. Inside a reply the words join it,
+        in order; outside one they are spoken on their own and waited for.
+        `from_reply` is False for words the body adds (a filler, an
+        explanation), which are heard and not counted as the reply's."""
+        if self._mouth is None:
+            return []
+        if self._mouth.is_open:
+            for sentence in sentences_of(text):
+                await self._mouth.say(sentence, from_reply=from_reply)
+            return []
+        before = self.dropped
+        self._mouth.open()
+        try:
+            for sentence in sentences_of(text):
+                await self._mouth.say(sentence, from_reply=from_reply)
+            return await self._mouth.finish()
+        except BaseException:
+            # Interrupted mid-line: stop the words now, so nothing said on
+            # the way down (the muted tone) queues behind the rest of them.
+            await self._mouth.hush()
+            raise
+        finally:
+            self._charge_busy(before)
+
+    async def _utter(self, sentence: str) -> None:
+        """One sentence, as the `speak` intent it travels as."""
+        if self._actor is not None:
+            await self._actor.perform(speak(sentence))
+        elif self._mouth is not None:
+            await self._mouth.say(sentence)
 
     async def _start_stt(self) -> None:
         """Bring up speech recognition, or say precisely why not.
@@ -396,31 +632,100 @@ class ListenSession:
         )
 
     async def stop(self) -> None:
-        """Safe to call twice, and safe if `start()` raised part way through."""
+        """Safe to call twice, and safe if `start()` raised part way through.
+
+        First it keeps what its plugins learned, while they still know it and
+        before anything below can fail. Then it stops whatever it was saying,
+        and says it has stopped listening (`signal.muted`, the falling pair on
+        a body with nothing else to show it with), bounded so that a speaker
+        that has stopped taking audio cannot hold the way down. Then every
+        piece is shut down, each on its own, so one that raises cannot leave
+        the parts after it running; the first error is raised at the end.
+        A second Ctrl-C or SIGTERM on the way down is held the same way: the
+        rest still stop, and the cancellation is raised once they have.
+        """
+        try:
+            self.remember()
+        except Exception as exc:  # noqa: BLE001 - notes that cannot be kept must not strand the hardware
+            log.warning("stop: the body's state could not be kept: %s", exc)
+
+        failures: list[BaseException] = []
+        cancelled = False
+
+        async def step(name: str, action: Callable[[], Any], *, counts: bool = True) -> None:
+            nonlocal cancelled
+            try:
+                await action()
+            except asyncio.CancelledError:
+                log.warning("stop: cancelled while %s stopped; stopping the rest first", name)
+                cancelled = True
+            except Exception as exc:  # noqa: BLE001 - logged, and the next piece still stops
+                log.warning("stop: %s failed: %s", name, exc)
+                if counts:
+                    failures.append(exc)
+
         if self._mouth is not None:
-            await self._mouth.hush()
-            self._mouth = None
+            await step("the mouth", self._mouth.hush, counts=False)
+        if self._actor is not None and self._sink is not None:
+            await step("the muted signal", self._muted, counts=False)
+        self._actor = None
+        self._mouth = None
+
         if self._sink is not None:
-            await self._sink.stop()
+            await step("the sink", self._sink.stop)
             self._sink = None
         if self._tts is not None:
-            await self._tts.shutdown()
+            await step("the voice", self._tts.shutdown)
             self._tts = None
         if self._audio is not None:
-            await self._audio.stop()
+            await step("the source", self._audio.stop)
             self._audio = None
         if self._stt is not None:
-            await self._stt.shutdown()
+            await step("the transcriber", self._stt.shutdown)
             self._stt = None
         if self._llm is not None:
-            await self._llm.shutdown()
+            await step("the language model", self._llm.shutdown)
             self._llm = None
         if self._wake is not None:
-            await self._wake.shutdown()
+            await step("the wake engine", self._wake.shutdown)
             self._wake = None
+        if self.body is not None:
+            await step("the body", self.body.shutdown)
+        if cancelled:
+            raise asyncio.CancelledError()
+        if failures:
+            raise failures[0]
+
+    async def _muted(self) -> None:
+        """`signal.muted`, bounded at two seconds.
+
+        Skipped when the sink still holds audio it never played: that is a
+        speaker that stopped asking for audio, and a tone queued behind it
+        would wait out the whole backlog and then the stall grace."""
+        queued = int(getattr(self._sink, "queued_bytes", 0) or 0)
+        if queued > int(getattr(self._sink, "block_bytes", 0) or 0):
+            log.warning("stop: the sink still holds unplayed audio; no muted tone")
+            return
+        try:
+            await asyncio.wait_for(self._signal("muted"), timeout=2.0)
+        except asyncio.TimeoutError:
+            log.warning("stop: the muted signal took longer than two seconds; going on without it")
+        except Exception as exc:  # noqa: BLE001 - going down anyway; say why and keep going
+            log.warning("stop: the muted signal failed: %s", exc)
 
     async def __aenter__(self) -> "ListenSession":
-        await self.start()
+        try:
+            await self.start()
+        except BaseException:
+            # A boot that failed part way has started parts a person may be
+            # able to touch (a servo, from 1.0) and a microphone. `__aexit__`
+            # never runs for a failed `__aenter__`, so they are put safe here,
+            # and the reason the boot failed is the one that is raised.
+            try:
+                await self.stop()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("stop after a failed start: %s", exc)
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -441,6 +746,12 @@ class ListenSession:
         before = self.dropped
         try:
             await self._sink.play(pcm)
+        except BaseException:
+            # Cut off part way (Ctrl-C during the boot chime): drop the rest,
+            # so the sink holds no tail that `stop()` would take for a
+            # speaker that stopped asking for audio.
+            await self._sink.cancel()
+            raise
         finally:
             self._charge_busy(before)
 
@@ -467,15 +778,14 @@ class ListenSession:
         if self._mouth is None:
             raise EngineError("the voice was not started; construct the session with speak=True")
         before = self.dropped
-        sentences = Sentences()
         self._mouth.open()
         try:
-            for sentence in sentences.feed(text):
-                await self._mouth.say(sentence)
-            rest = sentences.flush()
-            if rest:
-                await self._mouth.say(rest)
+            for sentence in sentences_of(text):
+                await self._utter(sentence)
             return await self._mouth.finish()
+        except BaseException:
+            await self._mouth.hush()
+            raise
         finally:
             self._charge_busy(before)
 
@@ -553,6 +863,7 @@ class ListenSession:
                     )
                     if self.on_wake is not None:
                         self.on_wake(event)
+                    await self._listening(endpointer)
                 continue
 
             partial: Transcript | None = None
@@ -576,6 +887,35 @@ class ListenSession:
                 yield pending, await self._transcribed(utterance)
                 endpointer = None
                 pending = None
+
+    async def _listening(self, endpointer: Endpointer) -> None:
+        """Show that the robot is listening, and do not mistake the showing
+        for the person.
+
+        `signal.listening` on a body with no status light and no eyes is the
+        voice rung's soft click. Played into a room by a body that declares
+        no echo cancellation (the reference body says `aec: none`), the
+        click reaches its own microphone a moment later, and the energy
+        detector would take it for the start of speech: the person would
+        then have only one patience window to begin, where the lead-in gives
+        them two and a half seconds. So the endpointer is deaf for the
+        click's length plus the sink's output latency and one frame. Speech
+        that starts inside that window is still captured, the room's level
+        is still learned from it, and the transcriber hears every frame
+        regardless. A sink that plays into no room (`null`, `wav`) reports
+        no latency, and a recording never heard the click, so neither
+        deafens anything.
+        """
+        performed = await self._signal("listening")
+        if performed is None or not performed.audio_ms or self.format is None:
+            return
+        if self.source_name == "wav" or str(self._input_block.get("aec") or "none") != "none":
+            return
+        latency = getattr(self._sink, "stream_latency_s", None)
+        if not hasattr(self._sink, "stream_latency_s"):
+            return
+        latency_ms = float(latency) * 1000.0 if latency else DEFAULT_OUTPUT_LATENCY_MS
+        endpointer.deafen(performed.audio_ms + latency_ms + self.format.frame_ms)
 
     def _extend_if(self) -> bool:
         """The endpointer's question: do the words so far look unfinished?"""
@@ -628,6 +968,7 @@ class ListenSession:
         """
         if self._llm is None:
             raise EngineError("the language model was not started; construct the session with reply=True")
+        await self._signal("thinking")
         self.conversation.add_user(text)
         prompt = self.conversation.prompt(self.system_prompt, max_tokens=DEFAULT_MAX_TOKENS)
 
@@ -646,6 +987,63 @@ class ListenSession:
         finally:
             self._charge_busy(before)
 
+    async def _lifted(
+        self,
+        text: str,
+        *,
+        words: Callable[[str], Awaitable[None]] | None = None,
+        before_tag: Callable[[Intent], Awaitable[None]] | None = None,
+    ) -> AsyncIterator[ReplyEvent]:
+        """`answer()`, with every tag lifted out of the text and acted on
+        where it stood.
+
+        Each piece of clean text goes to `words` in order, and each tag is
+        reported (`last_intents`, `on_intent`), handed to `before_tag`, then
+        performed through its binding. The caller gets the clean text as
+        `TextDelta`s and the other events as they came, `ReplyDone` last. A
+        bracket still open when the reply ends is released as text before
+        `ReplyDone`, unless it can only have been a tag cut short, so what
+        is printed and what is heard stay the same words.
+        """
+        tags = IntentTags()
+        self.last_intents = []
+        async for event in self.answer(text):
+            if isinstance(event, ReplyDone):
+                held = tags.flush()
+                if held:
+                    if words is not None:
+                        await words(held)
+                    yield TextDelta(held)
+                yield event
+                continue
+            if not isinstance(event, TextDelta):
+                yield event
+                continue
+            clean: list[str] = []
+            for piece in tags.pieces(event.text):
+                if isinstance(piece, str):
+                    clean.append(piece)
+                    if words is not None:
+                        await words(piece)
+                    continue
+                self.last_intents.append(piece)
+                if self.on_intent is not None:
+                    self.on_intent(piece)
+                if before_tag is not None:
+                    await before_tag(piece)
+                if self._actor is not None:
+                    await self._actor.perform(piece)
+            if clean:
+                yield TextDelta("".join(clean))
+
+    async def answer_acted(self, text: str) -> AsyncIterator[ReplyEvent]:
+        """`answer()` for a reply that is printed and not spoken
+        (`emet-listen --reply`): the tags lifted out of the text, reported,
+        and acted on. Without a voice the voice rungs are recorded as
+        unvoiced, and the hardware rungs act."""
+        async for event in self._lifted(text):
+            yield event
+
     async def answer_aloud(self, text: str) -> AsyncIterator[ReplyEvent]:
         """`answer()`, spoken: the same events, and every sentence said through
         the voice as soon as it is complete.
@@ -660,64 +1058,89 @@ class ListenSession:
         A sentence the voice could not say is logged, counted, and skipped;
         the rest of the reply is still heard. `stats` gets the two numbers
         a person feels: transcript to first sound, transcript to last.
+
+        Every sentence travels as a `speak` intent through its binding, and
+        every tag the model wrote is acted on where it stood. On a bodiless
+        body `[express.curiosity]` is a filler in the reply's voice, queued
+        with the sentences, so it is heard before the sentence the tag
+        opened; a tag in the middle of a sentence is heard before that
+        sentence, which is the unit of speech. A hardware rung acts when the
+        model writes the tag, ahead of the words being heard, until the
+        choreographer (1.0) can time it to them. The first sound is also
+        `signal.speaking`.
         """
         if self._mouth is None:
             raise EngineError("the voice was not started; construct the session with speak=True")
         sentences = Sentences()
-        tags = IntentTags()
-        self.last_intents = []
         mouth = self._mouth
         first_ms: float | None = None
         watch = Stopwatch()
+        speaking = False
 
         def mark_first() -> None:
             nonlocal first_ms
             if first_ms is None:
                 first_ms = watch.peek_ms()
 
+        async def start_speaking() -> None:
+            nonlocal speaking
+            if not speaking:
+                speaking = True
+                await self._signal("speaking")
+
+        async def utter(sentence: str) -> None:
+            await start_speaking()
+            await self._utter(sentence)
+
+        async def words(piece: str) -> None:
+            for sentence in sentences.feed(piece):
+                await utter(sentence)
+
+        async def before_tag(intent: Intent) -> None:
+            # A sentence that has its end mark and is only waiting for the
+            # next word to confirm it ("Well..." before a capital, "news!"
+            # with the tag glued on) is said first: the tag opens the next.
+            # The splitter decides, as if that next word had come, so "Dr."
+            # and "3." wait for the rest of their sentence as they would
+            # without a tag.
+            closed, _ = split_sentences(sentences.pending.rstrip() + " X")
+            if closed:
+                rest = sentences.flush()
+                if rest:
+                    await utter(rest)
+            binding = self._actor.binding_for(intent) if self._actor is not None else None
+            if binding is not None and binding.is_voice and binding.action in ("inflect", "explain", "utter"):
+                # A filler or an explanation is the first sound of the reply
+                # as much as a sentence is.
+                await start_speaking()
+
         mouth.on_first_audio = mark_first
         mouth.open()
         with watch:
             try:
-                async for event in self.answer(text):
-                    if isinstance(event, TextDelta):
-                        # Tags are lifted out before the words reach the voice
-                        # or the caller; the intents they name are reported.
-                        clean, intents = tags.feed(event.text)
-                        for intent in intents:
-                            self.last_intents.append(intent)
-                            if self.on_intent is not None:
-                                self.on_intent(intent)
-                        if not clean:
-                            continue
-                        for sentence in sentences.feed(clean):
-                            await mouth.say(sentence)
-                        yield TextDelta(clean)
-                        continue
+                async for event in self._lifted(text, words=words, before_tag=before_tag):
                     yield event
                 # `answer()` charged the frames dropped while the model wrote;
                 # what follows is the voice's, and is charged below.
                 after_reply = self.dropped
-                held = tags.flush()
-                if held:
-                    sentences.feed(held)
                 rest = sentences.flush()
                 if rest:
-                    await mouth.say(rest)
+                    await utter(rest)
                 spoken = await mouth.finish()
             except BaseException:
                 await mouth.hush()
                 raise
-        heard = sum(1 for s in spoken if s.ok and s.audio_bytes)
+        heard = [s for s in spoken if s.ok and s.audio_bytes]
         self.stats.record_speech(
             # A reply nobody heard has no first sound. `on_first_audio` fires
             # before the sink accepts the chunk, so a reply whose every
             # sentence failed would otherwise contribute a `voice first` for
-            # audio that never left the machine.
+            # audio that never left the machine. A filler is a first sound.
             first_ms if heard else None,
             watch.elapsed_ms,
-            spoken=heard,
-            lost=sum(1 for s in spoken if not s.ok),
+            # The reply's own sentences; a filler is not one of them.
+            spoken=sum(1 for s in heard if s.from_reply),
+            lost=sum(1 for s in spoken if not s.ok and s.from_reply),
         )
         self._charge_busy(after_reply)
 
@@ -766,8 +1189,11 @@ class ListenSession:
                 # are missing gets the failure line, and a plain empty one
                 # keeps the old silence.
                 broke = transcript is not None and transcript.error is not None
-                line = self.lines.get("failed" if broke else "nothing_heard")
-                spoken = await self.speak_text(line) if line else []
+                if broke:
+                    spoken, line = await self._say_failure()
+                else:
+                    line = self.lines.get("nothing_heard")
+                    spoken = await self.speak_text(line) if line else []
                 yield Exchange(wake, utterance, None, tuple(spoken), line, ())
                 continue
             if on_said is not None:
@@ -783,11 +1209,28 @@ class ListenSession:
             line: str | None = None
             if done is not None and done.stop_reason == "refusal":
                 line = self.lines.get("declined")
+                if line:
+                    spoken += await self.speak_text(line)
             elif done is not None and done.stop_reason == "error":
-                line = self.lines.get("failed")
-            if line:
-                spoken += await self.speak_text(line)
+                more, line = await self._say_failure()
+                spoken += more
             yield Exchange(wake, utterance, done, tuple(spoken), line, intents)
+
+    async def _say_failure(self) -> tuple[list[SpokenSentence], str | None]:
+        """A provider's words or reply did not arrive: `signal.offline`, and
+        the soul's `failed` line, said once.
+
+        On a body with nothing else to show it with, the signal's voice rung
+        is `explain`, whose words for `offline` are the soul's `failed`
+        line, and saying it is the whole of both. Where a status light shows
+        the state instead, the words are still owed to the person who asked,
+        and are said after it. Returns what was heard and the line.
+        """
+        performed = await self._signal("offline")
+        if performed is not None and performed.said:
+            return list(performed.spoken), performed.said
+        line = self.lines.get("failed")
+        return (await self.speak_text(line) if line else []), line
 
     def _charge_busy(self, dropped_before: int) -> None:
         """Attribute frames dropped during `say()` or `answer()` to the loop's

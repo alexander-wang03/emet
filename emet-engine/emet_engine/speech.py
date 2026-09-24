@@ -139,11 +139,16 @@ class Sentences:
 @dataclass(frozen=True, slots=True)
 class SpokenSentence:
     """What happened to one sentence: how long its audio was, and whether the
-    voice managed it."""
+    voice managed it.
+
+    `from_reply` is False for words the body added to a reply, a filler for
+    a tag or an explanation, which were heard and are not among the
+    sentences the model wrote."""
 
     text: str
     audio_bytes: int
     error: str | None = None
+    from_reply: bool = True
 
     @property
     def ok(self) -> bool:
@@ -153,6 +158,7 @@ class SpokenSentence:
 @dataclass
 class _Job:
     text: str
+    from_reply: bool = True
     #: Bytes the voice produced for this sentence, whatever became of them.
     audio_bytes: int = 0
     error: str | None = None
@@ -214,12 +220,12 @@ class Mouth:
         self._synth_task = asyncio.create_task(self._synthesise_all())
         self._play_task = asyncio.create_task(self._play_all())
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, *, from_reply: bool = True) -> None:
         """Queue one sentence. Returns at once."""
         if self._sentences is None:
             raise RuntimeError("the mouth is not open")
         if text.strip():
-            self._sentences.put_nowait(_Job(text=text.strip()))
+            self._sentences.put_nowait(_Job(text=text.strip(), from_reply=from_reply))
 
     async def finish(self) -> list[SpokenSentence]:
         """Wait until everything queued has been heard, and close."""
@@ -264,6 +270,11 @@ class Mouth:
     @property
     def failures(self) -> list[SpokenSentence]:
         return [s for s in self.spoken if not s.ok]
+
+    @property
+    def is_open(self) -> bool:
+        """Whether a reply is being spoken: `say()` queues behind it."""
+        return self._sentences is not None
 
     def _padded(self) -> int:
         """Blocks the sink has filled with silence so far.
@@ -312,7 +323,9 @@ class Mouth:
                     # after a sentence ends is not counted, because nobody is
                     # speaking then.
                     self.starved += max(0, self._padded() - job.padded_at)
-                outcome = SpokenSentence(text=job.text, audio_bytes=job.audio_bytes, error=job.error)
+                outcome = SpokenSentence(
+                    text=job.text, audio_bytes=job.audio_bytes, error=job.error, from_reply=job.from_reply
+                )
                 self.spoken.append(outcome)
                 if self.on_spoken is not None:
                     self.on_spoken(outcome)

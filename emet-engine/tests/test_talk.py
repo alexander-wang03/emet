@@ -197,7 +197,9 @@ def test_the_trailing_clause_is_announced(tmp_path, monkeypatch, capsys):
     assert "extended 1" in text
 
 
-def test_intents_the_model_tagged_are_listed_and_not_spoken(tmp_path, monkeypatch, capsys):
+def test_intents_the_model_tagged_are_listed_and_acted_on_and_never_read_aloud(tmp_path, monkeypatch, capsys):
+    """The tag's name is never said; what the body does with it is. On a
+    bodiless body curiosity is "hm?" in the robot's own voice."""
     out = str(tmp_path / "tagged.wav")
     wav = write_wav(tmp_path / "i.wav", spoken(b"hello"))
     manifest = body(wav, out)
@@ -212,7 +214,7 @@ def test_intents_the_model_tagged_are_listed_and_not_spoken(tmp_path, monkeypatc
     from emet_providers.mock import read_back
 
     with wave.open(out, "rb") as w:
-        assert read_back(w.readframes(w.getnframes())) == "Hello! Tell me more."
+        assert read_back(w.readframes(w.getnframes())) == "hm? Hello! Tell me more."
 
 
 def test_an_interrupted_run_still_reports(tmp_path, monkeypatch, capsys):
@@ -237,10 +239,63 @@ def test_an_interrupted_run_still_reports(tmp_path, monkeypatch, capsys):
     assert "stopped. 1 exchange(s)." in text and "verdict" in text
 
 
+def test_a_cancel_during_boot_ends_the_run_the_way_ctrl_c_does(tmp_path, monkeypatch, capsys):
+    """SIGTERM or SIGHUP while the voice runs its preflight: "stopped.", a
+    clean exit, and every part put to rest, as Ctrl-C at that moment."""
+    wav = write_wav(tmp_path / "boot.wav", spoken(b"hello"))
+    stub_loaders(monkeypatch, body(wav), soul())
+    stopped: list[bool] = []
+    real_start, real_stop = ListenSession.start, ListenSession.stop
+
+    async def start(self):
+        await real_start(self)
+        asyncio.current_task().cancel()
+        await asyncio.sleep(0)
+
+    async def stop(self):
+        await real_stop(self)
+        stopped.append(True)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+    monkeypatch.setattr(ListenSession, "stop", stop)
+
+    assert talk.main(["body.yaml", "soul.yaml"]) == 0
+    assert capsys.readouterr().out.rstrip().endswith("stopped.")
+    assert stopped == [True]
+
+
 def test_help_names_no_stage_flags():
     with pytest.raises(SystemExit) as exc:
         talk.main(["--help"])
     assert exc.value.code == 0
+
+
+def test_the_header_names_the_body_and_prints_the_binding_table(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "hdr.wav", false_wake())
+    manifest = body(wav)
+    manifest["body"] = {"id": "talk_body", "name": "a test rig", "scale": "desk", "power": "plugged_in"}
+    stub_loaders(monkeypatch, manifest, soul())
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    text = capsys.readouterr().out
+    assert "  body     a test rig (talk_body)" in text
+    assert "  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice" in text
+    assert "voice  utter" in text and "speak" in text
+    assert "  state    " in text and "talk_body.json" in text
+    assert "  self     " in text
+
+
+def test_explain_prints_the_system_prompt_with_the_body_in_it(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "exp.wav", false_wake())
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    talk.main(["body.yaml", "soul.yaml", "--explain"])
+
+    text = capsys.readouterr().out
+    assert "SYSTEM PROMPT" in text and "YOUR BODY" in text
+    assert "cannot come to you" in text
+    assert "[express.curiosity]" in text
 
 
 def test_a_transcriber_that_lost_the_network_gets_the_souls_words(tmp_path, monkeypatch, capsys):

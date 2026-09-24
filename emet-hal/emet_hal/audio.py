@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import sys
 import threading
@@ -58,6 +59,7 @@ __all__ = [
     "Speaker",
     "WavSink",
     "WavSource",
+    "apply_gain",
     "devices",
     "resolve_device",
 ]
@@ -194,6 +196,30 @@ def resolve_device(spec: str | int | None, *, want_input: bool) -> int | None:
         f"no {'input' if want_input else 'output'} device matches {text!r}.{hint}\n"
         f"Available:\n  {listing}"
     )
+
+
+def _device_name(sd: Any, device: int | None, *, want_input: bool) -> str | None:
+    """What PortAudio calls a resolved device, for the body's state file.
+
+    A manifest's "USB" matches whichever card enumerated with that in its
+    name, and USB enumeration differs per body, so the name the device
+    actually had is worth keeping. The system default is written as
+    "default" and the name of the device it stood for, because the default
+    moves when a card is plugged in.
+
+    Never raises. The name is a record; a device that cannot be named still
+    plays, and a boot that fails over a label would be the wrong trade.
+    """
+    try:
+        if device is None:
+            info = sd.query_devices(kind="input" if want_input else "output")
+            name = str(info["name"])
+            # ALSA's own default device is called "default"; saying it twice
+            # adds nothing.
+            return "default" if name == "default" else f"default ({name})"
+        return str(sd.query_devices(device)["name"])
+    except Exception:  # noqa: BLE001 - any failure leaves the name unknown
+        return None
 
 
 def _check_rate(device: int | None, rate: int, channels: int, *, want_input: bool) -> None:
@@ -350,6 +376,10 @@ class MicrophoneSource:
         #: Frames the card lost before this code saw them: PortAudio reported
         #: an input overflow. A different cause from `dropped`, the same loss.
         self.overflows = 0
+        #: The name PortAudio reports for the device `start()` resolved, for
+        #: the body's state file. None before then, and when PortAudio could
+        #: not name it.
+        self.device_name: str | None = None
         # A mic array is downmixed here so nothing downstream counts capsules.
         # Channel 0 by default rather than an average: on a ReSpeaker-style
         # array that channel carries the hardware-processed output, and
@@ -364,6 +394,7 @@ class MicrophoneSource:
         sd = _sd()
         device = resolve_device(self.config.get("device"), want_input=True)
         _check_rate(device, self.format.sample_rate, self._channels, want_input=True)
+        self.device_name = _device_name(sd, device, want_input=True)
 
         self._loop = asyncio.get_running_loop()
         self._queue = asyncio.Queue(maxsize=self.QUEUE_FRAMES)
@@ -429,6 +460,53 @@ class MicrophoneSource:
         self._queue = None
 
 
+def apply_gain(pcm: bytes, gain_db: float) -> bytes:
+    """Scale mono int16 PCM by `gain_db` decibels, clipped at the rails.
+
+    An amplitude gain, 10 ** (gain_db / 20): -6 dB is about half and +6 dB
+    about double. Each sample is rounded to the nearest integer, and a boost
+    past full scale is clipped to [-32768, 32767], because a sample that wraps
+    round instead is a loud click. 0 dB returns `pcm` itself.
+
+    Pure Python over `array("h")`, which is native byte order, the same as the
+    int16 PortAudio is opened with. On the development laptop (Python 3.13,
+    timeit, 2026-09-23) it costs about 3 ms per second of 24 kHz audio to
+    attenuate and 4 ms to boost. A Pi 5 is slower by a factor not measured
+    here, which is why `Speaker.play()` scales and queues a block at a time.
+    """
+    if not gain_db:
+        return pcm
+    factor = 10.0 ** (gain_db / 20.0)
+    samples = array("h")
+    samples.frombytes(pcm)
+    if factor <= 1.0:
+        # Attenuation cannot leave the int16 range, so the clip is skipped.
+        # That saves about a quarter of the time.
+        return array("h", [round(s * factor) for s in samples]).tobytes()
+    return array("h", [max(-32768, min(32767, round(s * factor))) for s in samples]).tobytes()
+
+
+def _gain_db(value: Any) -> float:
+    """`audio.output.gain_db` as a number `apply_gain` can use.
+
+    The schema asks only for a number, and YAML spells infinity `.inf`. An
+    infinite, NaN or absurdly large gain would raise inside every `play()`,
+    so it is refused here, at boot, with a message that names the field.
+    Past about +6000 dB, 10 ** (gain_db / 20) no longer fits in a float.
+    """
+    try:
+        gain_db = float(value or 0.0)
+        usable = math.isfinite(gain_db) and math.isfinite(10.0 ** (gain_db / 20.0))
+    except (TypeError, ValueError, OverflowError):
+        usable = False
+    if not usable:
+        raise AudioError(
+            f"audio.output.gain_db is {value!r}; it has to be a finite number of "
+            f"decibels, such as -6.0"
+        )
+    return gain_db
+
+
 def _wake(fut: "asyncio.Future[None]") -> None:
     """Resolve a `play()`'s future once. Runs on the event loop's thread."""
     if not fut.done():
@@ -462,6 +540,11 @@ class Speaker:
     latency, and the stream stays open. That is barge-in. `stop()` is not:
     it waits out what is queued before closing, because the block `play()`
     left in hand is the end of the last word.
+
+    `audio.output.gain_db` is applied here, in `play()`, and nowhere else: it
+    is how loud this speaker is on this body. `WavSink` and `NullSink` take
+    no gain, since a recording of what was said should hold what the voice
+    produced.
 
     Deliberately small otherwise. It takes int16 PCM at the format it was
     given and plays it; how that audio came to exist is the business of
@@ -497,6 +580,13 @@ class Speaker:
         #: Seconds of slack before `play()` calls the stream dead.
         #: `params.stall_grace_s` overrides it.
         self.stall_grace_s = float(params.get("stall_grace_s") or self.STALL_GRACE_S)
+        #: Decibels applied to everything played, from `audio.output.gain_db`.
+        #: 0 leaves the audio untouched.
+        self.gain_db = _gain_db(self.config.get("gain_db"))
+        #: The name PortAudio reports for the device `start()` resolved, for
+        #: the body's state file. None before then, and when PortAudio could
+        #: not name it.
+        self.device_name: str | None = None
         self._device: int | None = None
         self._sd: Any = None
         self._stream: Any = None
@@ -549,6 +639,7 @@ class Speaker:
         self._sd = _sd()
         self._device = resolve_device(self.config.get("device"), want_input=False)
         _check_rate(self._device, self.sample_rate, 1, want_input=False)
+        self.device_name = _device_name(self._sd, self._device, want_input=False)
         self._loop = asyncio.get_running_loop()
         self._opening = asyncio.Lock()
         with self._lock:
@@ -638,8 +729,9 @@ class Speaker:
             log.exception("speaker callback failed")
 
     async def play(self, pcm: bytes) -> None:
-        """Queue mono int16 PCM behind whatever is already queued, and return
-        once no more than one block of it is left unplayed.
+        """Queue mono int16 PCM behind whatever is already queued, scaled by
+        `gain_db`, and return once no more than one block of it is left
+        unplayed.
 
         That block is left in hand on purpose: the caller's next `play()`
         lands behind it, so a sentence handed over a chunk at a time is one
@@ -659,8 +751,21 @@ class Speaker:
             if self._closed:
                 # `stop()` ran while this call was opening the device.
                 raise AudioError("speaker was stopped")
-            self._pending += pcm
-            self._queued += len(pcm)
+        # With a gain, scale and queue a block at a time. A sentence from a
+        # local voice arrives as one chunk several seconds long, and scaling
+        # it whole before queueing any of it could outlast the block left in
+        # hand on a Pi: the card would play silence inside the reply, and the
+        # engine would count it as the voice falling behind. A block at a
+        # time, PortAudio's thread takes the first block while the rest is
+        # still being scaled. Nothing here awaits, so `stop()` and `cancel()`
+        # cannot run part way through.
+        step = self.block_bytes if self.gain_db else len(pcm)
+        for at in range(0, len(pcm), step):
+            piece = apply_gain(pcm[at : at + step], self.gain_db)
+            with self._lock:
+                self._pending += piece
+                self._queued += len(piece)
+        with self._lock:
             # A whole block of cushion whatever the chunk size. Cushioning by
             # the chunk instead would bound the queue at twice a small chunk,
             # and the callback would pad every block with silence however
@@ -752,6 +857,10 @@ class WavSink:
     The counterpart to `WavSource`, and useful for the same reason: a bug
     report about what the robot *said* is reproducible if the audio still
     exists. It is also the only sink that can be asserted on in a test.
+
+    It ignores `gain_db`. The gain is how loud one speaker plays, and the
+    file holds what the voice produced, which is also what a test reads the
+    mock voice's words back out of.
     """
 
     def __init__(self, config: dict[str, Any] | None = None, fmt: AudioFormat | None = None) -> None:

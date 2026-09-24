@@ -12,7 +12,11 @@ They are dependencies of a working robot, which is a different thing: install
 them alongside.
 """
 
+from emet_engine.acting import Actor, Performed
+from emet_engine.body import Body
+from emet_engine.self_model import compile_self_model
 from emet_engine.session import EngineError, Exchange, ListenSession
+from emet_engine.state import BodyState
 from emet_engine.turn import DEFAULT_PATIENCE_MS, EndReason, Endpointer, Utterance, looks_incomplete
 from emet_engine.vad import EnergyVad, VadTuning
 
@@ -30,9 +34,14 @@ except _metadata.PackageNotFoundError:  # pragma: no cover - source checkout
     __version__ = "0+unknown"
 
 __all__ = [
+    "Actor",
+    "Body",
+    "BodyState",
     "EngineError",
     "Exchange",
     "ListenSession",
+    "Performed",
+    "compile_self_model",
     "Endpointer",
     "looks_incomplete",
     "Utterance",
