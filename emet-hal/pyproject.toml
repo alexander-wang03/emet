@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-hal"
-version = "0.4.0"
+version = "0.4.1"
 description = "Emet HAL: hardware abstraction layer. Drivers, locomotion, wake, and audio plugins."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -34,7 +34,10 @@ report healthy without one, naming the variable to set. It then opens and
 closes one connection, so a rejected key or an unreachable network is known
 at boot, in the terms the owner can act on, rather than at the first
 question. A failure during an utterance is logged and the final carries what
-was heard before it; a transient network fault is not a broken plugin.
+was heard before it, plus the reason in `Transcript.error`; a transient
+network fault costs one turn and leaves the plugin healthy. The engine reads
+that reason and says the soul's failure line, so a robot whose hotspot died
+mid-conversation tells the person instead of standing there.
 
 Params, all optional, from the body's `models.stt.params`:
 
@@ -42,8 +45,9 @@ Params, all optional, from the body's `models.stt.params`:
                  `keyterm`, `endpointing`, ...), passed through as strings.
                  `encoding`, `sample_rate` and `channels` are fixed by the
                  audio format and cannot be overridden here.
-    timeout_s    seconds `finish()` waits for the final after CloseStream.
-                 Default 5.
+    timeout_s    seconds `finish()` waits for the final after CloseStream,
+                 and the whole of the person's wait: a socket that will not
+                 unwind is abandoned rather than waited on. Default 5.
     open_timeout_s
                  seconds to allow the handshake. Default 10.
     preflight    bool, default true. Open and close a connection in
@@ -123,6 +127,16 @@ class _Utterance:
         if self.interim:
             parts.append(self.interim)
         return " ".join(p.strip() for p in parts if p.strip())
+
+
+def _swallow(task: "asyncio.Task") -> None:
+    """Read a cut-loose task's exception so asyncio does not warn about it.
+
+    The task was abandoned on purpose, its words are already lost, and the
+    turn has moved on. Nobody is going to look at what it raised.
+    """
+    if not task.cancelled():
+        task.exception()
 
 
 def _is_closed(exc: BaseException) -> bool:
@@ -344,23 +358,39 @@ class DeepgramTranscriber(TranscriberPlugin):
             # honest answer and costs no round trip.
             return Transcript(text="", final=True, confidence=1.0)
 
+        # This turn's failure, apart from `last_error`, which outlives the
+        # utterance. The transcript says what went wrong with *these* words,
+        # so a turn that went fine after one that did not is not blamed for it.
+        error: str | None = None
         utterance.queue.put_nowait(None)
         if utterance.task is not None:
-            try:
-                await asyncio.wait_for(utterance.task, timeout=self.timeout_s)
-            except asyncio.TimeoutError:
+            # `asyncio.wait`, not `wait_for`. `wait_for` cancels the task on a
+            # timeout and then waits for that cancellation to finish, and a
+            # socket with no network behind it does not unwind promptly: on
+            # the reference body with mobile data off, five seconds of waiting
+            # for the final became fifteen before the robot said anything.
+            # The person's wait is bounded here and the socket is cut loose to
+            # die on its own time.
+            done, _ = await asyncio.wait({utterance.task}, timeout=self.timeout_s)
+            if not done:
                 utterance.task.cancel()
-                self.last_error = f"no final within {self.timeout_s:.0f} s of CloseStream"
-                log.warning("deepgram: %s; returning what was heard", self.last_error)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - reported, and the words so far returned
-                self.last_error = f"{type(exc).__name__}: {exc}"
-                log.warning("deepgram: %s; returning what was heard", self.last_error)
+                utterance.task.add_done_callback(_swallow)
+                error = f"no final within {self.timeout_s:.0f} s of CloseStream"
+                self.last_error = error
+                log.warning("deepgram: %s; returning what was heard", error)
+            else:
+                try:
+                    utterance.task.result()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - reported, and the words so far returned
+                    error = f"{type(exc).__name__}: {exc}"
+                    self.last_error = error
+                    log.warning("deepgram: %s; returning what was heard", error)
 
         confidences = utterance.final_confidences or [utterance.interim_confidence]
         confidence = max(0.0, min(1.0, sum(confidences) / len(confidences)))
-        return Transcript(text=utterance.text, final=True, confidence=confidence)
+        return Transcript(text=utterance.text, final=True, confidence=confidence, error=error)
 
     async def _pump(self, utterance: _Utterance) -> None:
         """Connect, then send frames and receive results until both sides end."""

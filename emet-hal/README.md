@@ -20,7 +20,7 @@ for years.
 | `mock` | `emet.wake` | Fires when a frame literally contains the phrase |
 | `microphone` | `emet.audio` | Live capture through PortAudio. Extra: `audio` |
 | `wav` | `emet.audio` | Replays a recording through the same path |
-| `speaker` | `emet.audio_out` | Playback through PortAudio. Extra: `audio` |
+| `speaker` | `emet.audio_out` | Playback through PortAudio, one stream kept open across plays. Extra: `audio` |
 | `wav` | `emet.audio_out` | Writes what the robot said to a file |
 | `null` | `emet.audio_out` | Discards audio, so the loop can run silently |
 

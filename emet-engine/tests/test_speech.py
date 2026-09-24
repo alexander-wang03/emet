@@ -74,10 +74,19 @@ class _Voice(VoicePlugin):
 
     provider = "fake"
 
-    def __init__(self, *, delay_ms: float = 0.0, fail_on: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        delay_ms: float = 0.0,
+        fail_on: str | None = None,
+        word_delay_ms: float = 0.0,
+        log: list[str] | None = None,
+    ) -> None:
         super().__init__({"provider": "fake"})
         self.delay_ms = delay_ms
         self.fail_on = fail_on
+        self.word_delay_ms = word_delay_ms
+        self.log = log
         self.asked: list[str] = []
 
     def describe(self) -> VoiceDescriptor:
@@ -88,8 +97,12 @@ class _Voice(VoicePlugin):
         if self.delay_ms:
             await asyncio.sleep(self.delay_ms / 1000.0)
         for word in text.split():
+            if self.word_delay_ms:
+                await asyncio.sleep(self.word_delay_ms / 1000.0)
             if self.fail_on and self.fail_on in word:
                 raise PluginError(f"cannot say {word!r}")
+            if self.log is not None:
+                self.log.append(f"made:{word}")
             yield word.encode() + b"\x00\x00"
 
 
@@ -124,7 +137,9 @@ class _Sink:
 # --------------------------------------------------------------------- mouth
 
 
-def test_sentences_are_spoken_in_order_and_the_audio_is_whole(tmp_path):
+def test_sentences_are_spoken_in_order_a_chunk_at_a_time(tmp_path):
+    """Each chunk the voice produces goes to the sink as it arrives; the
+    sink is what makes consecutive chunks one continuous sound."""
     voice, sink = _Voice(), _Sink()
     mouth = Mouth(voice, sink)
 
@@ -136,10 +151,10 @@ def test_sentences_are_spoken_in_order_and_the_audio_is_whole(tmp_path):
 
     spoken = run(scenario())
     assert voice.asked == ["First one.", "Second one."]
-    assert sink.played == [b"First\x00\x00one.\x00\x00", b"Second\x00\x00one.\x00\x00"]
+    assert sink.played == [b"First\x00\x00", b"one.\x00\x00", b"Second\x00\x00", b"one.\x00\x00"]
     assert [s.text for s in spoken] == ["First one.", "Second one."]
     assert all(s.ok for s in spoken)
-    assert spoken[0].audio_bytes == len(sink.played[0])
+    assert spoken[0].audio_bytes == len(sink.played[0]) + len(sink.played[1])
 
 
 def test_the_next_sentence_is_synthesised_while_the_last_one_plays():
@@ -199,9 +214,46 @@ def test_a_sentence_the_voice_cannot_say_is_skipped_and_the_rest_is_heard():
     spoken = run(scenario())
     assert [s.ok for s in spoken] == [True, False, True]
     assert "cannot say" in (spoken[1].error or "")
-    assert [p.split(b"\x00")[0] for p in sink.played] == [b"Fine.", b"Fine"]
+    assert [p.split(b"\x00")[0] for p in sink.played] == [b"Fine.", b"Fine", b"again."]
     assert mouth.failures == [spoken[1]]
-    assert spoken[1].audio_bytes > 0, "the audio before the failure is counted, and not played"
+    assert spoken[1].audio_bytes > 0, (
+        "the chunks before the failure are counted, and not played, because "
+        "the failure was known before their turn came"
+    )
+
+
+def test_a_chunk_is_heard_before_the_voice_has_finished_the_sentence():
+    """The point of the chunk path: with a voice that takes its time between
+    words, the first word reaches the sink while the second is still being
+    made. 0.4 gathered the sentence first."""
+    log: list[str] = []
+    voice, sink = _Voice(word_delay_ms=20, log=log), _Sink(log)
+    mouth = Mouth(voice, sink)
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One two.")
+        return await mouth.finish()
+
+    (spoken,) = run(scenario())
+    assert spoken.ok and spoken.audio_bytes == len(b"One\x00\x00two.\x00\x00")
+    assert log.index("played:One") < log.index("made:two."), "the first chunk was heard while the second was made"
+
+
+def test_a_voice_that_fails_mid_sentence_keeps_what_was_heard_and_drops_the_rest():
+    log: list[str] = []
+    voice, sink = _Voice(word_delay_ms=10, fail_on="\u03a9", log=log), _Sink(log)
+    mouth = Mouth(voice, sink)
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("Up to \u03a9 and beyond.")
+        return await mouth.finish()
+
+    (spoken,) = run(scenario())
+    assert not spoken.ok and "cannot say" in (spoken.error or "")
+    assert [p.split(b"\x00")[0] for p in sink.played] == [b"Up", b"to"]
+    assert spoken.audio_bytes == len(b"Up\x00\x00to\x00\x00")
 
 
 def test_a_voice_that_raises_the_wrong_thing_still_loses_only_one_sentence():
@@ -318,3 +370,88 @@ def test_a_text_stream_is_spoken_sentence_by_sentence_with_the_tail_last():
     spoken = run(speak_stream(mouth, deltas()))
     assert voice.asked == ["It is noon.", "Go now!", "And then"]
     assert [s.text for s in spoken] == voice.asked
+
+
+# ----------------------------------------------- a voice that falls behind
+
+
+class _PaddingSink(_Sink):
+    """A sink that pads like the real speaker: it fills a block with silence
+    whenever nothing was handed to it in time."""
+
+    def __init__(self, log: list[str] | None = None) -> None:
+        super().__init__(log)
+        self.padded = 0
+
+    def pad(self, blocks: int = 1) -> None:
+        self.padded += blocks
+
+
+def test_silence_inside_a_sentence_is_counted_and_silence_after_it_is_not():
+    """The card is served on time either way, so PortAudio reports nothing.
+    A gap inside a word is one a person hears; quiet between replies is not."""
+    sink = _PaddingSink()
+    mouth = Mouth(_Voice(), sink)
+    real_play = sink.play
+
+    async def play_then_fall_behind(pcm):
+        await real_play(pcm)
+        sink.pad()  # the voice was late with the next chunk
+
+    sink.play = play_then_fall_behind  # type: ignore[method-assign]
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One two.")
+        spoken = await mouth.finish()
+        sink.pad(5)  # nobody is speaking now
+        return spoken
+
+    spoken = run(scenario())
+    assert [s.ok for s in spoken] == [True]
+    assert mouth.starved == 2, "one per chunk played, and none of the five after"
+
+
+def test_a_sink_that_cannot_pad_is_read_defensively():
+    """A file has nothing to pad. `getattr`, like `dropped` on the source."""
+    mouth = Mouth(_Voice(), _Sink())
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One.")
+        return await mouth.finish()
+
+    run(scenario())
+    assert mouth.starved == 0
+
+
+def test_hush_after_finish_leaves_the_sink_alone():
+    """`ListenSession.stop()` hushes on the way out. A mouth that has already
+    finished has nothing to interrupt, and cancelling then throws away the
+    block the speaker keeps in hand, which is the end of the last word."""
+    sink = _Sink()
+    mouth = Mouth(_Voice(), sink)
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One.")
+        await mouth.finish()
+        await mouth.hush()
+
+    run(scenario())
+    assert sink.cancelled == 0
+
+
+def test_hush_while_speaking_still_cancels_the_sink():
+    sink = _Sink(delay_ms=200)
+    mouth = Mouth(_Voice(delay_ms=20), sink)
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("One.")
+        await mouth.say("Two.")
+        await asyncio.sleep(0.05)
+        await mouth.hush()
+
+    run(scenario())
+    assert sink.cancelled == 1

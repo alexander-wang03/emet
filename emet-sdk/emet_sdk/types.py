@@ -262,6 +262,11 @@ class Transcript:
     caption replaces the line; it does not have to splice fragments, and a
     provider that reorders or retracts a word cannot leave a stale fragment
     behind. A recogniser that does not stream sends no partials and one final.
+
+    A final may also carry an `error`, which says the words are missing or cut
+    short because something broke rather than because nobody spoke. Those two
+    are the same empty string and they are not the same event: the engine
+    answers the second in the soul's own voice and leaves the first alone.
     """
 
     text: str
@@ -269,6 +274,12 @@ class Transcript:
     #: Advisory. Providers that report no calibrated score say 1.0, which is
     #: honesty about the absence of a number rather than a claim of certainty.
     confidence: float = 1.0
+    #: Why the words are missing or cut short: the network went away, the
+    #: provider never sent the final. None when the text is what the person
+    #: actually said, an empty final included. `ReplyDone` carries the same
+    #: field for the same reason, and a robot whose speech recognition died
+    #: should be as able to say so as one whose language model did.
+    error: str | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -556,7 +567,13 @@ class AudioSink(Protocol):
     async def start(self) -> None: ...
 
     async def play(self, pcm: bytes) -> None:
-        """Play a whole buffer, returning when it has finished."""
+        """Play a buffer, returning when it has finished.
+
+        Consecutive calls are one continuous sound. The engine hands a
+        sentence over a chunk at a time as a voice produces it, so a sink
+        that clicks or pauses between calls is heard doing so: keep the
+        device open across calls, and treat an empty queue as silence.
+        """
         ...
 
     async def cancel(self) -> None:

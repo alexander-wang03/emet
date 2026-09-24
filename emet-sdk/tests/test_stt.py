@@ -330,3 +330,24 @@ def test_a_soul_naming_an_uninstalled_provider_still_validates():
     doc = load_yaml(EXAMPLES / "emet-soul.yaml")
     doc["models"]["stt"] = {"provider": "nobody_ships_this", "key_env": "X"}
     assert validate_soul(doc).ok
+
+
+# ------------------------------------------------- a transcript that broke
+
+
+def test_a_transcript_says_nothing_broke_by_default():
+    assert Transcript(text="hello", final=True).error is None
+
+
+def test_a_final_can_say_why_the_words_are_missing():
+    """An empty final and a dead service are the same empty string. The
+    engine has to tell them apart to answer one and not the other."""
+    broke = Transcript(text="", final=True, error="gaierror: name resolution failed")
+    quiet = Transcript(text="", final=True)
+    assert broke.text == quiet.text
+    assert broke.error and quiet.error is None
+
+
+def test_the_words_heard_before_a_break_travel_with_the_reason():
+    cut = Transcript(text="what time is", final=True, error="no final within 5 s of CloseStream")
+    assert cut.text == "what time is" and "CloseStream" in cut.error

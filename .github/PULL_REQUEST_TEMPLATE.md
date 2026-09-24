@@ -1,7 +1,8 @@
 ## What this changes
 
-<!-- One or two sentences. The PR title becomes the commit message on master,
-     so make it a good one. -->
+<!-- One or two sentences. The PR title becomes the commit on master, as
+     `X.Y.Z: What it does`. The part after the colon is also the first line
+     of this version's CHANGELOG.md entry. -->
 
 ## Why
 
@@ -14,6 +15,8 @@
 - [ ] Commits are signed off (`git commit -s`). See CONTRIBUTING.md.
 - [ ] `python tools/check_layering.py .` and `python tools/release_check.py .` pass.
 - [ ] `pytest` passes in `emet-sdk`, `emet-hal`, `emet-providers` and `emet-engine`.
+- [ ] The version is bumped in the four `pyproject.toml` files and `CHANGELOG.md`
+      has the entry, so the merge can be tagged.
 - [ ] New behaviour has a test and a caller.
 - [ ] Anything taken from a paper or repository is cited at the point of use
       and in CITATIONS.md.

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 import types
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -461,3 +462,77 @@ def test_describe_before_start_is_unhealthy_and_after_is_streaming(monkeypatch):
     started(server, monkeypatch)
     d = make(server).describe()
     assert d.streaming and d.sample_rate == 16000 and d.provider == "deepgram"
+
+
+def test_a_connection_that_never_opens_reports_why_on_the_final(monkeypatch):
+    """The reference body with its hotspot switched off between boot and the
+    first question: the socket cannot resolve the host, no words arrive, and
+    the final says so rather than looking like a cough. Without this the
+    robot stands there in silence and the person cannot tell why."""
+
+    class UnreachableAfterBoot(FakeServer):
+        async def connect(self, url, **kwargs):
+            if not self.connections:
+                return await super().connect(url, **kwargs)  # the preflight, at boot
+            raise OSError("[Errno -3] Temporary failure in name resolution")
+
+    stt = started(UnreachableAfterBoot(), monkeypatch)
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        return await stt.finish()
+
+    final = run(scenario())
+    assert final.final and final.text == ""
+    assert final.error is not None and "name resolution" in final.error
+    assert stt.describe().healthy, "a dead network is not a broken plugin"
+
+
+def test_a_turn_that_went_fine_carries_no_error_after_one_that_did_not(monkeypatch):
+    """`last_error` outlives an utterance; the transcript must not. A turn
+    blamed for the previous turn's failure would have the robot apologising
+    for words it heard perfectly well."""
+    server = FakeServer({1: [results("hello", final=True)]})
+    stt = started(server, monkeypatch)
+    stt.last_error = "something from an earlier turn"
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        return await stt.finish()
+
+    final = run(scenario())
+    assert final.text == "hello"
+    assert final.error is None
+
+
+def test_finish_does_not_wait_for_a_socket_that_will_not_unwind(monkeypatch):
+    """`wait_for` cancels the task and then waits for that cancellation to
+    finish. With mobile data off on the reference body it added ten seconds
+    to the five, and the person stood in silence for fifteen before the
+    robot said its failure line."""
+    stt = started(FakeServer(), monkeypatch, timeout_s=0.05)
+
+    async def will_not_unwind():
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(30)  # a dead socket, taking its time
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        stuck = asyncio.create_task(will_not_unwind())
+        stt._utterance.task.cancel()
+        stt._utterance.task = stuck
+        begun = time.perf_counter()
+        final = await stt.finish()
+        waited = time.perf_counter() - begun
+        stuck.cancel()
+        return final, waited
+
+    final, waited = run(scenario())
+    assert waited < 1.0, f"the person waited {waited:.1f} s"
+    assert final.final and final.error is not None
+    assert "no final within" in final.error

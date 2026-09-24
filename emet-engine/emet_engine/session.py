@@ -708,10 +708,15 @@ class ListenSession:
             except BaseException:
                 await mouth.hush()
                 raise
+        heard = sum(1 for s in spoken if s.ok and s.audio_bytes)
         self.stats.record_speech(
-            first_ms,
+            # A reply nobody heard has no first sound. `on_first_audio` fires
+            # before the sink accepts the chunk, so a reply whose every
+            # sentence failed would otherwise contribute a `voice first` for
+            # audio that never left the machine.
+            first_ms if heard else None,
             watch.elapsed_ms,
-            spoken=sum(1 for s in spoken if s.ok and s.audio_bytes),
+            spoken=heard,
             lost=sum(1 for s in spoken if not s.ok),
         )
         self._charge_busy(after_reply)
@@ -735,9 +740,12 @@ class ListenSession:
         Every stage has to be up, which `start()` guarantees when the session
         was built with `transcribe`, `reply` and `speak` all on. A turn with
         no words in it (a false wake, a cough) gets the soul's
-        `nothing_heard` line, or silence. A reply the provider declined or
-        the network broke gets the soul's `declined` or `failed` line after
-        whatever was heard, so the robot fails loudly and in its own voice.
+        `nothing_heard` line, or silence; a turn whose words never arrived
+        because the transcriber could not reach its service gets the `failed`
+        line instead, because somebody spoke and deserves an answer. A reply
+        the provider declined or the network broke gets the soul's `declined`
+        or `failed` line after whatever was heard, so the robot fails loudly
+        and in its own voice.
 
         `on_said` fires with the final transcript before the reply begins;
         `on_delta` with each piece of the reply's text as it streams, tags
@@ -749,9 +757,16 @@ class ListenSession:
                 "transcribe=True, reply=True and speak=True."
             )
         async for wake, utterance in self.turns():
-            text = utterance.transcript.text.strip() if utterance.transcript else ""
+            transcript = utterance.transcript
+            text = transcript.text.strip() if transcript else ""
             if not text:
-                line = self.lines.get("nothing_heard")
+                # A cough and a dead speech service both arrive here as no
+                # words. They are different events to the person in the room:
+                # one of them spoke. So a transcript that says why the words
+                # are missing gets the failure line, and a plain empty one
+                # keeps the old silence.
+                broke = transcript is not None and transcript.error is not None
+                line = self.lines.get("failed" if broke else "nothing_heard")
                 spoken = await self.speak_text(line) if line else []
                 yield Exchange(wake, utterance, None, tuple(spoken), line, ())
                 continue
@@ -808,6 +823,22 @@ class ListenSession:
         """Frames the sound card lost before the loop saw them. Read
         defensively, like `dropped`: a file has no card to overflow."""
         return int(getattr(self._audio, "overflows", 0) or 0)
+
+    @property
+    def underflows(self) -> int:
+        """Times PortAudio reported that this process did not service the
+        card in time. Read defensively, like `overflows`: only a real card
+        can be late, and only a sink that keeps a stream open counts.
+
+        It says nothing about whether the audio was continuous. A queue that
+        ran dry is served on time with silence, and `starved` is that."""
+        return int(getattr(self._sink, "underflows", 0) or 0)
+
+    @property
+    def starved(self) -> int:
+        """Blocks of silence the sink played inside a sentence because the
+        voice had not made the next chunk yet. A gap a person hears."""
+        return int(getattr(self._mouth, "starved", 0) or 0)
 
     @property
     def dropped(self) -> int:

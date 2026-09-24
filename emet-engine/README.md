@@ -17,8 +17,11 @@ emet-talk path/to/manifest.yaml path/to/soul.yaml --replay recording.wav --stats
 It prints `you:` and the robot's name as the words arrive, says what the
 soul's `persona.lines` say when a provider declines or fails, waits one more
 window when the words so far look unfinished (`interaction.extend_on_incomplete`),
-and lists the intents the model tagged into its reply. Every stage has to be
-configured; a missing one names the field to set.
+and lists the intents the model tagged into its reply. A turn whose words
+never arrived, because the network went away between the question and the
+transcript, gets the soul's `failed` line too; a wake with nothing after it
+stays quiet unless `persona.lines.nothing_heard` says otherwise. Every stage
+has to be configured; a missing one names the field to set.
 
 `emet-listen` is the same loop with each stage behind a flag, for finding out
 which one is wrong:
@@ -71,7 +74,8 @@ the wait from the final transcript to the first word and to the whole reply.
 `--speak` goes the last step and implies `--reply`: the answer is said
 through the voice the soul names under `models.tts`, a sentence at a time as
 the model writes it, so the first sentence is heard while the second is still
-arriving. The reference soul names `piper`, the local voice, which needs
+arriving, and each sentence reaches the speaker a chunk at a time as the
+voice produces it. The reference soul names `piper`, the local voice, which needs
 `emet-providers[piper]` and a voice model downloaded once:
 
 ```sh

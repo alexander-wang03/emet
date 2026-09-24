@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from emet_sdk.types import Transcript
+
 from emet_engine import talk
 from emet_engine.session import ListenSession
 
@@ -239,3 +241,77 @@ def test_help_names_no_stage_flags():
     with pytest.raises(SystemExit) as exc:
         talk.main(["--help"])
     assert exc.value.code == 0
+
+
+def test_a_transcriber_that_lost_the_network_gets_the_souls_words(tmp_path, monkeypatch, capsys):
+    """The Pi with mobile data off: the wake fired, the words never came, and
+    0.4 answered with silence because an empty final looked like a cough.
+    Somebody spoke, so the robot says its failure line out loud."""
+    out = str(tmp_path / "lost.wav")
+    wav = write_wav(tmp_path / "lost-in.wav", spoken(b"hello", b"there"))
+    stub_loaders(monkeypatch, body(wav, out), soul(persona={"lines": {"failed": "I lost the thread there."}}))
+
+    real_start = ListenSession.start
+
+    async def start_then_cut_the_network(self):
+        await real_start(self)
+
+        async def finish():
+            return Transcript(
+                text="",
+                final=True,
+                error="OSError: [Errno -3] Temporary failure in name resolution",
+            )
+
+        self._stt.finish = finish
+
+    monkeypatch.setattr(ListenSession, "start", start_then_cut_the_network)
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    text = capsys.readouterr().out
+    assert "(the words never arrived: OSError" in text
+    assert "  emet: I lost the thread there." in text
+    from emet_providers.mock import read_back
+
+    with wave.open(out, "rb") as w:
+        assert read_back(w.readframes(w.getnframes())) == "I lost the thread there."
+
+
+def test_a_false_wake_does_not_get_the_failure_line(tmp_path, monkeypatch, capsys):
+    """The same branch, the other way round. Break the distinction and this
+    fails: a soul with words for a failure would use them on every cough."""
+    wav = write_wav(tmp_path / "quiet.wav", false_wake())
+    stub_loaders(monkeypatch, body(wav), soul(persona={"lines": {"failed": "I lost the thread there."}}))
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    text = capsys.readouterr().out
+    assert "(then nothing)" in text
+    assert "I lost the thread there." not in text
+
+
+def test_words_that_arrived_cut_short_are_answered_with_a_caveat(tmp_path, monkeypatch, capsys):
+    """Half a question is still a question. The robot answers it and says the
+    words may be short rather than throwing them away."""
+    wav = write_wav(tmp_path / "cut.wav", spoken(b"hello", b"there"))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    real_start = ListenSession.start
+
+    async def start_then_cut_the_final(self):
+        await real_start(self)
+
+        async def finish():
+            return Transcript(text="what time is", final=True, error="no final within 5 s")
+
+        self._stt.finish = finish
+
+    monkeypatch.setattr(ListenSession, "start", start_then_cut_the_final)
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    text = capsys.readouterr().out
+    assert "  you:  what time is" in text
+    assert "  emet: You said: what time is" in text
+    assert "(those words may be cut short: no final within 5 s)" in text

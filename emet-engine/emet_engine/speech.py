@@ -23,18 +23,34 @@ rather than by a parser; a wrong split costs a pause, never a word.
 
 **Three stages, two queues.** `Mouth.say()` queues a sentence and returns at
 once. A synthesis task takes sentences in order and asks the voice for each,
-collecting its audio into one buffer per sentence; a playback task takes
-those buffers in order and hands each to the sink. So the voice is
-synthesising sentence two while sentence one plays, and the engine loop that
-called `say()` is back reading the language model. `finish()` waits for
-everything queued to be heard; `hush()` throws it all away and stops the
-sink mid-word, which is what barge-in will be made of.
+passing every chunk of audio on the moment it arrives; a playback task takes
+those chunks in order and hands each to the sink. So the voice is
+synthesising sentence two while sentence one plays, the first chunk of a
+sentence is heard before its last has been made, and the engine loop that
+called `say()` is back reading the language model. The sink is what makes
+consecutive chunks one continuous sound: `emet_hal.audio.Speaker` keeps one
+stream open across calls. 0.4 gathered each sentence into one buffer before
+playing it, because the speaker then opened a stream per buffer and clicked
+between chunks, and on the reference body a cloud voice paid 1762 ms before
+its first sound where a local one paid 456 ms. `finish()` waits until
+everything queued has reached the card, which is one block short of heard;
+`hush()` throws it all away and stops the sink mid-word, which is what
+barge-in will be made of.
+
+**A voice that falls behind is a gap in a word.** Chunks play as they
+arrive, so a voice slower than real time leaves the card with nothing and it
+plays silence. That is inaudible to PortAudio, which was served on time, so
+the mouth counts it instead: `starved` is the silence the sink filled
+between a sentence's first chunk and its last, and `emet-talk --stats`
+prints it.
 
 **A sentence lost is a sentence lost.** A voice that fails on one sentence
 (the network dropped, the model choked on a symbol) raises `PluginError`,
 and the mouth records it, tells the caller through `failures`, and goes on
-with the next sentence. The text was still printed, and a robot that
-skipped a sentence is still a robot that answered.
+with the next sentence. Chunks of that sentence already handed to the sink
+were heard; the ones still waiting are dropped rather than played as half a
+sentence. The text was still printed, and a robot that skipped a sentence is
+still a robot that answered.
 """
 
 from __future__ import annotations
@@ -137,9 +153,18 @@ class SpokenSentence:
 @dataclass
 class _Job:
     text: str
-    #: Filled in when synthesis finishes, whatever the outcome.
-    pcm: bytes = b""
+    #: Bytes the voice produced for this sentence, whatever became of them.
+    audio_bytes: int = 0
     error: str | None = None
+    #: The sink's count of silence-filled blocks when this sentence's first
+    #: chunk was played. The difference at its last chunk is the silence a
+    #: person heard inside it.
+    padded_at: int | None = None
+
+
+#: What the synthesis stage hands the playback stage: a chunk of a
+#: sentence's audio, or None to say that sentence is complete.
+_Chunk = tuple[_Job, bytes | None]
 
 
 class Mouth:
@@ -147,7 +172,7 @@ class Mouth:
 
     `voice` is a started `VoicePlugin`; `sink` a started `AudioSink` opened
     at the voice's sample rate. `on_first_audio`, when given, is called once
-    per `open()`, the moment the first buffer reaches the sink: the number a
+    per `open()`, the moment the first chunk reaches the sink: the number a
     person waits for, measured where they hear it.
     """
 
@@ -164,13 +189,18 @@ class Mouth:
         self.on_first_audio = on_first_audio
         self.on_spoken = on_spoken
         self._sentences: asyncio.Queue[_Job | None] | None = None
-        self._audio: asyncio.Queue[_Job | None] | None = None
+        self._audio: asyncio.Queue[_Chunk | None] | None = None
         self._synth_task: asyncio.Task | None = None
         self._play_task: asyncio.Task | None = None
         self._first_audio_reported = False
         #: Every sentence handed over since `open()`, with its outcome, in
         #: the order it was heard.
         self.spoken: list[SpokenSentence] = []
+        #: Blocks of silence the sink played inside a sentence because the
+        #: voice had not produced the next chunk yet. Zero when the voice
+        #: keeps up with real time. Silence between sentences is not counted:
+        #: nobody is speaking then.
+        self.starved = 0
 
     # ------------------------------------------------------------ lifecycle
 
@@ -180,6 +210,7 @@ class Mouth:
         self._audio = asyncio.Queue()
         self._first_audio_reported = False
         self.spoken = []
+        self.starved = 0
         self._synth_task = asyncio.create_task(self._synthesise_all())
         self._play_task = asyncio.create_task(self._play_all())
 
@@ -206,7 +237,14 @@ class Mouth:
         return list(self.spoken)
 
     async def hush(self) -> None:
-        """Drop what is queued and stop the sink mid-word."""
+        """Drop what is queued and stop the sink mid-word.
+
+        Barge-in, and only that. A mouth that has already finished speaking
+        has nothing to interrupt, and cancelling the sink then would throw
+        away the block `play()` leaves in hand, which is the end of the last
+        word. `ListenSession.stop()` calls this on the way out.
+        """
+        running = self._synth_task is not None or self._play_task is not None
         for task in (self._synth_task, self._play_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -216,7 +254,8 @@ class Mouth:
                     await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-        await self.sink.cancel()
+        if running:
+            await self.sink.cancel()
         self._sentences = None
         self._audio = None
         self._synth_task = None
@@ -225,6 +264,14 @@ class Mouth:
     @property
     def failures(self) -> list[SpokenSentence]:
         return [s for s in self.spoken if not s.ok]
+
+    def _padded(self) -> int:
+        """Blocks the sink has filled with silence so far.
+
+        Read defensively, like `dropped` on the source: only a sink that
+        keeps one stream open has anything to pad, and a file has nothing.
+        """
+        return int(getattr(self.sink, "padded", 0) or 0)
 
     # ---------------------------------------------------------------- stages
 
@@ -235,10 +282,11 @@ class Mouth:
             if job is None:
                 self._audio.put_nowait(None)
                 return
-            parts: list[bytes] = []
             try:
                 async for chunk in self.voice.speak(job.text):
-                    parts.append(chunk)
+                    if chunk:
+                        job.audio_bytes += len(chunk)
+                        self._audio.put_nowait((job, chunk))
             except PluginError as exc:
                 job.error = str(exc)
                 log.warning("voice: %s", exc)
@@ -247,34 +295,53 @@ class Mouth:
             except Exception as exc:  # noqa: BLE001 - a plugin that raises the wrong thing still loses one sentence
                 job.error = f"{type(exc).__name__}: {exc}"
                 log.warning("voice: %s", job.error)
-            job.pcm = b"".join(parts)
-            self._audio.put_nowait(job)
+            self._audio.put_nowait((job, None))
 
     async def _play_all(self) -> None:
         assert self._audio is not None
         while True:
-            job = await self._audio.get()
-            if job is None:
+            item = await self._audio.get()
+            if item is None:
                 return
-            if job.pcm and job.error is None:
-                if not self._first_audio_reported and self.on_first_audio is not None:
-                    self._first_audio_reported = True
-                    self.on_first_audio()
-                try:
-                    await self.sink.play(job.pcm)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001 - the sink failed; say so, keep going
-                    job.error = f"playback failed: {type(exc).__name__}: {exc}"
-                    log.warning("speaker: %s", job.error)
-            elif job.pcm and job.error is not None:
-                # Partial audio from a sentence the voice gave up on. Playing
-                # half a sentence is worse than skipping it.
-                pass
-            outcome = SpokenSentence(text=job.text, audio_bytes=len(job.pcm), error=job.error)
-            self.spoken.append(outcome)
-            if self.on_spoken is not None:
-                self.on_spoken(outcome)
+            job, chunk = item
+            if chunk is None:
+                if job.padded_at is not None:
+                    # Silence the card was given between this sentence's
+                    # first chunk and its last: the voice fell behind real
+                    # time and a person heard a gap inside a word. Silence
+                    # after a sentence ends is not counted, because nobody is
+                    # speaking then.
+                    self.starved += max(0, self._padded() - job.padded_at)
+                outcome = SpokenSentence(text=job.text, audio_bytes=job.audio_bytes, error=job.error)
+                self.spoken.append(outcome)
+                if self.on_spoken is not None:
+                    self.on_spoken(outcome)
+                continue
+            if job.error is not None:
+                # The voice gave up on this sentence, or the sink did, before
+                # this chunk's turn came. What was heard stays heard; the
+                # rest is dropped rather than played as half a sentence.
+                continue
+            if not self._first_audio_reported and self.on_first_audio is not None:
+                # Before the sink, not after: `Speaker.play()` returns only
+                # once the card has the audio, so reporting afterwards would
+                # add the playback to the number that measures the wait
+                # before it. A chunk the sink then refuses leaves this mark
+                # early, which the session drops when nothing was spoken.
+                self._first_audio_reported = True
+                self.on_first_audio()
+            if job.padded_at is None:
+                # Taken before this sentence's first chunk goes over, so the
+                # window covers the whole time somebody was listening to it
+                # and none of the quiet that came before.
+                job.padded_at = self._padded()
+            try:
+                await self.sink.play(chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the sink failed; say so, keep going
+                job.error = f"playback failed: {type(exc).__name__}: {exc}"
+                log.warning("speaker: %s", job.error)
 
 
 async def speak_stream(

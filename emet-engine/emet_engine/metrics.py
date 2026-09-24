@@ -159,10 +159,20 @@ class SessionStats:
 
     @property
     def wall_ms(self) -> float:
-        """Time since the first frame. Zero before any frame has arrived."""
+        """Time since the first frame's audio began. Zero before any frame.
+
+        The clock starts when the first frame is handed over, which is after
+        its 80 ms was captured, while `audio_ms` counts that frame whole. Add
+        the frame back, or the wall clock runs one frame behind the audio
+        clock for the whole run and the skew is understated by exactly that.
+        The reference body printed "skew +35.54s, of which 35.60s is the
+        dropped frames" on 2026-09-20: a part larger than the whole, which
+        reads as a broken instrument. Model-loading time before the first
+        frame is still left out, which is what this clock is for.
+        """
         if self._started is None:
             return 0.0
-        return (time.perf_counter() - self._started) * 1000.0
+        return (time.perf_counter() - self._started) * 1000.0 + self.frame_ms
 
     @property
     def realtime_factor(self) -> float:
@@ -279,8 +289,14 @@ class SessionStats:
             lost_ms = self.dropped * self.frame_ms
             explained = ""
             if self.dropped:
+                # What a person wants is the skew left after the dropped
+                # frames are taken out, and it was being worked out by hand
+                # from two figures on the same line. Print it.
+                rest = skew - lost_ms
+                rest_pct = (rest / self.audio_ms * 100.0) if self.audio_ms else 0.0
                 explained = (
-                    f"; {lost_ms / 1000:.2f}s of it is the {self.dropped} dropped frame(s)"
+                    f"; {lost_ms / 1000:.2f}s of it is the {self.dropped} dropped "
+                    f"frame(s), leaving {rest_pct:+.2f}%"
                 )
             lines.append(
                 f"  clock         wall {self.wall_ms / 1000:.1f}s vs audio "

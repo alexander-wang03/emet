@@ -167,12 +167,16 @@ def test_a_live_run_reports_the_clock():
 def test_the_wall_clock_starts_at_the_first_frame():
     """The first live run on the reference body reported +1.69 s of skew
     over eleven minutes. That was the acoustic model loading before the
-    first frame, not the sound card drifting. Start-up is not drift."""
+    first frame, not the sound card drifting. Start-up is not drift.
+
+    The clock carries one frame of offset, because the audio clock counts
+    the first frame whole while the wall clock starts when that frame is
+    handed over. Fifty milliseconds of start-up must not appear on top."""
     s = stats()
     assert s.wall_ms == 0.0
     time.sleep(0.05)
     s.record_frame(1.0)
-    assert s.wall_ms < 30.0
+    assert s.wall_ms < 30.0 + s.frame_ms
 
 
 def test_the_verdict_appears_in_the_report():
@@ -223,3 +227,32 @@ def test_the_clock_line_says_how_much_skew_the_dropped_frames_explain():
     s.dropped = 141
     line = next(l for l in s.report(live=True).splitlines() if "clock" in l)
     assert "11.28s of it is the 141 dropped frame(s)" in line
+
+
+def test_a_run_that_lost_nothing_has_no_skew():
+    """Frame 1 is handed over at t=0 and frame N at t=(N-1) frames, while the
+    audio clock counts all N frames whole. Without an offset the wall clock
+    reads one frame short for the whole run, so the skew is understated by
+    80 ms and the dropped-frame component can exceed the total it explains:
+    the reference body printed "skew +35.54s, of which 35.60s is the 445
+    dropped frame(s)" on 2026-09-20, a part larger than the whole."""
+    s = stats(frame_ms=80.0)
+    for _ in range(100):
+        s.record_frame(1.0)
+    s._started = time.perf_counter() - (99 * 0.080)
+
+    skew = s.wall_ms - s.audio_ms
+    assert -20.0 < skew < 20.0, f"{skew:.1f} ms of skew on a run that lost nothing"
+
+
+def test_the_clock_line_prints_what_is_left_after_the_dropped_frames():
+    """Two figures on one line and the reader subtracting them by hand is how
+    141 dropped frames read as 18.9% of drift on the body."""
+    s = stats(frame_ms=80.0)
+    for _ in range(100):
+        s.record_frame(1.0)
+    s.dropped = 50
+    s._started = time.perf_counter() - 12.0
+
+    line = next(row for row in s.report(live=True).splitlines() if "clock" in row)
+    assert "50 dropped frame(s), leaving " in line
