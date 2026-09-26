@@ -124,8 +124,12 @@ class PocketSphinxWake(WakePlugin):
 
         threshold   float, default DEFAULT_THRESHOLD. Higher is stricter.
         cmninit     str, the cepstral mean to start from, as pocketsphinx
-                    prints it: comma-separated numbers. Starting from a
-                    warm run's mean removes the cold-start misses. On a
+                    prints it: comma-separated numbers. On the reference
+                    body a warm run's mean took the first ten seconds from
+                    two wakes in three to three in three (2026-09-12, three
+                    tries each); replaying the 0.3 soak recording from
+                    several start means moved single phrases both ways
+                    (2026-09-24), so the gain is small and unproven. On a
                     body with a `body.id` the engine sets this from the
                     state file, over any value written here, with what
                     `carry_over()` returned last run. Without one,

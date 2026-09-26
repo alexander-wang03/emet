@@ -12,7 +12,7 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.0] - 2026-09-23
+## [0.5.0] - 2026-09-24
 
 It knows its body.
 
@@ -73,6 +73,13 @@ It knows its body.
   run started under `nohup` ignores the hangup (#10)
 - `emet-listen` redraws the live caption in place on a terminal (#10)
 - `emet explain` and the run header name the body (#10)
+
+### Fixed
+- The provider tests failed on a machine with a Piper voice downloaded,
+  since they looked in its real voices directories (#10)
+
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-09-24. Measurements in #10.
 
 ## [0.4.1] - 2026-09-22
 
