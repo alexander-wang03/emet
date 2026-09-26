@@ -914,7 +914,9 @@ def test_the_first_sentence_plays_before_the_reply_is_done(tmp_path):
             async for event in session.answer_aloud("hello"):
                 if isinstance(event, ReplyDone):
                     marks.append("reply done")
-            return marks, session.last_spoken
+            # A copy: the session plays its `muted` tone on the way out,
+            # through the same patched sink, after this reply is over.
+            return list(marks), session.last_spoken
 
     marks, spoken = run(scenario())
     assert marks.index("play") < marks.index("model done") < marks.index("reply done")
@@ -1184,7 +1186,11 @@ def test_without_a_transcriber_nothing_is_judged(tmp_path):
 # ------------------------------------------------------------ intent tags
 
 
-def test_tags_in_the_reply_are_lifted_out_before_the_voice_and_reported(tmp_path):
+def test_tags_in_the_reply_are_lifted_out_before_the_voice_reported_and_acted_on(tmp_path):
+    """A tag is never read aloud. It is reported, and since 0.5 performed
+    through its binding where it stood: on this bodiless body curiosity is a
+    filler in the reply's voice before the sentence it opened, and attending
+    to the speaker is silence."""
     out = str(tmp_path / "tagged.wav")
     manifest = wav_body(write_wav(tmp_path / "i.wav", frame()), out)
     manifest["models"] = {
@@ -1197,16 +1203,18 @@ def test_tags_in_the_reply_are_lifted_out_before_the_voice_and_reported(tmp_path
     async def scenario():
         async with session:
             events = await drain(session.answer_aloud("hello"))
-            return events, session.last_intents, session.last_spoken
+            return events, session.last_intents, session.last_spoken, session.performed
 
-    events, intents, spoken = run(scenario())
+    events, intents, spoken, performed = run(scenario())
     assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "Oh! Tell me more. "
     assert [i.name for i in intents] == ["express.curiosity", "attend.speaker"]
     assert [i.name for i in seen] == ["express.curiosity", "attend.speaker"]
-    assert [s.text for s in spoken] == ["Oh!", "Tell me more."]
+    assert [s.text for s in spoken] == ["hm?", "Oh!", "Tell me more."]
     from emet_providers.mock import read_back
 
-    assert read_back(read_wav(out)[1]) == "Oh! Tell me more."
+    assert read_back(read_wav(out)[1]) == "hm? Oh! Tell me more."
+    attended = next(p for p in performed if p.intent.name == "attend.speaker")
+    assert attended.outcome == "silent" and attended.ok
     done = events[-1]
     assert isinstance(done, ReplyDone) and "[express.curiosity]" in done.text, "the model's own text is kept whole"
 

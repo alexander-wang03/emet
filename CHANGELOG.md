@@ -12,6 +12,75 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
+## [0.5.0] - 2026-09-25
+
+It knows its body.
+
+### Added
+- The self-model: at boot the engine compiles the manifest, and what its
+  parts reported, into plain sentences about what the body has and lacks,
+  and puts them in the system prompt beside the persona (#10)
+- The engine starts every declared part that has a plugin category and
+  resolves every chain once against what the parts report; the boot log
+  prints the binding table (#10)
+- The voice rung's six actions: `utter`, `inflect`, `tone`, `explain` in
+  the self-model's words, `backchannel` as a placeholder until 1.0, and
+  `silence` (#10)
+- Signal intents from the engine's own state: `booting`, `listening`,
+  `thinking`, `speaking`, `muted`, `offline` and `error` (#10)
+- With a voice running, a body with no status light and no eyes plays a
+  rising pair when it boots, a soft click when it hears its name and a
+  falling pair when it stops, and says at boot which part is not working (#10)
+- A state file per body, `/etc/emet/state/<body.id>.json` or
+  `~/.local/state/emet/<body.id>.json`, holding the binding table, the
+  audio devices, each part's health, joint trims and carried params (#10)
+- `Plugin.carry_over()`; the wake engine keeps its adapted cepstral mean
+  for the next live boot on the same body by itself (#10)
+- `--chains`, `--state` and `--explain` on `emet-listen` and `emet-talk` (#10)
+- `SelfModel`, `BodyFact`, `VOICE_ACTIONS`, `EXPLAIN_TOPICS`,
+  `TONE_PRESETS` and `load_chains()`, the one chain loader `emet explain`
+  and the engine share, in the SDK (#10)
+- The run header prints the speaker's own output latency (#10)
+
+### Changed
+- The prompt asks for intent tags, offering only those this body acts on (#10)
+- A tag the model writes is performed through its binding: on a bodiless
+  body `[express.curiosity]` is "hm?" in its own voice (#10)
+- `emet-listen --reply` lifts tags out of the printed reply and performs
+  them (#10)
+- Each sentence of a reply is a `speak` intent carrying a prosody hint,
+  performed through its binding (#10)
+- The rule about speaking aloud no longer names a speaker; the self-model
+  describes the body (#10)
+- Reserved intents, and a model's `signal` and `speak` tags, are logged at
+  debug and dropped (#10)
+- In `emet-talk`, a turn whose words or reply did not arrive is
+  `signal.offline`, and the soul's `failed` line is said once (#10)
+- On a body that declares no echo cancellation, the endpointer does not
+  take the robot's own listening click for the start of speech (#10)
+- A replay carries no plugin's params into or out of the body's state file;
+  it still records the bindings, the devices and each part's health (#10)
+- `emet validate` and every `--chains` override reject a voice action, an
+  explain topic or a tone no engine performs, and an inflect whose filler
+  is not a word or a list of words (#10)
+- A joint's `trim_deg` in the state file wins over the manifest's, which
+  becomes the builder's first guess (#10)
+- A manifest naming a part's driver that is not installed stops the boot,
+  naming the plugin; reserved types are not started (#10)
+- The speaker applies `audio.output.gain_db`, and refuses at boot a gain
+  it cannot apply (#10)
+- SIGTERM and SIGHUP end a run the way Ctrl-C does, during boot too; a
+  run started under `nohup` ignores the hangup (#10)
+- `emet-listen` redraws the live caption in place on a terminal (#10)
+- `emet explain` and the run header name the body (#10)
+
+### Fixed
+- The provider tests failed on a machine with a Piper voice downloaded,
+  since they looked in its real voices directories (#10)
+
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-09-24 and 2026-09-25. Measurements in #10.
+
 ## [0.4.1] - 2026-09-22
 
 Play speech through one open output stream.
@@ -140,6 +209,7 @@ Contracts written down and enforced.
 - 31 fallback chains, every one ending in a voice rung
 - Apache 2.0 throughout, CI with the layering check
 
+[0.5.0]: https://github.com/alexander-wang03/emet/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/alexander-wang03/emet/compare/v0.4...v0.4.1
 [0.4.0]: https://github.com/alexander-wang03/emet/compare/v0.3...v0.4
 [0.3.0]: https://github.com/alexander-wang03/emet/compare/v0.2...v0.3

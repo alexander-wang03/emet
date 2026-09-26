@@ -29,8 +29,31 @@ __all__ = [
     "ChainMode",
     "ChainError",
     "UnterminatedChainError",
+    "VOICE_ACTIONS",
+    "EXPLAIN_TOPICS",
+    "TONE_PRESETS",
     "parse_chain_set",
 ]
+
+
+#: What a voice rung can do (`DESIGN.md` section 6.1); the validator rejects a
+#: voice rung naming anything else. `utter` speaks the words, `inflect` says a
+#: filler in the reply's voice, `tone` plays a system tone, `explain` says why
+#: the body cannot comply, `backchannel` is the thinking-gap filler (a
+#: placeholder until 1.0), and `silence` binds and makes no sound, which is a
+#: satisfied intent and never a failure.
+VOICE_ACTIONS: frozenset[str] = frozenset(
+    {"utter", "inflect", "tone", "explain", "backchannel", "silence"}
+)
+
+#: What `explain` can be asked about. The first two are facts about the body
+#: and come from the same compilation as the self-model. `offline` is the
+#: soul's words for failure; `error` names the parts that are not working, or
+#: falls back to those words.
+EXPLAIN_TOPICS: frozenset[str] = frozenset({"cannot_move", "cannot_turn", "offline", "error"})
+
+#: The system tones the engine can play for a `tone` rung.
+TONE_PRESETS: frozenset[str] = frozenset({"rising_pair", "soft_click", "falling_pair"})
 
 
 class ChainError(ValueError):

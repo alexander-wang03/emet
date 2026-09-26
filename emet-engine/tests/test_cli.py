@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 import wave
 from pathlib import Path
 
@@ -91,6 +92,9 @@ def args(**overrides) -> argparse.Namespace:
         "reply": False,
         "speak": False,
         "keys": None,
+        "chains": None,
+        "state": None,
+        "explain": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -434,6 +438,19 @@ def test_a_lost_sentence_is_printed_with_its_reason(tmp_path, monkeypatch, capsy
     assert "the voice could not say 'The POISON word.'" in out
 
 
+def test_the_sentence_count_leaves_out_a_filler_for_a_tag(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "f.wav", spoken(b"hello", b"there"))
+    manifest = body(wav)
+    manifest["models"] = {"chat": {"provider": "mock", "params": {"reply": "[express.curiosity] Well. That is odd."}}}
+    stub_loaders(monkeypatch, manifest, talking_soul())
+
+    asyncio.run(cli._run(args(speak=True)))
+
+    out = capsys.readouterr().out
+    assert "    reply: Well. That is odd." in out
+    assert "    spoke 2 sentence(s)" in out
+
+
 def test_speak_with_no_voice_configured_names_the_field(tmp_path, monkeypatch, capsys):
     wav = write_wav(tmp_path / "n.wav", saying(1))
     stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
@@ -521,6 +538,118 @@ def test_a_clean_run_says_nothing_about_either(capsys):
     assert "late callback" not in out and "fell behind" not in out
 
 
+def test_on_a_terminal_the_caption_is_redrawn_in_place(capsys):
+    """Whole-text partials were for this: each one replaces the line."""
+    import io
+
+    screen = io.StringIO()
+    caption = cli.Caption(screen, tty=True)
+    for text in ("what", "what time", "what time is it"):
+        caption.show(Transcript(text=text))
+    caption.close()
+    drawn = screen.getvalue()
+    assert drawn.count("\r") == 3 and drawn.count("\n") == 1, "one line, drawn three times"
+    assert drawn.split("\r")[-1] == "    hearing 'what time is it'\n"
+
+
+def test_a_shorter_partial_blanks_what_the_longer_one_left_behind():
+    import io
+
+    screen = io.StringIO()
+    caption = cli.Caption(screen, tty=True)
+    caption.show(Transcript(text="what time is it"))
+    caption.show(Transcript(text="what"))
+    last = screen.getvalue().split("\r")[-1]
+    assert last.rstrip() == "    hearing 'what'" and len(last) == len("    hearing 'what time is it'")
+
+
+def test_written_to_a_file_each_partial_keeps_its_own_line():
+    import io
+
+    log = io.StringIO()
+    caption = cli.Caption(log, tty=False)
+    caption.show(Transcript(text="what"))
+    caption.show(Transcript(text="what time"))
+    caption.close()
+    assert log.getvalue() == "    hearing 'what'\n    hearing 'what time'\n"
+
+
+def test_the_header_names_the_body_and_the_state_file(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "h.wav", saying(1))
+    manifest = body(wav)
+    manifest["body"] = {"id": "cli_body", "name": "a laptop pretending"}
+    stub_loaders(monkeypatch, manifest, soul())
+
+    asyncio.run(cli._run(args()))
+
+    out = capsys.readouterr().out
+    assert "  body     a laptop pretending (cli_body)" in out
+    assert "  chains   31 resolved at boot" in out
+    assert "cli_body.json" in out
+    assert "  self " not in out, "without a language model nobody reads the self-model"
+
+
+def test_explain_without_a_language_model_prints_the_self_model(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "x.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    asyncio.run(cli._run(args(explain=True)))
+
+    out = capsys.readouterr().out
+    assert "SELF-MODEL" in out and "cannot come to you" in out
+
+
+def test_a_run_that_learned_something_keeps_it_and_says_where(tmp_path, monkeypatch, capsys):
+    """A live run keeps what the wake engine learned. The file here stands in
+    for a microphone, so the session is told to carry as a live one would."""
+    import functools
+
+    wav = write_wav(tmp_path / "k.wav", saying(1))
+    manifest = body(wav)
+    manifest["body"] = {"id": "keeps"}
+    manifest["audio"]["wake"]["params"] = {"carry_over": {"cmninit": "1,2,3"}}
+    stub_loaders(monkeypatch, manifest, soul())
+    monkeypatch.setattr(cli, "ListenSession", functools.partial(ListenSession, carry=True))
+    path = tmp_path / "keeps.json"
+
+    asyncio.run(cli._run(args(state=str(path))))
+
+    out = capsys.readouterr().out
+    assert f"state: kept wake.mock (cmninit) for the next boot on this body, in {path}" in out
+    assert "put it under audio.wake.params.cmninit" not in out.lower()
+
+
+def test_a_replay_carries_nothing_in_or_out(tmp_path, monkeypatch, capsys):
+    """A replay reproduces a run exactly. The mean a live run left is not
+    handed to the detector, and the mean the recording taught it is not
+    kept as this body's: the recording is somebody's room, maybe this one's
+    on another day, and replaying it twice has to give the same answer."""
+    import json
+
+    wav = write_wav(tmp_path / "r.wav", saying(1))
+    manifest = body(wav)
+    manifest["body"] = {"id": "replayed"}
+    manifest["audio"]["wake"]["params"] = {"cmninit": "manual", "carry_over": {"cmninit": "from-the-recording"}}
+    stub_loaders(monkeypatch, manifest, soul())
+    path = tmp_path / "replayed.json"
+    path.write_text(json.dumps({"state_version": "0.1", "body_id": "replayed", "carry": {"wake.mock": {"cmninit": "live"}}}), encoding="utf-8")
+    seen: list[dict] = []
+    real_start = ListenSession.start
+
+    async def start(self):
+        await real_start(self)
+        seen.append(dict(self._wake.params))
+
+    monkeypatch.setattr(ListenSession, "start", start)
+
+    asyncio.run(cli._run(args(state=str(path), replay=wav)))
+
+    out = capsys.readouterr().out
+    assert seen[0]["cmninit"] == "manual", "the live mean was not handed to a replay"
+    assert json.loads(path.read_text(encoding="utf-8"))["carry"] == {"wake.mock": {"cmninit": "live"}}
+    assert "nothing carried in or out" in out and "state: kept" not in out
+
+
 def test_transcribe_says_when_the_words_never_arrived(tmp_path, monkeypatch, capsys):
     """`emet-listen --transcribe` used to report a dead speech service as
     "said nothing the provider could make out", which is a sentence about
@@ -546,3 +675,142 @@ def test_transcribe_says_when_the_words_never_arrived(tmp_path, monkeypatch, cap
     assert rc == 0
     assert "the words never arrived: OSError" in out
     assert "said nothing the provider could make out" not in out
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="Windows' event loop takes no signal handlers")
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP"])
+def test_sigterm_and_sighup_end_the_run_the_way_ctrl_c_does(name):
+    """An SSH session that drops with the hotspot sends SIGHUP; `systemctl
+    stop` sends SIGTERM. Either one cancels the run, so its footer is printed,
+    what it learned is kept, and its parts are put to rest."""
+    import os
+    import signal
+
+    async def run_until_signalled():
+        cli.install_stop_signals()
+        os.kill(os.getpid(), getattr(signal, name))
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "slept"
+
+    assert asyncio.run(run_until_signalled()) == "cancelled"
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="Windows has no SIGHUP")
+def test_a_run_started_under_nohup_outlives_the_hangup():
+    """`nohup emet-talk ... &` asked for a run that survives the SSH session
+    dropping with the hotspot. A hangup that was ignored stays ignored."""
+    import os
+    import signal
+
+    async def run_through_a_hangup():
+        cli.install_stop_signals()
+        os.kill(os.getpid(), signal.SIGHUP)
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "slept"
+
+    before = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        assert asyncio.run(run_through_a_hangup()) == "slept"
+    finally:
+        signal.signal(signal.SIGHUP, before)
+
+
+def test_a_cancel_during_boot_ends_the_run_the_way_ctrl_c_does(tmp_path, monkeypatch, capsys):
+    """SIGTERM and SIGHUP cancel the task. One that lands while the body boots
+    (a voice's preflight over a slow hotspot) used to escape `main()` as a
+    traceback, where Ctrl-C at the same moment printed "stopped."."""
+    wav = write_wav(tmp_path / "boot.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    stopped: list[bool] = []
+    real_start, real_stop = ListenSession.start, ListenSession.stop
+
+    async def start(self):
+        await real_start(self)
+        asyncio.current_task().cancel()
+        await asyncio.sleep(0)
+
+    async def stop(self):
+        await real_stop(self)
+        stopped.append(True)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+    monkeypatch.setattr(ListenSession, "stop", stop)
+
+    assert cli.main(["body.yaml", "soul.yaml"]) == 0
+    assert capsys.readouterr().out.rstrip().endswith("stopped.")
+    assert stopped == [True], "the parts were put to rest"
+
+
+def test_a_replay_offers_no_mean_to_paste():
+    """The header of a replay says nothing is carried in or out, and the
+    footer used to go on to offer the recording's mean for the manifest."""
+    replayed = type("Session", (), {
+        "source_name": "wav", "dropped": 0, "underflows": 0, "starved": 0, "carry": False,
+        "warm_start_hint": lambda self: "warm start: put it under audio.wake.params.cmninit",
+    })()
+    live = type(replayed)()
+    live.carry = True
+    import contextlib
+    import io
+
+    printed = []
+    for session in (replayed, live):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.print_run_footer(session, stats=False, busy=False)
+        printed.append(out.getvalue())
+    assert "warm start" not in printed[0]
+    assert "warm start" in printed[1], "a live run with nowhere to keep it is still asked"
+
+
+def test_installing_the_stop_signals_is_harmless_where_there_are_none():
+    async def install():
+        cli.install_stop_signals()
+        return "ok"
+
+    assert asyncio.run(install()) == "ok"
+
+
+def test_the_header_prints_the_speakers_own_latency_when_it_has_one(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "l.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    real_start = ListenSession.start
+
+    async def start(self):
+        await real_start(self)
+        self._sink.stream_latency_s = 0.085
+
+    monkeypatch.setattr(ListenSession, "start", start)
+    asyncio.run(cli._run(args()))
+    assert "  output   85 ms of stream latency, as the speaker reports it" in capsys.readouterr().out
+
+
+def test_a_warning_from_the_state_file_is_printed_even_when_something_was_kept(tmp_path, monkeypatch, capsys):
+    """One plugin carried something JSON cannot hold, another carried a plain
+    value. The good one is kept and said to be kept; the bad one is not
+    claimed, and the reason is printed."""
+    import functools
+
+    from emet_hal import mock
+
+    wav = write_wav(tmp_path / "w.wav", saying(1))
+    manifest = body(wav)
+    manifest["body"] = {"id": "warns"}
+    manifest["audio"]["wake"]["params"] = {"carry_over": {"cmninit": "1,2,3"}}
+    manifest["capabilities"] = [{"id": "eyes", "type": "display", "role": "eyes", "driver": {"plugin": "emet_hal.mock"}}]
+    stub_loaders(monkeypatch, manifest, soul())
+    monkeypatch.setattr(mock.MockActuator, "carry_over", lambda self: {"blob": b"bytes"})
+    monkeypatch.setattr(cli, "ListenSession", functools.partial(ListenSession, carry=True))
+
+    asyncio.run(cli._run(args(state=str(tmp_path / "warns.json"))))
+
+    out = capsys.readouterr().out
+    assert "state: kept wake.mock (cmninit) for the next boot" in out
+    assert "capability.eyes" not in out.split("state: kept", 1)[1].split("\n", 1)[0]
+    assert "warning: capability.eyes gave a value that cannot be written down" in out

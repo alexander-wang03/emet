@@ -119,9 +119,11 @@ emet/                         one repository, Apache 2.0 throughout
     piper.py          the local voice, through Piper (the default)
     deepgram_voice.py the cloud voice, Aura through Deepgram
 
-  emet-engine/      the listen loop today (wake, VAD, endpointing, §13);
-                    personality synthesis, memory, arbitration, choreography,
-                    prompting, safety and consolidation as releases arrive.
+  emet-engine/      the listen loop (wake, VAD, endpointing, §13), the
+                    conversation and its prompt, the self-model (§7), chains
+                    resolved at boot and acted on (§6), body-local state
+                    (§4.1); memory, arbitration, choreography, safety and
+                    consolidation as releases arrive.
 ```
 
 **HAL** is *hardware abstraction layer*: the standard embedded and OS term for the layer separating generic upper software from specific silicon. Emet uses it in Android's sense: the abstraction itself is `emet_sdk.plugin` (the ABCs and capability descriptors), and `emet-hal` is the collection of per-device *implementations* that satisfy it. Spell the acronym out on first use in any document a newcomer might read first; not every contributor arrives from embedded work.
@@ -156,7 +158,7 @@ Python import namespaces: `emet_sdk`, `emet_hal`, `emet_providers`, `emet_engine
 manifest_version: "0.1"
 
 body:
-  id: "scout-01"                 # P0  stable; keys body-local state, below.
+  id: scout_01                   # P0  stable; keys body-local state, below.
                                  #     NEVER a memory namespace.
   name: "wheeled desk scout"     # P0  human label, not the robot's name
   scale: desk                    # P0  desk | floor | large
@@ -229,7 +231,22 @@ safety:                          # P0
 | Driver health and fault history | About specific hardware |
 | Resolved binding table cache | Derived from this manifest |
 
-**Location:** `/etc/emet/state/<body.id>.json`, beside `body.yaml`. Never inside the bundle. This is what makes one Pi swappable between two chassis without their calibrations colliding: the actual and only job of `body.id`.
+**Location:** `/etc/emet/state/<body.id>.json`, beside `body.yaml`. Never inside the bundle. This is what makes one Pi swappable between two chassis without their calibrations colliding: the actual and only job of `body.id`. A file already kept for this body is used wherever it is. Otherwise the engine uses that directory when it exists and it can write there, and otherwise, on a body run by an ordinary user as the reference body is, `~/.local/state/emet/<body.id>.json` (`XDG_STATE_HOME` honoured). `--state` names a file, or an existing directory to keep it in: the machine's place and a person's, as for the keys file (§3).
+
+**What the file holds, from 0.5.** Every key is present from the file's first version, the way the manifest's reserved fields are, so the format does not migrate when a key starts being read:
+
+| Key | Written by | Read by |
+|---|---|---|
+| `bindings` | the engine at every boot: each intent's target, action and rung | people, when a robot does something unexpected |
+| `devices` | the engine at boot: the name the input and output device answered to | people; USB enumeration differs per body |
+| `health` | the engine at boot: each declared part's `Health` | people; proprioception (§7, `V1`) later |
+| `carry` | the engine at shutdown, from each plugin's `carry_over()` | the engine at the next boot, merged over that plugin's `params` |
+| `trims` | calibration (1.2) | the engine at boot, over each joint's `trim_deg` |
+| `doa_reference_deg`, `camera_intrinsics`, `odometry` | nothing yet | nothing yet |
+
+**Where `trim_deg` lives, decided in 0.5.** The state file wins. A joint's `trim_deg` in the manifest is the builder's first guess, and the value calibration measures is written to the state file under `trims` and laid over the manifest's at every boot. The manifest is never rewritten: it describes a design, the state file describes one physical copy of it.
+
+**What a plugin learns, it carries.** The shipped wake engine adapts its cepstral mean to the room and the microphone as it listens, and starts every boot less sensitive until it has adapted again. That mean is body-local calibration: meaningless on another microphone. `Plugin.carry_over()` returns it at shutdown, the engine keeps it under `carry` keyed by the engine's name, and hands it back through `params` at the next boot on the same body. Before 0.5 `emet-listen` printed the mean and a person pasted it into `audio.wake.params.cmninit`. With a `body.id` the pasted value is only the first boot's guess: once the state file holds a mean, that one is used. Without a `body.id`, or on a live run whose mean was not kept, the footer still prints the mean to paste. A replay of a recording carries no plugin's params in or out, and offers none to paste: the recording is not this body's room, and a replay has to give the same answer twice. It still records the bindings, the devices and each part's health.
 
 #### Experiences travel; conditions do not
 
@@ -261,7 +278,8 @@ Each entry in `capabilities` is a typed block. `P0` types:
       home_deg: 0
       max_speed_dps: 180
       invert: false
-      trim_deg: 0                # set by calibration
+      trim_deg: 0                # the builder's first guess; calibration's
+                                 # value in the state file wins (§4.1)
     - id: tilt
       axis: pitch
       channel: 1
@@ -422,11 +440,13 @@ class Intent:
 | `idle` | `settle`, `look_around`, `fidget`, `doze` | Emitted by the idle loop, lowest priority. |
 | `move` | `approach`, `retreat`, `turn_to`, `wander`, `stop` | Only bound if a `drive` exists. |
 
+**Two kinds are the engine's own, since 0.5.** Every sentence of a reply is a `speak` intent performed through its binding, and its action carries a prosody hint: a `contour` read off the end mark (`rising`, `bright`, `level`). It is recorded on the action only: `VoicePlugin.speak()` takes text alone, so reaching a voice needs a contract change in a later release. The engine's state is a `signal` intent: `booting` once it is up, `listening` on a wake, `thinking` while the model works, `speaking` from the first sentence, `offline` when, in `emet-talk`, a provider's words or reply do not arrive, `error` when a declared part is not working at boot, `muted` when it stops listening. A model's tag naming either kind is dropped: system state is the engine's to report, and speech is the text itself.
+
 ### 5.2 Reserved intents (`RSV`)
 
 `manipulate` (grasp/release/offer), `navigate` (goto a named place, requires mapping), `gesture` (arbitrary named clip from a motion pack), `attend_joint` (look at your own hand, needed for anything resembling embodied reasoning).
 
-**These names are reserved in the vocabulary from `P0`, not added later.** They are legal for a soul to emit; the engine logs them at debug level and drops them. This costs four entries in an enum today.
+**These names are reserved in the vocabulary from `P0`, not added later.** They are legal for a soul to emit; the engine logs them at debug level and drops them, at the tag reader before they are reported and again before anything is performed. This costs four entries in an enum today.
 
 The reason is the same as every other `RSV` field, but sharper: the intent set is *closed*, so an unrecognized intent is a **validation failure**, not a no-op. If `manipulate` were added to the vocabulary only when it was implemented, a soul bundle authored years earlier that reached for it would fail to load rather than degrade, and bundles are exactly the artifact strangers publish, copy, and keep for years. Reserving the names makes forward-written souls merely ineffective rather than invalid.
 
@@ -476,6 +496,8 @@ express.curiosity:
 
 **Resolution:** at boot, walk each chain top to bottom, bind the first rung whose actuator selector matches something in the manifest. Log the resolved binding table. It is the single most useful debugging artifact, printable with `emet explain`.
 
+Since 0.5 the engine does this against what the body's parts report: it starts every declared part whose type has a plugin category (a reserved type is listed for the self-model and nothing is built), resolves every chain once against the descriptors the parts return, prints the table in the boot log grouped by what performs each intent, and keeps it in the body's state file (§4.1). A part that will not start is bound past; a driver that is not installed stops the boot, naming the plugin. `--chains` on `emet-listen` and `emet-talk` lays an override file over the SDK's chains, as it does for `emet explain`.
+
 **Validation:** the SDK **rejects** any chain whose final rung is not a voice rung. This is the mechanical enforcement of principle 2.
 
 ### 6.1 Voice actions: what the terminal rung actually does
@@ -485,13 +507,15 @@ The terminal-rung rule creates a question the rest of the spec does not answer: 
 Taken naively, a robot with no actuators would mutter to itself every twenty seconds.
 
 The answer is that a voice rung must always **bind**; it need not always make a
-sound. Three voice actions, all `P0`:
+sound. Six voice actions, all `P0`, in four kinds; the last column is what binds to
+each on a body with nothing but a speaker:
 
 | Action | What it does | Used by |
 |---|---|---|
-| `utter` / `inflect` / `backchannel` / `tone` | Produces sound: speech, a prosodic gesture, a filler, a system tone. | `speak`, `acknowledge`, `express.*`, most `signal.*` |
-| `silence` | Binds and produces nothing. | all `idle.*`, `attend.*`, `move.stop` |
-| `explain` | Says *why the body cannot comply*. | `move.approach` and `move.retreat` on a body with no drive, `signal.offline`, `signal.error` |
+| `utter` / `inflect` / `tone` | Produces sound: speech, a filler, a system tone. | `speak`, `express.*`, `signal.booting`, `signal.listening`, `signal.muted` |
+| `explain` | Says *why the body cannot comply*. | `move.approach`, `move.retreat` and `move.turn_to` on a body that cannot do them, `signal.offline`, `signal.error` |
+| `backchannel` | The thinking-gap filler; binds and fires nothing until 1.0. | `acknowledge` |
+| `silence` | Binds and produces nothing. | all `idle.*` and `attend.*`, `move.stop`, `move.wander`, `signal.thinking`, `signal.speaking` |
 
 **`silence` is what makes principle 2 survive contact with the idle loop.** §11.1
 requires the idle loop to be a silent no-op on a body with no actuators; without a
@@ -499,14 +523,29 @@ silent voice action that would have to be a special case in the engine. With one
 is a data property of the chain, and the engine needs no idle-specific code at all.
 
 **`explain` is principle 6 at the motor level.** Asked to come closer, a robot with no
-wheels reaches the bottom of `move.approach` and says so: *"I can't come to you, I
-don't have wheels."* The self-model (§7) already told the soul this in context; the
+wheels reaches the bottom of `move.approach` and says so: *"I cannot come to you. I
+have no wheels."* The self-model (§7) already told the soul this in context; the
 chain layer tells the same truth at the moment it becomes relevant. The two must never
-disagree, which is why both are generated from the same manifest.
+disagree, which is why both are generated from the same manifest. Since 0.5 they are
+one compilation: the self-model quotes, word for word, the line the `explain` rung
+speaks, and a test holds every example body to it.
 
 Consequence worth stating plainly: **a chain ending in `silence` is still a satisfied
 intent.** The intent resolved, bound, and executed. Producing no sound is the correct
 output, not a failure, and nothing downstream should treat it as one.
+
+**As built, 0.5.** `emet_sdk.chains.VOICE_ACTIONS` names the six, and the validator rejects a voice rung naming anything else.
+
+- `utter` says a sentence of the reply, which travels as a `speak` intent.
+- `inflect` says the rung's next `filler`, in turn, in the reply's voice, at the place the tag stood: `[express.curiosity]` before a sentence is "hm?" before it, and "hmm." the next time.
+- `tone` plays one of three presets the engine renders at the sink's rate: `rising_pair` (`signal.booting`), `soft_click` (`signal.listening`), `falling_pair` (`signal.muted`). They play only with a voice running. On a body that declares no echo cancellation, the endpointer does not take its own click for the start of speech.
+- `explain` says `cannot_move` and `cannot_turn` in the self-model's words (§7); `offline` in the soul's `failed` line; `error` by naming the parts that are not working.
+- `backchannel` binds and fires nothing until the micro-model arrives with barge-in in 1.0.
+- `silence` binds, makes no sound, and is recorded as satisfied.
+
+Without a voice (`emet-listen` without `--speak`) the words and the tones have nowhere to go and are recorded as unvoiced; hardware rungs still act.
+
+What 0.5 leaves for later, said here so nobody reads more into it. An `inflect` rung's `preset` rides on the action unread, as the speak `contour` does, until a voice can inflect. An `explain` does not silence what the model wrote after its tag: a model that ignores its prompt and writes `[move.approach] On my way.` on a speakerphone is heard ignoring it, after the truth. A hardware rung is one `apply()` of the chain's action on the part that won it; the choreographer that turns a move into a bounded `Twist` for the locomotion plugin and repeats `apply()` at 50 Hz arrives in 1.0, and no shipped motor driver exists before it.
 
 
 **`RSV`, `mode: all`:** bind every matching rung so a well-equipped body tilts its head *and* squints *and* pulses. Needs per-actuator arbitration (5.3), so it waits.
@@ -537,6 +576,28 @@ You hear through a four-microphone array and can tell roughly which direction
 ```
 
 Rules: state capabilities *and* their absence. Absences do more work than presences: they stop the robot from offering to do things it cannot do. Plain physical language, never component names. `scale` and `body.description` feed the phrasing.
+
+**As built, 0.5.** `emet_engine.self_model` compiles it at boot, after the body's parts have started, from the manifest and what the parts reported: a part that failed to start is described as not working, and the treads' turning rate is the one the locomotion plugin reports after scrub, never the geometry's. The result is an `emet_sdk.types.SelfModel`: facts keyed by the part they describe (so `self_model_overrides` has something stable to key on later), and the `explain` rung's words per topic. What the bodiless body is told, word for word:
+
+```
+YOUR BODY
+This is the body you are in right now, and all of it is true. Never offer to do anything it cannot do.
+Your builder describes you like this: "A small grey speakerphone. No moving parts, no lights, no screen, just a microphone, a speaker, and whatever is listening through them."
+You are small: you sit on a desk or a table.
+You are plugged into the wall.
+You hear through one microphone.
+You cannot tell which direction a voice comes from.
+You speak through a speaker.
+You have no wheels and no legs, so you cannot move from where you are.
+If someone asks you to come to them, the honest answer is "I cannot come to you. I have no wheels."
+You have no head, so you cannot turn to look at anyone, nod, or shake your head.
+If someone asks you to turn toward them, the honest answer is "I cannot turn toward you. I have no wheels and no head."
+You have no arms and no hands, so you cannot pick anything up, point at anything, or hand anything over.
+You have no eyes and no face, so nobody can see your expression. Your voice is all the expression you have.
+You cannot see: you have no camera.
+```
+
+The two quoted answers are the `explain` rung's own lines for `cannot_move` and `cannot_turn` (§6.1), so the prompt and the chain layer say the same words. A declared camera is described as present and unusable ("nothing it sees reaches you yet"), because nothing in 0.x passes a frame to the model; a declared `manipulator`, a type reserved for `V1`, likewise.
 
 **`RSV`:** a `self_model_overrides` block in the soul bundle so a character describes its own body in its own voice.
 **`V1`:** proprioceptive updates mid-session. "My left wheel isn't responding" enters context when a driver faults, and the character can *mention* it.
@@ -953,6 +1014,13 @@ class PocketSphinxWake(WakePlugin):
 reverse silently feeds 48 kHz audio to a 16 kHz model and the robot stops
 hearing without an error.
 
+**What a detector learns about a room, it keeps.** A plugin built from the body (the
+wake engine, a capability's driver, a drive's locomotion plugin) may return params
+from `carry_over()` before it is shut down, and the engine keeps them in the body's
+state file (§4.1) and hands them back through `params` at the next boot on the same
+body. Providers belong to the soul and are not asked. The shipped engine returns its adapted cepstral mean, so a body boots as
+sensitive as its last run ended, without anybody copying a number into a manifest.
+
 `emet.audio` sources and `emet.audio_out` sinks are not `Plugin` subclasses.
 They satisfy the `AudioSource` and `AudioSink` protocols in `emet_sdk.types`
 and are built as `cls(config, fmt)` from `audio.input` or `audio.output`. Audio
@@ -1109,9 +1177,15 @@ brackets, `[express.curiosity]`, anywhere in the reply. The engine lifts every
 bracketed token out of the stream before the words reach the voice, so a tag
 is never spoken (and neither is a stage direction a model writes despite the
 prompt); tokens that name an intent in the closed vocabulary are reported,
-the rest are dropped. What a reported intent does is 0.5's question, when the
-self-model and the chains give a body something to do with it; in 0.4 the
-prompt does not yet ask for tags, and the engine collects the ones it gets.
+the rest are dropped. Since 0.5 the prompt asks for tags, offering only the
+ones this body acts on: every `express` tag, since its chain always ends in a
+filler, and `attend` and `move` tags where a part performs them. A reported
+intent is performed through its binding: a filler is queued with the
+sentences, so it is heard before the sentence its tag opened, and a hardware
+rung acts when the model writes the tag, ahead of the words, until the
+choreographer (1.0) can time a gesture to them. A printed reply
+(`emet-listen --reply`) has its tags lifted and performed the same way. Reserved kinds, and `signal` and `speak`, which are the
+engine's own (§5.1), are dropped rather than reported.
 
 **Stop reasons are the seam's, in five words.** `end`, `tool`, `length`,
 `refusal`, `error`. A vendor's own names map onto them and anything new maps
@@ -1224,7 +1298,7 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 3. **Thinking gap:** local micro-model backchannel within 300ms, so a sound arrives before the cloud answer.
 4. **Trailing clause:** if the transcript looks incomplete, extend the silence window once (`extend_on_incomplete`). Cheap heuristic, big perceived-intelligence payoff. Since 0.4: judged on the words so far at the moment silence runs out the patience, by `emet_engine.turn.looks_incomplete`, which reads a last word no sentence ends on ("where are my", "and then"), a trailing comma, or a clause with no end mark from a provider that has been supplying them. One extra window per turn; speech resuming inside it returns the turn to plain patience. Off without a transcriber, whatever the soul says.
 
-**When the model has no words, the soul does.** A provider that declines, a network that breaks mid-reply, a name heard with nothing after it: each gets a line from `persona.lines` (§8.1), spoken in the robot's own voice, so it fails loudly and in character rather than in silence. The engine has plain defaults for the first two and stays quiet on the third unless the soul says otherwise.
+**When the model has no words, the soul does.** A provider that declines, a network that breaks mid-reply, a name heard with nothing after it: each gets a line from `persona.lines` (§8.1), spoken in the robot's own voice, so it fails loudly and in character rather than in silence. The engine has plain defaults for the first two and stays quiet on the third unless the soul says otherwise. Since 0.5, in `emet-talk`, a provider whose words or reply did not arrive is also `signal.offline`, whose voice rung explains in the soul's `failed` line, so on a body with nothing else to show it the line is said once; where a status light shows it, the light pulses and the line is still said.
 
 ---
 

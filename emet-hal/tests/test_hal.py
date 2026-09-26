@@ -16,6 +16,7 @@ from emet_sdk.types import Action, Twist
 
 from emet_hal.differential import DifferentialDrive
 from emet_hal.mock import MockActuator, MockSensor, MockWake
+from emet_hal.pocketsphinx_wake import PocketSphinxWake
 from emet_hal.tracked import TrackedDrive
 
 # r = 0.05 m, W = 0.20 m, chosen so the sums come out in round numbers.
@@ -218,6 +219,86 @@ def test_a_wake_engine_can_start_and_still_not_know_the_name():
     descriptor = wake.describe()
     assert descriptor.healthy
     assert not descriptor.can_detect("hey emet")
+
+
+# -------------------------------------------------------------- carry-over
+
+
+def test_mock_wake_carries_over_whatever_its_params_say():
+    """So an engine test can watch a value go round a boot: kept in the
+    body's state file at the end of one run, back in `params` at the next."""
+    wake = MockWake({"engine": "mock", "params": {"carry_over": {"cmninit": "1,2,3"}}}, "hey emet")
+    asyncio.run(wake.start())
+    carried = wake.carry_over()
+    assert carried == {"cmninit": "1,2,3"}
+    carried["cmninit"] = "edited"
+    assert wake.carry_over() == {"cmninit": "1,2,3"}, "a copy, so a caller cannot edit the params"
+    empty = MockWake({"engine": "mock", "params": {}}, "hey emet")
+    asyncio.run(empty.start())
+    assert empty.carry_over() == {}
+
+
+def test_mock_wake_carries_nothing_once_shut_down():
+    """As pocketsphinx, which has let its decoder go: an engine that asks
+    after `shutdown()` has asked too late, and a test built on the mock
+    has to see that."""
+    wake = MockWake({"engine": "mock", "params": {"carry_over": {"cmninit": "1,2,3"}}}, "hey emet")
+    assert wake.carry_over() == {}, "never started"
+    asyncio.run(wake.start())
+    asyncio.run(wake.shutdown())
+    assert wake.carry_over() == {}
+
+
+class FakeDecoder:
+    """Only what `carry_over()` asks of a pocketsphinx decoder, so these
+    tests run with the `wake` extra absent."""
+
+    def __init__(self, mean: str = "41.2,4.1,-0.9", *, fails: bool = False) -> None:
+        self.mean = mean
+        self.fails = fails
+        self.asked: list[bool] = []
+
+    def get_cmn(self, update: bool) -> str:
+        self.asked.append(update)
+        if self.fails:
+            raise RuntimeError("this build reports no cepstral mean")
+        return self.mean
+
+
+def listening(decoder: FakeDecoder) -> PocketSphinxWake:
+    """The plugin as `start()` leaves it once the phrase is taught, with
+    `decoder` in place of the real one."""
+    plugin = PocketSphinxWake({"engine": "pocketsphinx", "params": {}}, "hey emet")
+    plugin._decoder = decoder
+    plugin._listening = True
+    return plugin
+
+
+def test_pocketsphinx_carries_over_the_mean_its_decoder_reports():
+    """The hint and the carry-over read the same mean, and neither asks the
+    decoder to update it: reading the mean must not change it."""
+    decoder = FakeDecoder()
+    plugin = listening(decoder)
+    assert plugin.carry_over() == {"cmninit": "41.2,4.1,-0.9"}
+    assert "41.2,4.1,-0.9" in plugin.warm_start_hint()
+    assert decoder.asked == [False, False]
+
+
+def test_pocketsphinx_carries_nothing_when_it_is_not_listening():
+    plugin = listening(FakeDecoder())
+    plugin._listening = False
+    assert plugin.carry_over() == {}
+    assert plugin.warm_start_hint() is None
+    never_started = PocketSphinxWake({"engine": "pocketsphinx", "params": {}}, "hey emet")
+    assert never_started.carry_over() == {}
+
+
+def test_a_decoder_that_cannot_report_its_mean_costs_only_the_warm_start():
+    """No exception reaches the engine at the end of the run. The next boot
+    starts cold, which is all a missing mean costs."""
+    plugin = listening(FakeDecoder(fails=True))
+    assert plugin.carry_over() == {}
+    assert plugin.warm_start_hint() is None
 
 
 # ----------------------------------------------------------------- version

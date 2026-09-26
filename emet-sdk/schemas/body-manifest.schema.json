@@ -280,7 +280,7 @@
         "max_speed_dps": { "type": "number", "exclusiveMinimum": 0 },
         "invert": { "type": "boolean" },
         "trim_deg": {
-          "description": "Set by calibration. Body-local state: belongs to the body, never to the soul bundle.",
+          "description": "The builder's first guess. Calibration writes the measured trim to the body's state file, which wins at boot (DESIGN.md 4.1). Body-local: belongs to the body, never to the soul bundle.",
           "type": "number"
         }
       }

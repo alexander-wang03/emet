@@ -27,6 +27,7 @@ a bad selector.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from emet_sdk.chains import Chain, Rung
@@ -39,6 +40,8 @@ __all__ = [
     "BindingTable",
     "resolve",
     "descriptors_from_manifest",
+    "load_chains",
+    "shipped_chain_files",
 ]
 
 
@@ -335,3 +338,28 @@ def load_chain_files(paths: Iterable[Any]) -> dict[str, Chain]:
     for path in paths:
         merged.update(parse_chain_set(load_yaml(path)))
     return merged
+
+
+def shipped_chain_files() -> list[Path]:
+    """The chain files the SDK ships, in load order."""
+    return sorted((Path(__file__).resolve().parent / "chains").glob("*.yaml"))
+
+
+def load_chains(overrides: Iterable[Any] = ()) -> dict[str, Chain]:
+    """The SDK's chains, then each override file in turn; later wins.
+
+    One loader for `emet explain` and the engine's boot, so the table a
+    builder reads on a laptop and the one the robot resolves start from the
+    same chains. An override is held to `emet validate`'s rules before it is
+    laid over anything: a voice rung that sings, or an intent the vocabulary
+    does not have, raises `ChainError` naming the file.
+    """
+    from emet_sdk.chains import ChainError
+    from emet_sdk.validate import load_yaml, validate_chain_document
+
+    overrides = list(overrides)
+    for path in overrides:
+        report = validate_chain_document(load_yaml(path))
+        if not report.ok:
+            raise ChainError(f"{path}: " + "; ".join(f.message for f in report.errors))
+    return load_chain_files([*shipped_chain_files(), *overrides])

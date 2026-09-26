@@ -131,6 +131,22 @@ class Plugin(ABC):
         """
         return Health()
 
+    def carry_over(self) -> Mapping[str, Any]:
+        """Params worth keeping for the next boot on this body. Default: none.
+
+        Body-local state (`DESIGN.md` section 4.1): an adapted mean, a
+        calibration, anything true of this hardware and meaningless on the
+        next. The engine asks the plugins it builds from the body (the wake
+        engine, each capability's driver, a drive's locomotion plugin), keeps
+        what they return in the body's state file, keyed by `body.id` and
+        never in the soul, and merges it over `params` the next time the
+        plugin is built on the same body. Providers belong to the soul and
+        are not asked. Called before `shutdown()`, while the plugin still
+        knows what it learned. The values must be JSON: they come back with
+        string keys and lists, and one JSON cannot hold is not kept.
+        """
+        return {}
+
 
 class CapabilityPlugin(Plugin):
     """A plugin built from one entry in the manifest's `capabilities` list.

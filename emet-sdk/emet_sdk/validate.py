@@ -691,6 +691,38 @@ def validate_chain_document(doc: Any) -> ValidationReport:
             report.error("unknown_intent", str(exc), f"/{name}")
 
     for name, chain in parsed.items():
+        voice = chain.voice_rung
+        where = f"/{name}/rungs/{len(chain.rungs) - 1}"
+        topic, preset, filler = (voice.params.get(k) for k in ("topic", "preset", "filler"))
+        if voice.action not in _chains.VOICE_ACTIONS:
+            report.error(
+                "unknown_voice_action",
+                f"chain {name!r} ends in the voice action {voice.action!r}, which no "
+                f"engine performs. Voice actions: {', '.join(sorted(_chains.VOICE_ACTIONS))}.",
+                f"{where}/action",
+            )
+        elif voice.action == "explain" and (not isinstance(topic, str) or topic not in _chains.EXPLAIN_TOPICS):
+            report.error(
+                "unknown_explain_topic",
+                f"chain {name!r} explains {topic!r}, which the engine has no words "
+                f"for. Topics: {', '.join(sorted(_chains.EXPLAIN_TOPICS))}.",
+                f"{where}/params/topic",
+            )
+        elif voice.action == "tone" and (not isinstance(preset, str) or preset not in _chains.TONE_PRESETS):
+            report.error(
+                "unknown_tone_preset",
+                f"chain {name!r} plays the tone {preset!r}, which the engine cannot "
+                f"render. Tones: {', '.join(sorted(_chains.TONE_PRESETS))}.",
+                f"{where}/params/preset",
+            )
+        elif voice.action == "inflect" and not _fillers_are_words(filler):
+            report.error(
+                "empty_inflect",
+                f"chain {name!r} inflects with {filler!r}, and the voice needs words to "
+                f"say for it. Give `params.filler` a word or a list of words, each one "
+                f"a word: a number or a null in the list would be read out as written.",
+                f"{where}/params/filler",
+            )
         if chain.mode == _chains.ChainMode.ALL:
             report.warn(
                 "reserved_mode",
@@ -700,6 +732,17 @@ def validate_chain_document(doc: Any) -> ValidationReport:
             )
 
     return report
+
+
+def _fillers_are_words(filler: Any) -> bool:
+    """An inflect's filler: a word, or a non-empty list in which every entry
+    is one."""
+    fillers = [filler] if isinstance(filler, str) else filler
+    return (
+        isinstance(fillers, list)
+        and bool(fillers)
+        and all(isinstance(f, str) and f.strip() for f in fillers)
+    )
 
 
 # --------------------------------------------------------------------------

@@ -21,8 +21,7 @@ from typing import Any, Mapping
 
 from emet_sdk import __version__
 from emet_sdk.discovery import PluginRegistry as _Registry
-from emet_sdk.resolve import descriptors_from_manifest, resolve, unused_reasons
-from emet_sdk.chains import parse_chain_set
+from emet_sdk.resolve import descriptors_from_manifest, load_chains, resolve, unused_reasons
 from emet_sdk.validate import (
     PluginRegistry,
     ValidationReport,
@@ -187,22 +186,14 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 
-def _shipped_chain_files() -> list[Path]:
-    return sorted((Path(__file__).resolve().parent / "chains").glob("*.yaml"))
-
-
 def _load_chains(extra: list[str] | None) -> dict:
     """SDK defaults first, then any override file; later wins.
 
     That ordering is how per-soul chain overrides are meant to work: a bundle
-    ships only the ladders it wants to change.
+    ships only the ladders it wants to change. The engine loads them the same
+    way at boot, through the same function.
     """
-    chains: dict = {}
-    for path in _shipped_chain_files():
-        chains.update(parse_chain_set(load_yaml(path)))
-    for path in extra or []:
-        chains.update(parse_chain_set(load_yaml(Path(path))))
-    return chains
+    return load_chains([Path(p) for p in extra or []])
 
 
 def _fmt_params(params: dict) -> str:
@@ -262,8 +253,9 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     caps = descriptors_from_manifest(manifest)
     table = resolve(chains, caps)
 
-    body = (manifest.get("body") or {}).get("id", "?")
-    print(f"BINDING TABLE  {manifest_path}   (body: {body})")
+    body = manifest.get("body") or {}
+    label = f"{body.get('id', '?')}, {body['name']!r}" if body.get("name") else body.get("id", "?")
+    print(f"BINDING TABLE  {manifest_path}   (body: {label})")
     print(f"{len(caps)} capabilities, {len(table)} intents, "
           f"{len(table.hardware_bound)} bound to hardware, "
           f"{len(table.voice_bound)} to voice")

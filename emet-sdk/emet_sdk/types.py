@@ -45,6 +45,8 @@ __all__ = [
     "SAMPLE_BYTES",
     "Health",
     "Reading",
+    "BodyFact",
+    "SelfModel",
     "Sensitivity",
     "MemoryKind",
 ]
@@ -615,6 +617,51 @@ class Reading:
     kind: str                                    # imu, range, touch, light, temp
     values: Mapping[str, float] = field(default_factory=dict)
     stale: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BodyFact:
+    """One sentence of the self-model: a part the body has, or one it lacks.
+
+    `key` names what the sentence is about (description, scale, power,
+    hearing, direction, voice, locomotion, cannot_move, head, cannot_turn,
+    arms, eyes, lights, camera), so that a soul's `self_model_overrides`
+    (RSV) can one day say it in the character's own words. `present` is False for an absence, which does more
+    work than a presence: it stops the robot offering what it cannot do.
+    """
+
+    key: str
+    text: str
+    present: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class SelfModel:
+    """What the robot is told about its own body, and what it says when asked
+    for something that body cannot do.
+
+    Compiled at boot by the engine from the manifest and what the plugins
+    reported, by a deterministic template and never by a model (`DESIGN.md`
+    section 7). `facts` become the paragraph in the system prompt, second
+    person. `explanations` are what the `explain` voice rung says, first
+    person, one per topic in `emet_sdk.chains.EXPLAIN_TOPICS`; None means
+    there is nothing to say: for a body topic, the body can do it, and for
+    `offline` or `error`, the soul chose silence. One compilation of one
+    manifest produces both, so the chain layer cannot contradict the prompt
+    (section 6.1).
+    """
+
+    facts: tuple[BodyFact, ...] = ()
+    explanations: Mapping[str, str | None] = field(default_factory=dict)
+
+    @property
+    def absences(self) -> tuple[BodyFact, ...]:
+        return tuple(f for f in self.facts if not f.present)
+
+    @property
+    def text(self) -> str:
+        """The facts, one sentence a line, in order."""
+        return "\n".join(f.text for f in self.facts)
 
 
 class Sensitivity(IntEnum):

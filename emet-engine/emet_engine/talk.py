@@ -20,7 +20,16 @@ from pathlib import Path
 from emet_sdk.discovery import PluginRegistry
 from emet_sdk.validate import MissingPluginError, ValidationError
 
-from emet_engine.cli import _load, _replay, print_run_footer
+from emet_engine.cli import (
+    _load,
+    _replay,
+    add_body_flags,
+    boot_lines,
+    install_stop_signals,
+    print_explanation,
+    print_run_footer,
+    state_warnings,
+)
 from emet_engine.keys import load_keys
 from emet_engine.session import EngineError, ListenSession
 from emet_engine.turn import EndReason
@@ -29,6 +38,7 @@ __all__ = ["main"]
 
 
 async def _run(args: argparse.Namespace) -> int:
+    install_stop_signals()
     registry = PluginRegistry.discover()
     if not registry:
         print(
@@ -63,9 +73,12 @@ async def _run(args: argparse.Namespace) -> int:
         speak=True,
         on_wake=lambda event: print(f"\n  (heard {event.phrase!r})", flush=True),
         on_extended=lambda text: print("  (that sounded unfinished; waiting a little longer)", flush=True),
+        chains=args.chains or (),
+        state=args.state,
     )
     async with session:
         assert session.format is not None
+        state_warnings(session)
         described = [
             f"{name} is listening for {session.phrase!r}",
             f"  wake     {session.engine_name} on {session.source_name}, "
@@ -80,9 +93,12 @@ async def _run(args: argparse.Namespace) -> int:
             f"  patience {session.patience_ms} ms"
             + (", extends once on a trailing clause" if session.extend_on_incomplete else ""),
         ]
+        described += boot_lines(session, reply=True)
         for entry in loaded:
             described.append(f"  keys     {', '.join(entry.names) or 'nothing new'} from {entry.path}")
         print("\n".join(described))
+        if args.explain:
+            print_explanation(session, reply=True)
         print("  (ctrl-c to stop)" if not args.replay else "")
 
         exchanges = 0
@@ -159,11 +175,14 @@ def main(argv: list[str] | None = None) -> int:
         help="report the loop's timings at the end: the wait for the words, "
         "the first word, the first sound, and whether the loop kept up",
     )
+    add_body_flags(parser)
     args = parser.parse_args(argv)
 
     try:
         return asyncio.run(_run(args))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Ctrl-C during boot arrives as the first; SIGTERM or SIGHUP, which
+        # cancel the task themselves, as the second. The same stop either way.
         print("\nstopped.")
         return 0
     except (EngineError, MissingPluginError, ValidationError) as exc:

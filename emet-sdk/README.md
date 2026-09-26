@@ -11,23 +11,25 @@ term in Android's sense: the abstraction itself lives here in
 `emet_sdk.plugin`, and `emet-hal` is the collection of per-device
 implementations that satisfy it.
 
-## What is in 0.4
+## What is in 0.5
 
 Schema, validation, the plugin and provider contracts, the rule for which
-provider runs each stage, and chain resolution. This package still runs
-nothing: it is the layer the engine and every plugin agree on, and it
-deliberately contains almost no logic.
+provider runs each stage, chain resolution, and the shape of the self-model.
+This package still runs nothing: it is the layer the engine and every plugin
+agree on, and it deliberately contains almost no logic. The engine compiles
+the self-model; the types it compiles into live here, so a soul's
+`self_model_overrides` (reserved) has something stable to key on.
 
 | | |
 |---|---|
 | `schemas/` | Body manifest, soul bundle, and motion pack, as JSON Schema. The **full** surface: every P0 field, every RSV field reserved for later releases, and the reserved V1 capability types. |
-| `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `WakeDescriptor`, `Transcript`, `TranscriberDescriptor`, `Prompt`, `Message`, `ToolSpec`, `ToolCall`, `TextDelta`, `ReplyDone`, `LanguageModelDescriptor`, `VoiceDescriptor`, `AudioFormat`, `AudioSource`, `AudioSink`, `Health`, `Priority`, `Sensitivity`. |
+| `emet_sdk/types.py` | `Intent`, `Action`, `Pose`, `Twist`, `CapabilityDescriptor`, `LocomotionDescriptor`, `WakeDescriptor`, `Transcript`, `TranscriberDescriptor`, `Prompt`, `Message`, `ToolSpec`, `ToolCall`, `TextDelta`, `ReplyDone`, `LanguageModelDescriptor`, `VoiceDescriptor`, `AudioFormat`, `AudioSource`, `AudioSink`, `Health`, `BodyFact`, `SelfModel`, `Priority`, `Sensitivity`. |
 | `emet_sdk/intents.py` | The closed intent vocabulary, plus the four names reserved from P0. |
-| `emet_sdk/chains.py` | Fallback chain format, and the rule that every chain terminates in a voice rung. |
-| `emet_sdk/plugin.py` | `CapabilityPlugin` and its subclasses `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin`, plus `WakePlugin`, `TranscriberPlugin`, `LanguageModelPlugin` and `VoicePlugin`: the public contract. |
+| `emet_sdk/chains.py` | Fallback chain format, the rule that every chain terminates in a voice rung, and what a voice rung can do (`VOICE_ACTIONS`), explain (`EXPLAIN_TOPICS`) and play (`TONE_PRESETS`). |
+| `emet_sdk/plugin.py` | `CapabilityPlugin` and its subclasses `ActuatorPlugin`, `SensorPlugin`, `LocomotionPlugin`, plus `WakePlugin`, `TranscriberPlugin`, `LanguageModelPlugin` and `VoicePlugin`: the public contract. A plugin built from the body (the wake engine, a driver, a drive's locomotion) may name params to carry to its next boot on the same body (`carry_over()`). |
 | `emet_sdk/discovery.py` | Entry-point discovery across nine groups. Installing a package is what makes a driver exist. |
 | `emet_sdk/models.py` | Which provider a body and a soul agree on, per stage: one rule for speech recognition, the language model, the voice, and the stage still reserved. |
-| `emet_sdk/resolve.py` | Chain resolution: `(chains, descriptors) → binding table`. |
+| `emet_sdk/resolve.py` | Chain resolution: `(chains, descriptors) → binding table`, and the one loader for the shipped chains and their overrides that `emet explain` and the engine share. |
 | `emet_sdk/validate.py` | Semantic rules and the error taxonomy. |
 | `emet_sdk/cli.py` | `emet validate`, `emet explain`. |
 

@@ -20,6 +20,8 @@ recorded fixture worth keeping.
 from __future__ import annotations
 
 import asyncio
+import math
+from array import array
 
 import pytest
 
@@ -147,7 +149,8 @@ def test_shutdown_stops_listening():
 def test_a_started_engine_offers_its_warm_mean_for_the_next_boot():
     """Cold, the reference body woke two times in three in the first ten
     seconds. The adapted cepstral mean is what a warm decoder has that a cold
-    one lacks, so a run hands it on and the next boot starts from it."""
+    one lacks, so a run hands it on and the next boot starts from it. The
+    hint is the way by hand, for a body with no `body.id`."""
     plugin = started("hey emet")
     hint = plugin.warm_start_hint()
     assert hint is not None
@@ -159,3 +162,41 @@ def test_a_started_engine_offers_its_warm_mean_for_the_next_boot():
 def test_a_warm_mean_can_be_handed_to_the_next_boot():
     plugin = started("hey emet", cmninit="40,3,-1")
     assert plugin.describe().healthy
+
+
+#: 80 ms of a tone under a rough sawtooth: enough sound for the decoder's
+#: mean to move, with nothing random in it.
+SOUND = array(
+    "h", (int(2000 * math.sin(i * 0.3)) + (i * 7919) % 4001 - 2000 for i in range(1280))
+).tobytes()
+
+
+def test_a_listening_engine_carries_its_adapted_mean_to_the_next_boot():
+    """What `emet-listen` printed for a person to paste, handed to the engine
+    instead. The engine keeps it in the body's state file and gives it back
+    as `params.cmninit`, so the next boot starts where this one ended."""
+    plugin = started("hey emet")
+    cold = plugin.carry_over()["cmninit"]
+
+    async def listen(frames: int) -> None:
+        for _ in range(frames):
+            await plugin.process(SOUND)
+
+    run(listen(40))
+    carried = plugin.carry_over()
+    assert set(carried) == {"cmninit"}
+    assert carried["cmninit"] != cold, "3.2 s of sound moved the mean"
+    assert carried["cmninit"] in plugin.warm_start_hint(), "the hint names the same mean"
+
+    after = started("hey emet", **carried)
+    assert after.describe().healthy, after.health().detail
+    assert after.carry_over() == carried, "the next boot starts from it"
+
+
+def test_an_engine_that_is_not_listening_carries_nothing():
+    """A decoder that stopped, or never started, has no mean worth keeping.
+    The engine asks before `shutdown()`, while there still is one."""
+    plugin = started("hey emet")
+    run(plugin.shutdown())
+    assert plugin.carry_over() == {}
+    assert started("hey zzqqxvv").carry_over() == {}

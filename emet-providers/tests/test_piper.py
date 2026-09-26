@@ -129,6 +129,9 @@ def test_the_default_voice_is_public_domain_ljspeech():
 
 
 def test_voices_are_looked_for_in_the_documented_places(monkeypatch, tmp_path):
+    # The real system place, which conftest.py hides from every other test.
+    # Nothing here reads the disk: the paths are only listed.
+    monkeypatch.undo()
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     looked = voice_paths("en_US-ljspeech-medium", {})
     assert looked == [

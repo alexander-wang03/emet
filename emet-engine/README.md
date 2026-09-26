@@ -50,7 +50,8 @@ models:
     params: {transcript: "testing the seam"}
 ```
 
-Partials print as they arrive, one word a frame from the mock, and the final
+Partials print as they arrive, one word a frame from the mock, redrawn in
+place on a terminal and a line each when the output is a file, and the final
 prints as `said`. With `--stats`, an `stt final` line reports the wait from
 the endpoint to the final transcript, which is the first latency a person
 feels.
@@ -90,6 +91,59 @@ rate the voice reports, 22050 Hz for a Piper medium voice, 24000 Hz for
 Aura, so `--speak` and `--echo` exclude each other. `--stats` adds `voice
 first` and `voice done`: the wait from the final transcript to the first
 sound at the speaker, and to the last.
+
+## The body
+
+Since 0.5 both commands boot the body before they open the microphone. Every
+part the manifest declares is started through discovery and asked what it can
+actually do, except a reserved type, which has no plugin yet; every fallback
+chain is resolved once against those answers; and the header prints the
+result, grouped by what performs each intent:
+
+```
+  body     a Raspberry Pi with a USB microphone and speaker (pi_speakerphone)
+  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+             voice  utter        speak
+             voice  inflect      express.affection express.amusement ...
+```
+
+A part that will not start is recorded as unhealthy and bound past, down to
+the voice if need be; a driver that is not installed stops the boot and names
+the plugin. `--chains FILE` lays a chain file over the SDK's, as `emet
+explain --chains` does.
+
+From the same manifest and the same answers the engine compiles the
+**self-model**: plain sentences about what the body has and what it lacks,
+which go into the system prompt beside the persona. A speakerphone is told
+it has no wheels, and that if somebody asks it to come to them, the honest
+answer is "I cannot come to you. I have no wheels." `--explain` prints the
+self-model, and with a language model running the whole system prompt.
+
+The prompt also asks for **intent tags**, offering only the ones this body can
+act on, and each tag the model writes is performed through its binding: on a
+bodiless body `[express.curiosity]` is "hm?" in the reply's voice, heard
+before the sentence the tag opened; on a body with a head it tilts the head
+when the model writes it, until the choreographer (1.0) times gestures to the
+words. `emet-listen --reply` lifts and performs tags too, and prints the reply
+without them. The engine's own state is performed the same way, as `signal`
+intents: a rising pair of tones when it has booted, a soft click on each
+wake, a falling pair when it stops, on a body with no status light and no
+eyes to show them, whenever a voice is running. Reserved intents, and a
+model's attempts at `signal` or `speak`, are logged at debug and dropped.
+
+With a `body.id` in the manifest, the engine keeps a **state file** for the
+body. A file already kept for this body wins; otherwise
+`/etc/emet/state/<body.id>.json` where that directory exists and is writable;
+otherwise `~/.local/state/emet/<body.id>.json`. `--state` names a file, or an
+existing directory to keep `<body.id>.json` in. It holds the binding table,
+the audio devices that answered, each part's health, joint trims, and
+whatever a plugin asks to carry over. The shipped wake engine carries its
+adapted cepstral mean, so the next boot on the same body starts as sensitive
+as this run ended; the footer says what was kept and where. A `--replay`
+carries no plugin's params in or out and offers no mean to paste: the
+recording is not this body's room, and two replays of one file have to give
+the same answer. It still records the bindings, the devices and each part's
+health.
 
 ## Checking that it keeps up
 

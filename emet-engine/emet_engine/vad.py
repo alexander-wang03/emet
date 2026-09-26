@@ -158,6 +158,23 @@ class EnergyVad:
 
         return self._speaking
 
+    def learn_floor(self, frame: bytes) -> None:
+        """Learn the room's level from a quiet frame, and judge nothing.
+
+        For frames the endpointer will not judge (the robot's own click, on
+        a body with no echo cancellation). A quiet frame moves the noise
+        floor as `feed()` would; a loud one, the click itself, is left out
+        of it. The runs that decide speech are not touched, so no frame here
+        can start or end it. Without this, the frames straight after a wake,
+        often the quietest of the turn, would never lower a new turn's floor
+        from `absolute_floor`, and soft speech would read as silence.
+        """
+        level = rms(frame)
+        if level <= self.threshold:
+            t = self.tuning
+            rate = t.adapt_up if level > self.noise_floor else t.adapt_down
+            self.noise_floor += (level - self.noise_floor) * rate
+
     def reset(self) -> None:
         """Forget the utterance, keep what has been learned about the room."""
         self._speaking = False

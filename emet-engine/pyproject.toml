@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-engine"
-version = "0.4.1"
+version = "0.5.0"
 description = "Emet engine: the listen loop and the runtime that drives a body."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,7 +16,7 @@ keywords = ["emet", "robotics", "engine"]
 # reach this package through entry points, never through an import, so
 # depending on `emet-hal` here would create exactly the coupling the layering
 # check exists to prevent. A working robot installs both.
-dependencies = ["emet-sdk>=0.1"]
+dependencies = ["emet-sdk>=0.5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

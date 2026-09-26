@@ -159,6 +159,11 @@ class MockWake(WakePlugin):
     `params.phrases` overrides what this instance claims it loaded a model for,
     so a test can build the case that actually matters: an engine that starts
     perfectly well and cannot hear the name this particular soul answers to.
+
+    `params.carry_over` is a mapping `carry_over()` returns as it stands, the
+    way pocketsphinx returns its adapted mean. It lets an engine test watch a
+    value go round a boot: kept in the body's state file at the end of one
+    run, merged over `params` at the start of the next.
     """
 
     engine = "mock"
@@ -202,6 +207,15 @@ class MockWake(WakePlugin):
 
     async def reset(self) -> None:
         self.resets += 1
+
+    def carry_over(self) -> Mapping[str, Any]:
+        """`params.carry_over`, copied, so a caller that edits the result
+        cannot change what the next call returns. Nothing once shut down or
+        never started, as a real engine that has let its decoder go: a
+        caller that asks after `shutdown()` has asked too late."""
+        if not self._started:
+            return {}
+        return dict(self.params.get("carry_over") or {})
 
     async def shutdown(self) -> None:
         self._started = False

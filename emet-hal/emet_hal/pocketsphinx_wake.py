@@ -21,13 +21,16 @@ is the upgrade for people who want that accuracy and will train for it, and
 because wake is an open plugin category, installing one is a one-line change.
 
 **On warm-up.** The decoder is least sensitive in the seconds after it starts,
-before its cepstral mean has adapted. That is a real property, not a bug, and
+before its cepstral mean has adapted. That is a property of the decoder, and
 it is why `DEFAULT_THRESHOLD` is chosen with the cold end in view: a value
 that looks stricter on a warm recording costs wakes at boot. The mean is
-body-local calibration in the sense of `DESIGN.md` 4.1, so it can be carried
-over: `warm_start_hint()` reports the adapted mean at the end of a run, and
-`params.cmninit` hands it to the next one, which then starts as sensitive as
-the last one ended.
+body-local calibration in the sense of `DESIGN.md` 4.1, so it is carried
+over. `carry_over()` hands the adapted mean to the engine at the end of a
+run; when the manifest has a `body.id`, the engine keeps it in the body's
+state file and gives it back as `params.cmninit` at the next boot, which
+then starts as sensitive as the last run ended. `warm_start_hint()` is the
+manual fallback for a body with no `body.id`: it prints the same mean, to be
+pasted under `params.cmninit` by hand.
 
 **On confidence.** Keyword spotting reports no calibrated score, so every
 `WakeEvent` from this engine carries `confidence=1.0`. That is honesty about
@@ -121,9 +124,16 @@ class PocketSphinxWake(WakePlugin):
 
         threshold   float, default DEFAULT_THRESHOLD. Higher is stricter.
         cmninit     str, the cepstral mean to start from, as pocketsphinx
-                    prints it: comma-separated numbers. A run's warm mean is
-                    reported by `warm_start_hint()`; starting the next run
-                    from it removes the cold-start misses.
+                    prints it: comma-separated numbers. On the reference
+                    body a warm run's mean took the first ten seconds from
+                    two wakes in three to three in three (2026-09-12, three
+                    tries each); replaying the 0.3 soak recording from
+                    several start means moved single phrases both ways
+                    (2026-09-24), so the gain is small and unproven. On a
+                    body with a `body.id` the engine sets this from the
+                    state file, over any value written here, with what
+                    `carry_over()` returned last run. Without one,
+                    `warm_start_hint()` prints it to paste in by hand.
         lexicon     word -> pronunciation, or word -> [pronunciations].
                     Merged over SHIPPED_LEXICON, so a body can override a
                     shipped name or teach the engine an entirely new one.
@@ -226,23 +236,47 @@ class PocketSphinxWake(WakePlugin):
             self._decoder.end_utt()
         self._listening = False
 
-    def warm_start_hint(self) -> str | None:
-        """The adapted cepstral mean, and where to put it.
-
-        Called by `emet-listen` at the end of a run, before shutdown. The
-        engine knows nothing about pocketsphinx; it asks any wake plugin that
-        has this method and prints whatever comes back.
-        """
+    def _adapted_mean(self) -> str | None:
+        """The decoder's cepstral mean as it stands, as pocketsphinx prints
+        it: comma-separated numbers, the form `params.cmninit` takes back.
+        None when the decoder is not listening."""
         if not self._listening or self._decoder is None:
             return None
         try:
-            mean = str(self._decoder.get_cmn(False))
-        except Exception:  # pragma: no cover - depends on the decoder build
+            return str(self._decoder.get_cmn(False))
+        except Exception:  # noqa: BLE001 - depends on the decoder build
+            return None
+
+    def carry_over(self) -> Mapping[str, Any]:
+        """The adapted cepstral mean, for the next boot on this body.
+
+        The engine keeps it in the body's state file and hands it back as
+        `params.cmninit`, so the next boot starts as sensitive as this run
+        ended. Empty when the decoder is not listening: one that never
+        started learned nothing worth keeping.
+        """
+        mean = self._adapted_mean()
+        return {"cmninit": mean} if mean else {}
+
+    def warm_start_hint(self) -> str | None:
+        """The adapted cepstral mean, and where to put it by hand.
+
+        The manual fallback for `carry_over()`, from the same mean. The
+        engine prints this only on a live run whose mean was not kept in
+        the body's state file: the manifest has no `body.id`, or the file
+        could not be written. A replay keeps nothing and offers nothing,
+        since the recording is somebody else's room. Called at
+        the end of a run, before shutdown. The engine knows nothing about
+        pocketsphinx; it asks any wake plugin that has this method and
+        prints whatever comes back.
+        """
+        mean = self._adapted_mean()
+        if not mean:
             return None
         return (
-            f"warm start: this run's adapted cepstral mean is {mean!r}. Put it "
-            f"under audio.wake.params.cmninit in the manifest and the next boot "
-            f"starts as sensitive as this run ended."
+            f"warm start: this run's adapted cepstral mean is {mean!r}, and it "
+            f"was not kept. To start the next boot as sensitive as this run "
+            f"ended, put it under audio.wake.params.cmninit in the manifest."
         )
 
     # ------------------------------------------------------------ reporting

@@ -13,17 +13,24 @@ is a promise: the thing you are talking to is honest about what it is.
 
 ---
 
-## Status: 0.4 (early)
+## Status: 0.5 (early)
 
-Emet talks. Say its name, ask it something, and a voice answers. It does not
-yet remember or move, and nothing here drives a servo.
+Emet talks, and it knows what body it is in. Say its name, ask it something,
+and a voice answers. Ask it to come over, and the language model answering
+for a speakerphone has been told, in plain words, that it has no wheels. It
+does not yet remember, and nothing here drives a real servo.
 
-What it does today is two things. It holds a conversation: it hears its own
+What it does today is three things. It holds a conversation: it hears its own
 name, works out when you have finished speaking, sends the words to a speech
-recognition provider, hands the transcript to a language model with its
-persona as the prompt, and speaks the reply a sentence at a time while the
-rest is still being written. The providers are plugins the soul chooses, the
-keys are your own, and there is no default provider.
+recognition provider, hands the transcript to a language model, and speaks
+the reply a sentence at a time while the rest is still being written. The
+providers are plugins the soul chooses, the keys are your own, and there is
+no default provider. It knows its body: at boot it starts every part the
+manifest declares that has a driver category, and compiles what it has and
+what it lacks into plain sentences the language model reads beside the
+persona. And it acts through that body: an intent the reply carries,
+`[express.curiosity]`, tilts a head where there is one and is a "hm?" in its
+own voice where there is not.
 
 ```sh
 $ emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml
@@ -33,30 +40,37 @@ Emet is listening for 'hey emet'
   answers  openai, gpt-5.6-terra
   voice    piper, en_US-ljspeech-medium (22050 Hz)
   patience 900 ms, extends once on a trailing clause
+  body     a Raspberry Pi with a USB microphone and speaker (pi_speakerphone)
+  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+             voice  utter        speak
+             voice  inflect      express.affection express.amusement
+             ...
+  state    /home/pi/.local/state/emet/pi_speakerphone.json
+  output   ... ms of stream latency, as the speaker reports it
+  self     13 sentence(s) about its body, 8 of them what it cannot do; tags offered: 9
+  keys     EMET_DEEPGRAM_KEY, EMET_OPENAI_KEY from /home/pi/.config/emet/keys.env
   (ctrl-c to stop)
-
-  (heard 'hey emet')
-  you:  Do you know where the capital of Mongolia is?
-  emet: The capital of Mongolia is Ulaanbaatar.
 ```
 
-It does not remember what you said last time, and it cannot act on anything
-it says: the intents its reply carries are lifted out and reported, and
-nothing moves until 0.5 gives it a self-model and a body something to do
-with them.
+`--explain` prints what it was told, word for word. On that body it includes
+this: *You have no wheels and no legs, so you cannot move from where you are.
+If someone asks you to come to them, the honest answer is "I cannot come to
+you. I have no wheels."*
+
+It does not remember what you said last time; that is 0.6.
 
 And it answers the question the whole design rests on: **given a robot, what
 would each intent mean on it?**
 
 ```sh
 $ emet explain examples/bodiless.yaml
-BINDING TABLE  examples/bodiless.yaml   (body: bodiless)
+BINDING TABLE  examples/bodiless.yaml   (body: bodiless, 'a speakerphone on a desk')
 0 capabilities, 31 intents, 0 bound to hardware, 31 to voice
 
   ~ express.curiosity  voice        inflect      filler=['hm?', 'hmm.'] preset=rising
 
 $ emet explain examples/mock-scout.yaml
-BINDING TABLE  examples/mock-scout.yaml   (body: mock_scout)
+BINDING TABLE  examples/mock-scout.yaml   (body: mock_scout, 'scout-01, simulated')
 5 capabilities, 31 intents, 30 bound to hardware, 1 to voice
 
     express.curiosity  head         tilt         angle_deg=12 hold_ms=700 speed=0.4
@@ -111,8 +125,15 @@ listen loop. On Linux the `audio` extra needs the system PortAudio
 
 ```sh
 pip install -e "emet-hal[audio,wake]"
-emet-listen examples/scout-01.yaml examples/emet-soul.yaml
+emet-listen examples/pi-speakerphone.yaml examples/emet-soul.yaml
 ```
+
+A manifest that names a driver nobody has installed does not boot: the engine
+starts every part it declares that has a driver category, and `scout-01.yaml`
+names chips that have no drivers yet. `mock-scout.yaml` is a scout like it
+wired to the mock HAL (treads, a roll axis, a status ring, no camera); its
+parts start on any machine, and `--replay recording.wav` runs the whole loop
+with no microphone.
 
 To hear it answer, install the providers the reference soul names, put your
 keys in `~/.config/emet/keys.env`, download the voice once, and run the whole
@@ -139,7 +160,7 @@ tells you which rungs were skipped and what was wrong with each:
 | `emet-sdk/` | Types, schemas, the intent vocabulary, chain resolution. The contract everything agrees on. |
 | `emet-hal/` | Drivers and locomotion plugins. Where hardware support goes. |
 | `emet-providers/` | The plugins that reach a service, or a model on disk: speech recognition, language models and voices. |
-| `emet-engine/` | The loop: wake, endpointing, words, answer, voice, audio in and out. The self-model, memory and arbitration arrive from 0.5. |
+| `emet-engine/` | The loop: wake, endpointing, words, answer, voice, audio in and out; the self-model, the chains resolved at boot, and the body's state file. Memory arrives in 0.6. |
 
 ## Documentation
 
