@@ -454,6 +454,29 @@ def test_on_a_body_without_echo_cancellation_its_own_click_does_not_start_a_turn
     assert not deaf.had_speech and deaf.reason.value == "no_speech"
 
 
+def test_an_answer_inside_the_click_window_ends_the_turn_one_patience_later(tmp_path):
+    """"Hey emet, yes" in one breath, on the reference body: the answer fell
+    inside the window the click deafens, the energy detector never saw
+    speech start, and 0.5.0 waited out the 2.5 s lead-in where 0.4.1 ended
+    at 1.2 s. The transcriber heard "yes", so the turn ends one patience
+    after the window, and the answer is still answered."""
+    pcm = frame() + frame(PHRASE.encode()) + frame(b"yes") + frame() * 40
+    manifest = body_like("pi-speakerphone.yaml", write_wav(tmp_path / "yes.wav", pcm))
+    session = talking(manifest)
+
+    async def scenario():
+        async with session:
+            session._sink.stream_latency_s = 0.05  # a sink playing into a room
+            session.source_name = "microphone"  # the file stands in for a live card
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert utterance.reason.value == "silence"
+    assert utterance.transcript is not None and utterance.transcript.text == "yes"
+    assert utterance.had_speech
+    assert utterance.duration_ms < 1500, "one patience after the window, well inside the lead-in"
+
+
 def test_a_chain_override_can_silence_the_click(tmp_path):
     override = tmp_path / "quiet.yaml"
     override.write_text(

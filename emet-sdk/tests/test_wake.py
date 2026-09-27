@@ -120,6 +120,15 @@ def test_confidence_is_bounded():
         WakeEvent(phrase="hey emet", confidence=1.4)
 
 
+def test_an_engine_that_cannot_say_how_late_it_fired_reports_no_lag():
+    """0.0 hands nothing before the wake to the transcriber, which is what
+    every engine written before the field existed does."""
+    assert WakeEvent(phrase="hey emet").lag_ms == 0.0
+    assert WakeEvent(phrase="hey emet", lag_ms=180.0).lag_ms == 180.0
+    with pytest.raises(ValueError, match="lag_ms"):
+        WakeEvent(phrase="hey emet", lag_ms=-80.0)
+
+
 # ----------------------------------------------------------------- contract
 
 

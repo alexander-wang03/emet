@@ -1,4 +1,4 @@
-# A worked example: a treaded desk robot with a
+# A worked example: a wheeled desk robot with a
 # pan/tilt head, two round display eyes, an LED ring, a head-mounted camera,
 # and an IMU.
 #
@@ -15,7 +15,7 @@ body:
   power: plugged_in
   battery_capacity_wh: null        # RSV
   description: >
-    A small treaded robot about the size of a coffee mug, with a
+    A small wheeled robot about the size of a coffee mug, with a
     head that turns and two round display eyes.
 
 compute:

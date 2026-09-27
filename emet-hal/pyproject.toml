@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-hal"
-version = "0.5.0"
+version = "0.5.1"
 description = "Emet HAL: hardware abstraction layer. Drivers, locomotion, wake, and audio plugins."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ license = "Apache-2.0"
 authors = [{ name = "The Emet Authors" }]
 keywords = ["emet", "robotics", "hal", "drivers"]
 
-dependencies = ["emet-sdk>=0.1"]
+dependencies = ["emet-sdk>=0.5.1"]
 
 [project.optional-dependencies]
 # The shipped wake engine. Optional because a body that never wakes (a test

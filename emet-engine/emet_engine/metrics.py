@@ -80,9 +80,11 @@ class SessionStats:
     #: Frames the source discarded because the loop fell behind. Not the same
     #: as being slow: this is audio that was never seen at all.
     dropped: int = 0
-    #: Frames the sound card lost before the source saw them: PortAudio
-    #: reported an input overflow. A different cause, the same loss, and the
-    #: first thing to check when a live run's clock skew looks like drift.
+    #: Callbacks PortAudio flagged with an input overflow: the sound card
+    #: lost audio before the source saw it. A count of callbacks, not of
+    #: frames, since PortAudio does not say how much each one lost. A
+    #: different cause from `dropped`, the same kind of loss, and the first
+    #: thing to check when a live run's clock skew looks like drift.
     overflows: int = 0
     #: Of `dropped`, the frames lost while the loop was deliberately not
     #: reading: playing audio, waiting on a language model, or waiting for
@@ -243,10 +245,16 @@ class SessionStats:
             f"{self.over_budget} frame(s) over",
             f"  realtime      {self.realtime_factor:.4f}  "
             f"({self.headroom:.0f}x faster than realtime)",
-            f"  dropped       {self.dropped}   (card overflows {self.overflows}"
-            + (f"; {self.dropped_busy} while speaking or thinking" if self.dropped_busy else "")
-            + ")",
+            f"  dropped       {self.dropped}"
+            + (f"   ({self.dropped_busy} while speaking, thinking or waiting for the words)"
+               if self.dropped_busy else ""),
         ]
+        if live:
+            # A file has no card to overflow, so the line is a live run's.
+            lines.append(
+                f"  overflows     {self.overflows} callback(s) PortAudio flagged as an input "
+                f"overflow; how much each lost is not reported"
+            )
         if self.final_ms:
             lines.append(
                 f"  stt final     mean {sum(self.final_ms) / len(self.final_ms):.0f} ms   "

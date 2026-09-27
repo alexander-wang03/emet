@@ -401,15 +401,19 @@ async def _print_reply(session: ListenSession, text: str, *, speak: bool = False
 
 
 def _finish(session: ListenSession, args: argparse.Namespace) -> None:
-    print_run_footer(session, stats=args.stats, busy=bool(args.echo or args.reply or args.speak))
+    print_run_footer(session, stats=args.stats)
 
 
-def print_run_footer(session: ListenSession, *, stats: bool, busy: bool) -> None:
+def print_run_footer(session: ListenSession, *, stats: bool) -> None:
     """Report what the run cost, if asked, and always report what it lost.
 
-    `busy` says whether the run had reason to stop reading the microphone
-    (playback, a reply, a voice), in which case dropped frames are explained
-    rather than blamed on the loop. Shared by `emet-listen` and `emet-talk`.
+    Frames dropped while the loop was deliberately not reading (playback, a
+    reply, the wait for a final transcript) are explained; frames dropped
+    while it was listening are blamed on the loop. The session charges each
+    frame to one or the other as it is lost (`SessionStats.dropped_busy`).
+    Which flags the run had said nothing reliable about it: `--transcribe`
+    alone waits for every final and was never counted busy. Shared by
+    `emet-listen` and `emet-talk`.
     """
     if stats:
         # `live` from the source that actually ran, not from the flag: only a
@@ -446,17 +450,20 @@ def print_run_footer(session: ListenSession, *, stats: bool, busy: bool) -> None
             f"\nnote: PortAudio reported {session.underflows} late callback(s): this process "
             f"did not hand the card audio in time and it inserted a gap."
         )
-    if session.dropped and busy:
+    dropped = int(session.dropped or 0)
+    charged = getattr(session, "stats", None)
+    busy = min(dropped, int(getattr(charged, "dropped_busy", 0) or 0))
+    if busy:
         print(
-            f"\nnote: {session.dropped} frame(s) were dropped while the robot was "
-            f"speaking or thinking. The loop does not read the microphone during "
-            f"playback, a reply, or the wait for a final transcript; barge-in, in "
-            f"1.0, is what changes that."
+            f"\nnote: {busy} frame(s) were dropped while the robot was speaking, "
+            f"thinking or waiting for the words. The loop does not read the "
+            f"microphone during playback, a reply, or the wait for a final "
+            f"transcript; barge-in, in 1.0, is what changes that."
         )
-    elif session.dropped:
+    if dropped - busy:
         print(
-            f"\nwarning: {session.dropped} frame(s) were dropped, so wake words "
-            f"may have been missed. The loop is not keeping up with the audio."
+            f"\nwarning: {dropped - busy} frame(s) were dropped while it was listening, "
+            f"so wake words may have been missed. The loop is not keeping up with the audio."
         )
 
 

@@ -240,14 +240,24 @@ class WakeDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class WakeEvent:
-    """The robot heard its name."""
+    """The robot heard its name.
+
+    `lag_ms` is how much audio the engine had already heard after the phrase
+    ended when it fired. A detector decides a moment late, and words said in
+    the same breath as the name begin inside that moment, so the engine hands
+    the transcriber that much of the audio before the wake. 0.0 when the
+    engine cannot say, and then nothing before the wake is handed over.
+    """
 
     phrase: str
     confidence: float = 1.0
+    lag_ms: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+        if self.lag_ms < 0.0:
+            raise ValueError(f"lag_ms cannot be negative, got {self.lag_ms}")
 
 
 @dataclass(frozen=True, slots=True)

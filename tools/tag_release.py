@@ -169,8 +169,11 @@ def main(argv: list[str]) -> int:
             print(result.stdout, end="")
             return fail(f"{script} failed; fix that before tagging")
 
+    # `verbatim`: git's default cleanup strips every line that starts with
+    # `#` as a comment, which took the entry's `### Added`, `### Changed` and
+    # `### Fixed` out of the v0.5.0 tag and the release page made from it.
     commands = [
-        ["git", "tag", "-s", tag, "-m", message],
+        ["git", "tag", "-s", "--cleanup=verbatim", tag, "-m", message],
         ["git", "tag", "-v", tag],
     ]
     if args.push:
@@ -178,7 +181,7 @@ def main(argv: list[str]) -> int:
 
     print(f"tag-release: {tag} at {git(root, 'rev-parse', '--short', 'HEAD')} ({expected})")
     for cmd in commands:
-        shown = " ".join(cmd[:4]) + (" -m <changelog entry>" if cmd[1] == "tag" and "-m" in cmd else "")
+        shown = " ".join(c for c in cmd if c != message) + (" <changelog entry>" if message in cmd else "")
         if args.dry_run:
             print(f"  would run: {shown}")
             continue

@@ -19,6 +19,10 @@
 # through to the eyes. Compare the two binding tables; it is the clearest
 # demonstration in the repository that a role, not a part, is what a chain
 # asks for.
+#
+# It also moves on treads (`kinematics: tracked`) where scout-01 has wheels,
+# so the tracked plugin, and the slower turn its scrub reports to the
+# self-model, run on a laptop too.
 
 manifest_version: "0.1"
 

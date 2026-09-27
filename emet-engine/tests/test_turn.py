@@ -543,3 +543,93 @@ def test_soft_speech_after_the_window_ends_where_it_would_have_without_it():
         return n
 
     assert end(3) == end(0)
+
+
+# --------------------------------------------- words the detector never saw
+
+
+class Words:
+    """What the session hands the endpointer: the transcript so far."""
+
+    def __init__(self) -> None:
+        self.text = ""
+
+    def __call__(self) -> str:
+        return self.text
+
+
+def test_words_heard_inside_the_deaf_window_end_the_turn_on_silence():
+    """"Hey emet, yes" in one breath: the answer falls inside the click's
+    window, so the detector never sees speech start. The transcriber heard
+    it, and the turn ends one patience after the window, as it did before
+    the click existed, rather than after the whole lead-in."""
+    words = Words()
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=2500, words=words)  # 3 frames, 31 frames
+    ep.deafen(3 * FMT.frame_ms)
+    assert ep.feed(loud()) is None  # "yes", unjudged
+    words.text = "yes"
+    utterance, n = frames_until_end(ep, [quiet()] * 40)
+    assert utterance is not None
+    assert utterance.reason is EndReason.SILENCE
+    assert 1 + n == 6, "two deaf frames, then three quiet ones judged with the words still"
+    assert utterance.had_speech and utterance.audio.startswith(loud()), "the wait is the turn's audio"
+
+
+def test_without_words_the_same_wait_is_still_a_false_wake():
+    """The click alone, heard by a transcriber that made out nothing."""
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=800, words=Words())
+    ep.deafen(2 * FMT.frame_ms)
+    utterance, n = frames_until_end(ep, click() + [quiet()] * 20)
+    assert utterance is not None
+    assert utterance.reason is EndReason.NO_SPEECH
+    assert not utterance.had_speech
+    assert n == 10
+
+
+def test_words_still_arriving_keep_the_turn_open():
+    """A speaker too quiet for the energy detector is still being
+    transcribed. The room reads as silent the whole time, so the turn waits
+    for the words to stop changing, not for the room."""
+    words = Words()
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=2500, words=words)
+    said_so_far = []
+    for word in "what time is it in tokyo".split():
+        said_so_far.append(word)
+        words.text = " ".join(said_so_far)
+        assert ep.feed(quiet()) is None
+        assert ep.feed(quiet()) is None
+    utterance, n = frames_until_end(ep, [quiet()] * 10)
+    assert utterance is not None and utterance.reason is EndReason.SILENCE
+    assert n == 2, "the patience is three frames of the words standing still, the first before these"
+
+
+def test_words_at_the_end_of_the_lead_in_are_not_a_false_wake():
+    """A patience longer than the lead-in cannot run out first. Somebody
+    spoke, so the turn ends on silence, never `NO_SPEECH`."""
+    words = Words()
+    ep = Endpointer(FMT, patience_ms=5000, lead_in_ms=800, words=words)
+    words.text = "yes"
+    utterance, n = frames_until_end(ep, [quiet()] * 20)
+    assert utterance is not None
+    assert utterance.reason is EndReason.SILENCE
+    assert n == 10
+
+
+def test_a_recording_that_ends_on_words_hands_over_the_wait():
+    words = Words()
+    ep = Endpointer(FMT, words=words)
+    ep.feed(loud(3100))
+    words.text = "cut"
+    ep.feed(quiet())
+    closed = ep.close()
+    assert closed.reason is EndReason.SOURCE_ENDED
+    assert closed.audio == loud(3100) + quiet()
+
+
+def test_the_words_rule_is_off_without_a_transcriber():
+    """No hook, the 0.5.0 behaviour: the lead-in alone ends the wait."""
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=800)
+    ep.deafen(3 * FMT.frame_ms)
+    utterance, n = frames_until_end(ep, [loud()] + [quiet()] * 20)
+    assert utterance is not None and utterance.reason is EndReason.NO_SPEECH
+    assert n == 10

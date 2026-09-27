@@ -146,7 +146,7 @@ async def _run(args: argparse.Namespace) -> int:
                 task.uncancel()
 
         print(f"\n{'stopped' if interrupted else 'source ended'}. {exchanges} exchange(s).")
-        print_run_footer(session, stats=args.stats, busy=True)
+        print_run_footer(session, stats=args.stats)
     return 0
 
 

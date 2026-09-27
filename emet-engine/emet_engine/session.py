@@ -59,6 +59,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
@@ -114,6 +116,33 @@ log = logging.getLogger("emet_engine.session")
 #: because a long guess costs a few frames the endpointer cannot start on,
 #: and a short one lets the robot hear its own click as somebody speaking.
 DEFAULT_OUTPUT_LATENCY_MS = 150.0
+
+#: The longest wake lag the loop keeps audio for. pocketsphinx fired 150 to
+#: 220 ms after the phrase ended on the 0.3 soak recording (2026-09-26); a
+#: lag reported past this is cut to it.
+MAX_WAKE_LAG_MS = 640.0
+
+
+def said_with_the_name(lag_ms: float, recent: Sequence[bytes], fmt: AudioFormat) -> list[bytes]:
+    """The audio after the phrase ended that the wake engine had already
+    heard when it fired, as whole frames for the transcriber.
+
+    `recent` is the last frames the wake engine was fed, oldest first, the
+    wake's own frame last. The last `lag_ms` of them is what came after the
+    phrase; everything before that in the first frame is the phrase itself,
+    and is written as silence rather than handed over, so the words said
+    with the name arrive without the name. Nothing for a lag of 0.
+    """
+    if lag_ms <= 0.0 or not recent:
+        return []
+    audio = b"".join(recent)
+    want = 2 * int(round(min(lag_ms, MAX_WAKE_LAG_MS) * fmt.sample_rate / 1000.0))
+    tail = audio[len(audio) - min(want, len(audio)):]
+    if not tail:
+        return []
+    size = fmt.frame_bytes
+    tail = bytes((-len(tail)) % size) + tail
+    return [tail[i:i + size] for i in range(0, len(tail), size)]
 
 
 def sentences_of(text: str) -> list[str]:
@@ -827,12 +856,23 @@ class ListenSession:
         lead-in silence included. So a quiet speaker the energy detector missed
         is still transcribed, and a false wake costs a provider a few seconds
         of silence. Its final transcript rides on the utterance.
+
+        Before those frames it is fed what the wake engine had already heard
+        after the phrase ended (`WakeEvent.lag_ms`): a detector fires a moment
+        late, and "hey emet, what is two plus two" in one breath otherwise
+        loses "what". And while speech has not started, the endpointer can
+        see the words so far, so words the energy detector never saw start
+        (said inside the click's deaf window, or before the wake fired) end
+        the turn on silence rather than after the whole lead-in.
         """
         if self._audio is None or self._wake is None or self.format is None:
             raise EngineError("session was not started")
 
         endpointer: Endpointer | None = None
         pending: WakeEvent | None = None
+        # The last frames the wake engine heard, for the words said with the
+        # name. Only kept when there is a transcriber to hand them to.
+        recent: deque[bytes] = deque(maxlen=math.ceil(MAX_WAKE_LAG_MS / self.format.frame_ms) + 1)
 
         while True:
             frame = await self._audio.read()
@@ -840,8 +880,9 @@ class ListenSession:
                 if endpointer is not None and pending is not None:
                     # The source ran out mid-turn. Hand over what was caught
                     # rather than dropping it: a truncated question is still
-                    # more useful than silence.
+                    # more useful than silence. It is a turn like any other.
                     closed = endpointer.close()
+                    self.stats.turns += 1
                     if closed.extended:
                         self.stats.extended += 1
                     yield pending, await self._transcribed(closed)
@@ -851,6 +892,8 @@ class ListenSession:
                 with Stopwatch() as watch:
                     event = await self._wake.process(frame)
                 self._record(watch.elapsed_ms)
+                if self._stt is not None:
+                    recent.append(frame)
                 if event is not None:
                     self.stats.wakes += 1
                     await self._wake.reset()
@@ -860,9 +903,14 @@ class ListenSession:
                         self.format,
                         patience_ms=self.patience_ms,
                         extend_if=self._extend_if if self.extend_on_incomplete and self._stt is not None else None,
+                        words=self._words_so_far if self._stt is not None else None,
                     )
                     if self.on_wake is not None:
                         self.on_wake(event)
+                    if self._stt is not None:
+                        for before in said_with_the_name(event.lag_ms, recent, self.format):
+                            self._heard(await self._stt.feed(before))
+                        recent.clear()
                     await self._listening(endpointer)
                 continue
 
@@ -875,10 +923,7 @@ class ListenSession:
                     # should say so rather than flatter it.
                     partial = await self._stt.feed(frame)
             self._record(watch.elapsed_ms)
-            if partial is not None:
-                self._latest_partial = partial.text
-                if self.on_partial is not None:
-                    self.on_partial(partial)
+            self._heard(partial)
             if utterance is not None:
                 assert pending is not None
                 self.stats.turns += 1
@@ -916,6 +961,18 @@ class ListenSession:
             return
         latency_ms = float(latency) * 1000.0 if latency else DEFAULT_OUTPUT_LATENCY_MS
         endpointer.deafen(performed.audio_ms + latency_ms + self.format.frame_ms)
+
+    def _heard(self, partial: Transcript | None) -> None:
+        """Keep a partial transcript as the words so far, and show it."""
+        if partial is None:
+            return
+        self._latest_partial = partial.text
+        if self.on_partial is not None:
+            self.on_partial(partial)
+
+    def _words_so_far(self) -> str:
+        """The endpointer's other question: what has the transcriber heard?"""
+        return self._latest_partial
 
     def _extend_if(self) -> bool:
         """The endpointer's question: do the words so far look unfinished?"""
@@ -1263,8 +1320,10 @@ class ListenSession:
 
     @property
     def overflows(self) -> int:
-        """Frames the sound card lost before the loop saw them. Read
-        defensively, like `dropped`: a file has no card to overflow."""
+        """Callbacks PortAudio flagged with an input overflow: audio the card
+        lost before the loop saw it, counted per callback because PortAudio
+        does not say how much. Read defensively, like `dropped`: a file has
+        no card to overflow."""
         return int(getattr(self._audio, "overflows", 0) or 0)
 
     @property

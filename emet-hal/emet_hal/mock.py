@@ -164,6 +164,11 @@ class MockWake(WakePlugin):
     way pocketsphinx returns its adapted mean. It lets an engine test watch a
     value go round a boot: kept in the body's state file at the end of one
     run, merged over `params` at the start of the next.
+
+    `params.lag_frames` makes it fire that many frames after the frame that
+    holds the phrase, and report those frames as `lag_ms`, the way a real
+    detector decides a moment after the phrase ends. The frames in between
+    are what a person said in the same breath as the name.
     """
 
     engine = "mock"
@@ -173,6 +178,8 @@ class MockWake(WakePlugin):
         self.frames = 0
         self.resets = 0
         self._started = False
+        #: Frames still to come before a phrase already heard fires.
+        self._late: int | None = None
 
     async def start(self) -> None:
         if self.params.get("fail_on_start"):
@@ -198,15 +205,30 @@ class MockWake(WakePlugin):
         self.frames += 1
         if not self._started:
             return None
+        late = int(self.params.get("lag_frames") or 0)
+        if self._late is not None:
+            self._late -= 1
+            if self._late > 0:
+                return None
+            self._late = None
+            return self._event(late * (len(frame) // 2) * 1000.0 / self.describe().sample_rate)
         if self.phrase.encode("utf-8") not in frame:
             return None
+        if late > 0:
+            self._late = late
+            return None
+        return self._event(0.0)
+
+    def _event(self, lag_ms: float) -> WakeEvent:
         return WakeEvent(
             phrase=self.phrase,
             confidence=float(self.params.get("confidence", 0.9)),
+            lag_ms=lag_ms,
         )
 
     async def reset(self) -> None:
         self.resets += 1
+        self._late = None
 
     def carry_over(self) -> Mapping[str, Any]:
         """`params.carry_over`, copied, so a caller that edits the result

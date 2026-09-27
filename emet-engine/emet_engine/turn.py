@@ -47,6 +47,16 @@ the robot's own sound and the patience would run from there.
 `Endpointer.deafen()` gives the endpointer a window in which frames only
 wait: they fill the pre-roll and count toward the lead-in, cannot start
 speech, and teach the detector the room's level only when they are quiet.
+
+**Words the energy detector never saw.** "Hey emet, yes" in one breath puts
+the whole answer inside that window, or inside the moment before the wake
+fired, and the detector then waits out the lead-in for speech that is
+already over: 2.56 s on the reference body in 0.5.0, where 0.4.1 ended at
+1.2 s. The transcriber heard it, though, so the endpointer takes a second
+hook: while speech has not started, it asks for the words so far, and once
+there are some it ends the turn on silence as it would have after speech,
+when the room has been quiet for the patience and the words have stopped
+changing for as long.
 """
 
 from __future__ import annotations
@@ -174,6 +184,7 @@ class Endpointer:
         vad: EnergyVad | None = None,
         tuning: VadTuning | None = None,
         extend_if: Callable[[], bool] | None = None,
+        words: Callable[[], str] | None = None,
     ) -> None:
         self.format = fmt
         self.patience_ms = patience_ms
@@ -183,6 +194,11 @@ class Endpointer:
         #: patience: True means wait one more window. The session answers it
         #: from the transcript so far. None means never extend.
         self.extend_if = extend_if
+        #: Asked on every frame while speech has not started: the words the
+        #: transcriber has heard so far this turn. Words with no speech seen
+        #: mean the person spoke where the energy detector could not judge.
+        #: None means no transcriber, and the lead-in alone ends the wait.
+        self.words = words
         # Detection lags onset by `onset_frames`, so without a pre-roll the
         # first consonant of the reply is clipped and the transcript starts
         # mid-word. Cheap to keep, expensive to lose.
@@ -200,6 +216,13 @@ class Endpointer:
         #: Audio still to arrive before the detector hears again, set by
         #: `deafen()` and spent by `feed()`.
         self._deaf_ms = 0.0
+        #: Every frame of the wait for speech, which becomes the turn's audio
+        #: when the words end it; the pre-roll keeps only the last few.
+        self._waiting: list[bytes] = []
+        #: The words as last seen during the wait, and how long they have
+        #: gone unchanged.
+        self._heard = ""
+        self._heard_still_ms = 0.0
 
     @property
     def frame_ms(self) -> float:
@@ -248,6 +271,7 @@ class Endpointer:
             # detector the room's level.
             self._deaf_ms = max(0.0, self._deaf_ms - self.frame_ms)
             self._preroll.append(frame)
+            self._waiting.append(frame)
             self.vad.learn_floor(frame)
             return self._wait()
 
@@ -255,6 +279,7 @@ class Endpointer:
 
         if not self._started:
             self._preroll.append(frame)
+            self._waiting.append(frame)
             if speaking:
                 self._started = True
                 # The pre-roll already contains this frame.
@@ -278,15 +303,23 @@ class Endpointer:
             # and the next silence is judged by plain patience again.
             self._extending = False
             return None
-        needed = self.patience_ms * 2 if self._extending else self.patience_ms
-        if self.vad.quiet_ms >= needed:
-            if not self._extended and self.extend_if is not None and self.extend_if():
-                self._extended = True
-                self._extending = True
-                return None
+        if self._silence_over(self.vad.quiet_ms):
             return self._finish(EndReason.SILENCE)
 
         return None
+
+    def _silence_over(self, quiet_ms: float) -> bool:
+        """Whether `quiet_ms` of silence ends the turn: the patience, or twice
+        it inside the one extension, which the first silence long enough may
+        be granted when the words so far look unfinished."""
+        needed = self.patience_ms * 2 if self._extending else self.patience_ms
+        if quiet_ms < needed:
+            return False
+        if not self._extended and self.extend_if is not None and self.extend_if():
+            self._extended = True
+            self._extending = True
+            return False
+        return True
 
     def close(self) -> Utterance:
         """The source ended mid-turn. Return whatever was captured.
@@ -295,26 +328,59 @@ class Endpointer:
         something specific: the robot waited the full lead-in and nobody
         spoke, which is evidence of a false wake. A recording that stopped
         early is not evidence of anything, and labelling it the same way would
-        make a replay look like a detector fault.
+        make a replay look like a detector fault. Words heard before any
+        speech was seen bring the wait's audio with them, as they would have
+        at the end of the turn.
         """
-        return self._finish(EndReason.SOURCE_ENDED)
+        heard = not self._started and self._words_heard()
+        return self._finish(EndReason.SOURCE_ENDED, heard=heard)
 
     def _wait(self) -> Utterance | None:
-        """One more frame of the lead-in gone with nobody speaking."""
+        """One more frame of the lead-in gone with no speech seen.
+
+        Unless the transcriber heard words anyway. Then the turn ends on
+        silence once the room has been quiet for the patience (counted over
+        judged frames only, so a deaf window adds nothing) and the words have
+        not changed for as long, since a quiet speaker the detector cannot
+        hear is still being transcribed. The audio of the turn is the whole
+        wait. At the end of the lead-in, words make it silence too: somebody
+        spoke, which `NO_SPEECH` says nobody did.
+        """
         self._waited_ms += self.frame_ms
+        heard = self._words_heard()
+        if heard and self._heard_still_ms >= self.patience_ms and self._silence_over(self.vad.quiet_ms):
+            return self._finish(EndReason.SILENCE, heard=True)
         if self._waited_ms >= self.lead_in_ms:
+            if heard:
+                return self._finish(EndReason.SILENCE, heard=True)
             return self._finish(EndReason.NO_SPEECH)
         return None
 
-    def _finish(self, reason: EndReason) -> Utterance:
-        audio = b"".join(self._frames)
+    def _words_heard(self) -> bool:
+        """Read the words so far, and note how long they have stood still."""
+        if self.words is None:
+            return False
+        now = (self.words() or "").strip()
+        if now != self._heard:
+            self._heard = now
+            self._heard_still_ms = 0.0
+        else:
+            self._heard_still_ms += self.frame_ms
+        return bool(now)
+
+    def _finish(self, reason: EndReason, *, heard: bool = False) -> Utterance:
+        frames = self._waiting if heard else self._frames
+        audio = b"".join(frames)
         utterance = Utterance(
             audio=audio,
-            duration_ms=len(self._frames) * self.frame_ms,
+            duration_ms=len(frames) * self.frame_ms,
             reason=reason,
             extended=self._extended,
         )
         self._frames = []
+        self._waiting = []
+        self._heard = ""
+        self._heard_still_ms = 0.0
         self._started = False
         self._waited_ms = 0.0
         self._speech_ms = 0.0

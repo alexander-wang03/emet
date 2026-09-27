@@ -250,19 +250,47 @@ def test_mock_wake_carries_nothing_once_shut_down():
 
 
 class FakeDecoder:
-    """Only what `carry_over()` asks of a pocketsphinx decoder, so these
-    tests run with the `wake` extra absent."""
+    """Only what `carry_over()` and a wake ask of a pocketsphinx decoder, so
+    these tests run with the `wake` extra absent. `ends` are the end frames
+    `seg()` reports, at 100 frames a second, pocketsphinx's default."""
 
-    def __init__(self, mean: str = "41.2,4.1,-0.9", *, fails: bool = False) -> None:
+    def __init__(
+        self,
+        mean: str = "41.2,4.1,-0.9",
+        *,
+        fails: bool = False,
+        ends: tuple[int, ...] = (),
+        heard: bool = False,
+    ) -> None:
         self.mean = mean
         self.fails = fails
         self.asked: list[bool] = []
+        self.ends = ends
+        self.heard = heard
+        self.config = {"frate": 100}
 
     def get_cmn(self, update: bool) -> str:
         self.asked.append(update)
         if self.fails:
             raise RuntimeError("this build reports no cepstral mean")
         return self.mean
+
+    def process_raw(self, frame: bytes, no_search: bool, full_utt: bool) -> None:
+        pass
+
+    def hyp(self):
+        return object() if self.heard else None
+
+    def seg(self):
+        if self.fails:
+            raise RuntimeError("this build cannot segment")
+        return [type("Seg", (), {"end_frame": end})() for end in self.ends]
+
+    def end_utt(self) -> None:
+        pass
+
+    def start_utt(self) -> None:
+        pass
 
 
 def listening(decoder: FakeDecoder) -> PocketSphinxWake:
@@ -299,6 +327,49 @@ def test_a_decoder_that_cannot_report_its_mean_costs_only_the_warm_start():
     plugin = listening(FakeDecoder(fails=True))
     assert plugin.carry_over() == {}
     assert plugin.warm_start_hint() is None
+
+
+def test_pocketsphinx_says_how_long_before_the_wake_the_phrase_ended():
+    """Six frames fed is 480 ms; the keyphrase ended at frame 29, so 300 ms
+    in, and the words said with the name began in the 180 ms after it. The
+    soak recording put the phrase end 150 to 220 ms before the wake."""
+    plugin = listening(FakeDecoder(ends=(12, 29), heard=True))
+    for _ in range(5):
+        plugin._decoder.heard = False
+        assert asyncio.run(plugin.process(bytes(2560))) is None
+    plugin._decoder.heard = True
+    event = asyncio.run(plugin.process(bytes(2560)))
+    assert event is not None and event.lag_ms == pytest.approx(180.0)
+
+
+def test_the_lag_counts_from_the_utterance_a_reset_starts():
+    """The decoder numbers its frames from `start_utt()`, which `reset()`
+    calls, so the audio fed before the last wake is not counted."""
+    plugin = listening(FakeDecoder(ends=(2,), heard=False))
+    for _ in range(10):
+        asyncio.run(plugin.process(bytes(2560)))
+    asyncio.run(plugin.reset())
+    plugin._decoder.heard = True
+    event = asyncio.run(plugin.process(bytes(2560)))
+    assert event is not None and event.lag_ms == pytest.approx(50.0)
+
+
+def test_a_decoder_that_cannot_segment_reports_no_lag():
+    """The wake still fires; nothing before it reaches the transcriber."""
+    plugin = listening(FakeDecoder(fails=True, heard=True))
+    event = asyncio.run(plugin.process(bytes(2560)))
+    assert event is not None and event.lag_ms == 0.0
+
+
+def test_the_mock_wake_can_fire_late_and_say_so():
+    """For the engine's tests of the words said with the name: the phrase in
+    one frame, the wake two frames later, reporting those 160 ms."""
+    wake = MockWake({"engine": "mock", "params": {"lag_frames": 2}}, "hey emet")
+    asyncio.run(wake.start())
+    heard = [asyncio.run(wake.process(f)) for f in (b"hey emet" + bytes(2552), bytes(2560), bytes(2560))]
+    assert heard[:2] == [None, None]
+    assert heard[2] is not None and heard[2].lag_ms == pytest.approx(160.0)
+    assert asyncio.run(wake.process(bytes(2560))) is None, "one phrase, one wake"
 
 
 # ----------------------------------------------------------------- version

@@ -201,11 +201,21 @@ def test_the_stopwatch_reports_zero_before_it_is_used():
     assert Stopwatch().elapsed_ms == 0.0
 
 
-def test_card_overflows_appear_beside_dropped_frames():
+def test_card_overflows_are_named_for_what_they_count():
+    """PortAudio flags a callback, not a frame, and does not say how much
+    audio it lost, so the count is given as callbacks."""
     s = stats()
     s.record_frame(1.0)
     s.overflows = 4
-    assert "card overflows 4" in s.report(live=True)
+    report = s.report(live=True)
+    assert "4 callback(s) PortAudio flagged as an input overflow" in report
+    assert "how much each lost is not reported" in report
+
+
+def test_a_file_has_no_card_to_overflow():
+    s = stats()
+    s.record_frame(1.0)
+    assert "overflow" not in s.report(live=False)
 
 
 def test_the_clock_line_gives_the_skew_as_a_percentage_too():
