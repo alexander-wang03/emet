@@ -144,18 +144,42 @@ def test_an_interrupted_live_run_still_reports(tmp_path, monkeypatch, capsys):
     assert "realtime" in out and "verdict" in out
 
 
+def loud(amplitude: int = 4000) -> bytes:
+    from array import array
+
+    return array("h", [amplitude, -amplitude] * (FRAME // 2)).tobytes()
+
+
 def test_frames_dropped_during_echo_are_explained_not_blamed(tmp_path, monkeypatch, capsys):
     """The loop does not read the microphone while it plays audio back, so an
     echo run always drops frames during playback. Calling that "not keeping
     up" would be wrong; the reference body's first echo run said so."""
-    wav = write_wav(tmp_path / "e.wav", saying(1))
-    stub_loaders(monkeypatch, body(wav), soul())
-    monkeypatch.setattr(ListenSession, "dropped", property(lambda self: 32))
+    pcm = silence(FRAME) + PHRASE.encode() + silence(FRAME - len(PHRASE) // 2) + loud() * 5 + silence(FRAME * 20)
+    stub_loaders(monkeypatch, body(write_wav(tmp_path / "e.wav", pcm)), soul())
+    lost = {"frames": 0}
+    monkeypatch.setattr(ListenSession, "dropped", property(lambda self: lost["frames"]))
+    real_say = ListenSession.say
+
+    async def say_while_the_queue_overflows(self, pcm):
+        real_play = self._sink.play
+
+        async def play(chunk):
+            lost["frames"] += 32  # the capture queue overflowing behind the playback
+            await real_play(chunk)
+
+        self._sink.play = play
+        try:
+            await real_say(self, pcm)
+        finally:
+            self._sink.play = real_play
+
+    monkeypatch.setattr(ListenSession, "say", say_while_the_queue_overflows)
 
     rc = asyncio.run(cli._run(args(echo=True)))
     out = capsys.readouterr().out
     assert rc == 0
-    assert "while the robot was speaking" in out
+    assert "played it back" in out
+    assert "32 frame(s) were dropped while the robot was speaking" in out
     assert "not keeping up" not in out
 
 
@@ -524,7 +548,7 @@ def test_the_footer_reports_late_callbacks_and_a_voice_that_fell_behind(capsys):
     missed the card's deadline. It reports nothing at all when the queue ran
     dry, because it was served on time with silence, so the engine counts
     that itself."""
-    cli.print_run_footer(footer_session(underflows=3, starved=7), stats=False, busy=True)
+    cli.print_run_footer(footer_session(underflows=3, starved=7), stats=False)
 
     out = capsys.readouterr().out
     assert "fell behind real time 7 time(s)" in out and "inside a word" in out
@@ -532,10 +556,35 @@ def test_the_footer_reports_late_callbacks_and_a_voice_that_fell_behind(capsys):
 
 
 def test_a_clean_run_says_nothing_about_either(capsys):
-    cli.print_run_footer(footer_session(), stats=False, busy=True)
+    cli.print_run_footer(footer_session(), stats=False)
 
     out = capsys.readouterr().out
     assert "late callback" not in out and "fell behind" not in out
+    assert "dropped" not in out
+
+
+def test_frames_dropped_waiting_for_the_words_are_explained_without_a_reply(capsys):
+    """`emet-listen --transcribe` waits for every final and was never counted
+    busy by its flags, so a five-second final read as the loop not keeping
+    up. The session charges those frames as it loses them; the footer reads
+    the charge."""
+    from types import SimpleNamespace
+
+    cli.print_run_footer(footer_session(dropped=37, stats=SimpleNamespace(dropped_busy=37)), stats=False)
+
+    out = capsys.readouterr().out
+    assert "37 frame(s) were dropped while the robot was speaking, thinking or waiting for the words" in out
+    assert "not keeping up" not in out
+
+
+def test_a_run_that_lost_frames_both_ways_says_both(capsys):
+    from types import SimpleNamespace
+
+    cli.print_run_footer(footer_session(dropped=40, stats=SimpleNamespace(dropped_busy=37)), stats=False)
+
+    out = capsys.readouterr().out
+    assert "37 frame(s) were dropped while the robot was speaking" in out
+    assert "3 frame(s) were dropped while it was listening" in out and "not keeping up" in out
 
 
 def test_on_a_terminal_the_caption_is_redrawn_in_place(capsys):
@@ -763,7 +812,7 @@ def test_a_replay_offers_no_mean_to_paste():
     for session in (replayed, live):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            cli.print_run_footer(session, stats=False, busy=False)
+            cli.print_run_footer(session, stats=False)
         printed.append(out.getvalue())
     assert "warm start" not in printed[0]
     assert "warm start" in printed[1], "a live run with nowhere to keep it is still asked"

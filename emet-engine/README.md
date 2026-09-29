@@ -180,6 +180,6 @@ reference body with `tools/soak_prompts.sh` (49 wake phrases, 9 decoys):
 ```
 
 A file replay exercises everything except the sound card. A live run adds a
-`clock` line, the wall clock against the audio clock, and a card-overflow
-count beside `dropped`. The reference body's live figures are in the 0.3
+`clock` line, the wall clock against the audio clock, and an `overflows`
+line, the callbacks PortAudio flagged as an input overflow. The reference body's live figures are in the 0.3
 release notes.

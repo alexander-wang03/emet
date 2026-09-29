@@ -603,6 +603,76 @@ def test_each_turn_gets_its_own_transcript(tmp_path):
     assert run(scenario()) == ["first one", "second two"]
 
 
+def test_a_turn_the_recording_closes_is_counted(tmp_path):
+    """`--stats` printed "wakes 2 turns 1" beside "heard it 2 time(s)" on a
+    15 s slice that ended mid-turn, on 0.4.1 and 0.5.0 alike."""
+    pcm = spoken(b"first", b"one") + frame() + frame(PHRASE.encode()) + frame(b"cut")
+    session = transcribing(tmp_path, "n.wav", pcm)
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()], session.stats
+
+    utterances, stats = run(scenario())
+    assert [u.reason.value for u in utterances] == ["silence", "source_ended"]
+    assert stats.wakes == stats.turns == 2
+
+
+# ------------------------------------------------- words said with the name
+
+
+def test_what_the_wake_engine_heard_after_the_phrase_reaches_the_transcriber(tmp_path):
+    """A detector fires a moment after the phrase ends. "hey emet, what time
+    is it" in one breath lost "what" on the reference body 11 times in 12:
+    the transcriber started at the frame after the wake. The engine now
+    hands it the frames the wake engine reports it had already heard."""
+    pcm = frame() + frame(PHRASE.encode()) + frame(b"what") + frame(b"time") + frame(b"is it") + frame() * 20
+    manifest = body(write_wav(tmp_path / "w.wav", pcm), lag_frames=1)
+    session = transcribing(tmp_path, "w.wav", pcm, manifest=manifest)
+
+    async def scenario():
+        async with session:
+            return [(e, u) async for e, u in session.turns()]
+
+    ((event, utterance),) = run(scenario())
+    assert event.lag_ms == pytest.approx(80.0)
+    assert utterance.transcript is not None and utterance.transcript.text == "what time is it"
+
+
+def test_an_engine_that_reports_no_lag_hands_over_nothing_before_the_wake(tmp_path):
+    """The phrase is never handed over: with no lag the transcriber starts
+    at the frame after the wake, as in 0.5.0."""
+    pcm = frame() + frame(PHRASE.encode()) + frame(b"time") + frame(b"is it") + frame() * 20
+    session = transcribing(tmp_path, "z.wav", pcm)
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert utterance.transcript is not None and utterance.transcript.text == "time is it"
+
+
+def test_the_audio_before_the_wake_is_cut_where_the_phrase_ended():
+    """Half a frame of lag is half a frame of audio, at the end of the last
+    frame heard, with silence written where the phrase was so the name is
+    never transcribed."""
+    from emet_engine.session import said_with_the_name
+    from emet_sdk.types import AudioFormat
+
+    fmt = AudioFormat()
+    phrase_then_words = b"P" * (FRAME_BYTES // 2) + b"W" * (FRAME_BYTES // 2)
+    (only,) = said_with_the_name(40.0, [frame(), phrase_then_words], fmt)
+    assert only == bytes(FRAME_BYTES // 2) + b"W" * (FRAME_BYTES // 2)
+
+    two = said_with_the_name(120.0, [b"A" * FRAME_BYTES, b"B" * FRAME_BYTES], fmt)
+    assert two == [bytes(FRAME_BYTES // 2) + b"A" * (FRAME_BYTES // 2), b"B" * FRAME_BYTES]
+
+    assert said_with_the_name(0.0, [b"B" * FRAME_BYTES], fmt) == []
+    assert said_with_the_name(80.0, [], fmt) == []
+    assert said_with_the_name(5000.0, [b"B" * FRAME_BYTES], fmt) == [b"B" * FRAME_BYTES], "no more than was heard"
+
+
 def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):
     manifest = body(write_wav(tmp_path / "z.wav", frame()))
     manifest["models"] = {"stt": {"provider": "mock", "params": {"fail_on_start": True}}}
@@ -789,7 +859,7 @@ def test_frames_dropped_while_answering_are_charged_to_the_loops_own_choice(tmp_
 
     stats = run(scenario())
     assert stats.dropped == 8 and stats.dropped_busy == 5
-    assert "5 while speaking or thinking" in stats.report(live=False)
+    assert "5 while speaking, thinking or waiting for the words" in stats.report(live=False)
     assert not stats.kept_up, "three frames were lost while listening, and that still counts"
 
 
@@ -802,7 +872,7 @@ def test_a_run_that_only_dropped_frames_while_busy_kept_up():
     stats.dropped = 11
     stats.dropped_busy = 11
     assert stats.kept_up
-    assert "11 while speaking or thinking" in stats.report(live=False)
+    assert "11 while speaking, thinking or waiting for the words" in stats.report(live=False)
 
 
 # ------------------------------------------------------------------ speech

@@ -83,11 +83,20 @@ FRAME_SAMPLES = 1280
 #:     threshold   wakes heard   decoys fired   false wakes in 5 min of talk
 #:     1e-25       49 of 49      8 of 9         15  (3.0 a minute)
 #:     1e-22       48 of 49      3 of 9         11  (2.2 a minute)
-#:     1e-20       48 of 49      3 of 9          8  (1.6 a minute)
+#:     1e-20       48 of 49      3 of 9          9  (1.8 a minute)
 #:     1e-18       46 of 49      3 of 9          7
-#:     1e-15       44 of 49      1 of 9          2  (0.4 a minute)
+#:     1e-15       44 of 49      1 of 9          3  (0.6 a minute)
 #:     1e-12       42 of 49      1 of 9          1
 #:     1e-10       40 of 49      1 of 9          0
+#:
+#: Re-measured on 2026-09-26 on the laptop through the engine's replay path,
+#: the talk recording heard straight after the soak recording by one session.
+#: The first two columns matched the 2026-09-10 figures row for row. The
+#: talk column came out one higher at 1e-20 and at 1e-15, where 2026-09-10
+#: had 8 and 2, for a reason not found. The reference body's replays of the
+#: talk recording gave 3 at 1e-15 as well, from each of three start means
+#: (2026-09-24 and 25). Heard on its own from a cold start, the talk
+#: recording gives the same column except 12 at 1e-22 and 10 at 1e-20.
 #:
 #: No value is clean at both ends. 1e-15 is the default: it sits at the knee
 #: of the false-wake curve, where the robot stops answering to typing and
@@ -151,6 +160,9 @@ class PocketSphinxWake(WakePlugin):
         self._unpronounceable: tuple[str, ...] = ()
         self._listening = False
         self._fired = False
+        #: Samples fed since the decoder's utterance began, which is what the
+        #: keyphrase's end frame is counted from.
+        self._fed = 0
 
     # ------------------------------------------------------------ lifecycle
 
@@ -202,6 +214,7 @@ class PocketSphinxWake(WakePlugin):
         self._decoder.add_keyphrase("emet_wake", self.phrase)
         self._decoder.activate_search("emet_wake")
         self._decoder.start_utt()
+        self._fed = 0
         self._listening = True
 
     def _fail(self, reason: str) -> None:
@@ -306,6 +319,7 @@ class PocketSphinxWake(WakePlugin):
         if not self._listening:
             return None
         self._decoder.process_raw(frame, False, False)
+        self._fed += len(frame) // 2
         if self._decoder.hyp() is None:
             return None
         if self._fired:
@@ -314,7 +328,31 @@ class PocketSphinxWake(WakePlugin):
             # the rest of the conversation.
             return None
         self._fired = True
-        return WakeEvent(phrase=self.phrase, confidence=1.0)
+        return WakeEvent(phrase=self.phrase, confidence=1.0, lag_ms=self._lag_ms())
+
+    def _lag_ms(self) -> float:
+        """How long before the wake the phrase ended: the audio fed since the
+        utterance began, less where the decoder's segmentation ends the
+        keyphrase.
+
+        pocketsphinx waits `kws_delay` frames (10 by default, 100 ms) for a
+        better score before it reports a keyphrase, and the 80 ms frame
+        rounds that up. On the 0.3 soak recording the phrase had ended 150
+        to 220 ms before the wake fired (2026-09-26), which is about one
+        short word, and on the reference body a one-breath "hey emet, what
+        is two plus two" lost "what" or "what is" 11 times in 12
+        (2026-09-25). A decoder that cannot segment reports no lag.
+        """
+        try:
+            ends = [int(seg.end_frame) for seg in self._decoder.seg()]
+            frate = int(self._decoder.config["frate"])
+        except Exception:  # noqa: BLE001 - depends on the decoder build
+            return 0.0
+        if not ends or frate <= 0:
+            return 0.0
+        ended_ms = (max(ends) + 1) * 1000.0 / frate
+        fed_ms = self._fed * 1000.0 / SAMPLE_RATE
+        return max(0.0, fed_ms - ended_ms)
 
     async def reset(self) -> None:
         """Start a fresh utterance, discarding the hypothesis that just fired."""
@@ -322,3 +360,4 @@ class PocketSphinxWake(WakePlugin):
         if self._listening:
             self._decoder.end_utt()
             self._decoder.start_utt()
+            self._fed = 0

@@ -373,8 +373,10 @@ class MicrophoneSource:
         self.config = dict(config or {})
         self.format = fmt or AudioFormat()
         self.dropped = 0
-        #: Frames the card lost before this code saw them: PortAudio reported
-        #: an input overflow. A different cause from `dropped`, the same loss.
+        #: Callbacks PortAudio flagged with an input overflow: audio was lost
+        #: before this code saw it. A count of callbacks, not frames, since
+        #: PortAudio does not say how much each one lost. A different cause
+        #: from `dropped`, the same kind of loss.
         self.overflows = 0
         #: The name PortAudio reports for the device `start()` resolved, for
         #: the body's state file. None before then, and when PortAudio could
@@ -419,9 +421,10 @@ class MicrophoneSource:
         `input_overflow` means PortAudio's own buffer filled before this
         callback ran, so audio was gone before the queue ever saw it. It is
         counted apart from `dropped` because the cause differs: a stalled
-        thread rather than a slow loop. Either way the audio clock falls
-        behind the wall clock, so a live run's skew has to be read against
-        this number before it is called drift.
+        thread rather than a slow loop. One flagged callback is one count,
+        however much it lost, which PortAudio does not say. Either way the
+        audio clock falls behind the wall clock, so a live run's skew has to
+        be read against this number before it is called drift.
         """
         if status:
             log.debug("audio input status: %s", status)

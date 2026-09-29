@@ -12,7 +12,55 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.0] - 2026-09-25
+## [0.5.1] - 2026-09-27
+
+Keep the words said in the same breath as the name.
+
+### Added
+- `WakeEvent.lag_ms`, how much audio the wake engine had already heard after
+  the phrase ended when it fired; pocketsphinx reports it from its own
+  segmentation of the phrase (#11)
+- `tools/release_audit.py`, which checks every version since 0.4.1 against
+  git and GitHub (the commit, the tag, the entry, the release page and the
+  pull request agree, the tags are signed, no AI attribution), and with
+  `--pr` a pull request before it merges; the `release audit` CI job runs
+  it (#11)
+
+### Changed
+- The transcriber first hears the audio after the phrase that the wake
+  engine had already heard, with the phrase written as silence, so a
+  question said in the same breath as the name reaches it from its first
+  word (#11)
+- A turn whose words the transcriber heard while the energy detector never
+  saw speech start ends on silence one patience later, instead of after the
+  2.5 s lead-in: "hey emet, yes" said inside the listening click (#11)
+- The run footer splits dropped frames by when they were lost: while
+  speaking, thinking or waiting for the words is a note, while listening a
+  warning, and `emet-listen --transcribe` alone no longer reads as a loop
+  that cannot keep up (#11)
+- `--stats` counts card overflows as the callbacks PortAudio flagged, on a
+  line of their own on a live run (#11)
+- scout-01 is a wheeled robot; its description said treaded while its name
+  and its kinematics said wheeled (#11)
+- The wake threshold's talk column is re-measured through the engine's own
+  replay path: 3 false wakes in five minutes of talk at 1e-15, where the
+  table said 2 (#11)
+
+### Fixed
+- `--stats` counted no turn for a wake whose turn the end of a recording
+  closed (#11)
+- The 0.4.1 and 0.5.0 entries carry the days they merged and were tagged,
+  2026-09-23 and 2026-09-26 (#11)
+- `tools/tag_release.py` keeps an entry's Added, Changed and Fixed headings
+  in the tag: git strips lines that start with `#` from a tag message by
+  default, and the v0.4.1 and v0.5.0 tags lost them (#11)
+- `RELEASING.md` covers every version, not only minors and majors, and
+  ends with the audit (#11)
+
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-09-27. Measurements in #11.
+
+## [0.5.0] - 2026-09-26
 
 It knows its body.
 
@@ -81,7 +129,7 @@ It knows its body.
 Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
 speaker, 2026-09-24 and 2026-09-25. Measurements in #10.
 
-## [0.4.1] - 2026-09-22
+## [0.4.1] - 2026-09-23
 
 Play speech through one open output stream.
 

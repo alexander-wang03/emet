@@ -165,7 +165,7 @@ body:
   power: plugged_in              # P0  plugged_in | battery
   battery_capacity_wh: null      # RSV
   description: >                 # P0  free text, feeds the self-model
-    A small treaded robot about the size of a coffee mug, with a
+    A small wheeled robot about the size of a coffee mug, with a
     head that turns and two round display eyes.
 
 compute:
@@ -563,7 +563,7 @@ Deterministic template, not an LLM call:
 ```
 YOUR BODY
 
-You are a small treaded robot, about the size of a coffee mug, sitting on a desk.
+You are a small wheeled robot, about the size of a coffee mug, sitting on a desk.
 You can turn your head left and right, and tilt it up and down.
 You have two round eyes that can change expression.
 You can drive forward, back, and turn in place, slowly, at about walking pace
@@ -1115,6 +1115,16 @@ two apart except by latency and by `describe().streaming`.
 rather than only what the energy detector marked as speech. A quiet speaker the
 detector missed is still transcribed. A false wake costs a provider a few
 seconds of silence, which is the cheaper mistake.
+
+**It also hears what came just before the wake.** A detector fires a moment
+after the phrase ends, and a person who says "hey emet, what time is it" in one
+breath has started the question inside that moment. The wake engine reports how
+late it fired (`WakeEvent.lag_ms`), and the engine hands the transcriber that
+much of the audio before the wake, with the phrase itself written as silence.
+While the energy detector has not seen speech start, the endpointer can also
+see the words so far, so an answer said entirely inside the listening click's
+deaf window, or before the wake fired, ends the turn one patience later rather
+than after the whole lead-in.
 
 **Format.** The wake engine fixed the audio format before the transcriber was
 built, and one microphone feeds both, so the transcriber receives the format
