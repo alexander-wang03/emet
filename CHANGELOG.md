@@ -12,7 +12,7 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.1] - 2026-09-26
+## [0.5.1] - 2026-09-27
 
 Keep the words said in the same breath as the name.
 
@@ -20,11 +20,17 @@ Keep the words said in the same breath as the name.
 - `WakeEvent.lag_ms`, how much audio the wake engine had already heard after
   the phrase ended when it fired; pocketsphinx reports it from its own
   segmentation of the phrase (#11)
+- `tools/release_audit.py`, which checks every version since 0.4.1 against
+  git and GitHub (the commit, the tag, the entry, the release page and the
+  pull request agree, the tags are signed, no AI attribution), and with
+  `--pr` a pull request before it merges; the `release audit` CI job runs
+  it (#11)
 
 ### Changed
 - The transcriber first hears the audio after the phrase that the wake
-  engine had already heard, with the phrase written as silence, so "hey
-  emet, what time is it" said in one breath keeps "what" (#11)
+  engine had already heard, with the phrase written as silence, so a
+  question said in the same breath as the name reaches it from its first
+  word (#11)
 - A turn whose words the transcriber heard while the energy detector never
   saw speech start ends on silence one patience later, instead of after the
   2.5 s lead-in: "hey emet, yes" said inside the listening click (#11)
@@ -47,9 +53,12 @@ Keep the words said in the same breath as the name.
   2026-09-23 and 2026-09-26 (#11)
 - `tools/tag_release.py` keeps an entry's Added, Changed and Fixed headings
   in the tag: git strips lines that start with `#` from a tag message by
-  default, and the v0.5.0 tag and release page lost them (#11)
+  default, and the v0.4.1 and v0.5.0 tags lost them (#11)
+- `RELEASING.md` covers every version, not only minors and majors, and
+  ends with the audit (#11)
 
-Verified on the laptop, 2026-09-26. Measurements in #11.
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-09-27. Measurements in #11.
 
 ## [0.5.0] - 2026-09-26
 
