@@ -171,7 +171,8 @@ def main(argv: list[str]) -> int:
 
     # `verbatim`: git's default cleanup strips every line that starts with
     # `#` as a comment, which took the entry's `### Added`, `### Changed` and
-    # `### Fixed` out of the v0.5.0 tag and the release page made from it.
+    # `### Fixed` out of the v0.4.1 and v0.5.0 tags, and out of the v0.5.0
+    # release page made from its tag.
     commands = [
         ["git", "tag", "-s", "--cleanup=verbatim", tag, "-m", message],
         ["git", "tag", "-v", tag],

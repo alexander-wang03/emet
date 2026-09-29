@@ -52,6 +52,30 @@ jobs:
       - name: Check house style
         run: python tools/check_style.py .
 
+  # Every version since the rule that every merge is one, checked against git
+  # and GitHub: the commit, the tag, the changelog entry, the release page and
+  # the pull request say the same sentence and the same day, the tags are
+  # signed, and nothing carries an AI attribution line. The newest version
+  # may be pending (merged and not yet tagged, or tagged and waiting for its
+  # page); the release run finishes with `--complete`. Read-only.
+  audit:
+    name: release audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Audit every release since 0.4.1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/release_audit.py
+
   dco:
     name: dco sign-off
     runs-on: ubuntu-latest

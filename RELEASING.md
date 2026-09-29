@@ -1,6 +1,8 @@
 # Releasing
 
-A checklist for every minor and major release.
+A checklist for every version. Every merge to master is one, a patch, a
+minor or a major, so this runs for every pull request; items 1 and 2 are the
+roadmap-row work of a minor or a major.
 
 Each item is here because something went wrong without it, and the note under
 each says what. A checklist of plausible-sounding good practice gets skipped;
@@ -14,9 +16,28 @@ python tools/release_check.py .
 python tools/check_style.py .
 ```
 
-The tag itself is made by `tools/tag_release.py`, which runs those three
+On the day of the merge, before merging, check the pull request itself:
+
+```sh
+python tools/release_audit.py --pr <N>
+```
+
+It refuses a draft, a red or pending check, a head other than this
+checkout's, a title other than the changelog entry's, an AI attribution line,
+a version already tagged, and an entry not dated today.
+
+The tag itself is made by `tools/tag_release.py`, which runs the first three
 again and refuses a dirty tree, a branch other than master, a version the
-packages do not declare, an unsigned key, or a tag that already exists.
+packages do not declare, a commit title other than the entry's summary, an
+unsigned key, or a tag that already exists. After the tag, and for a minor or
+a major after its release page, the whole chain is checked once more:
+
+```sh
+python tools/release_audit.py --complete
+```
+
+The `release audit` CI job runs the same audit on every pull request, merge
+and tag, allowing only the newest version to be unfinished.
 
 Everything below is what a script cannot check.
 
@@ -111,7 +132,8 @@ that is merely out of date, so re-read:
 - each package `README.md`
 - `emet_hal/__init__.py` and friends, which list what ships
 - `CITATIONS.md`, if anything was taken from a paper or a repository
-- the roadmap row for this release, and the release notes
+- the roadmap row for this release, the `CHANGELOG.md` entry, and the
+  pull request body
 
 ## 8. Tag
 
@@ -120,6 +142,22 @@ that is merely out of date, so re-read:
 - The `CHANGELOG.md` entry is written. Commits stay short; the tag carries
   the entry, and the pull request carries the measurements.
 - Every commit in the release is signed off, or the DCO check fails the PR.
+- The entry is dated the day of the merge. `release_audit.py --pr` refuses
+  any other day.
+
+## 9. Audit the chain
+
+**After the tag, and the release page for a minor or a major, run
+`release_audit.py --complete`.** The pull request title, the squash commit,
+the tag, the changelog entry and the release page carry one sentence and one
+day, and nothing reaching GitHub carries an AI attribution line.
+
+> **The scar.** 0.4.1 and 0.5.0 were both dated the day their pull requests
+> were finished, a day before they merged. The v0.4.1 and v0.5.0 tags lost
+> the entry's `### Added`, `### Changed` and `### Fixed` headings to git's
+> default message cleanup, and so did the v0.5.0 release page made from the
+> tag. The 0.4.1 pull request's body carried an attribution line until it
+> was edited out. Each passed every check that existed at the time.
 
 ---
 
