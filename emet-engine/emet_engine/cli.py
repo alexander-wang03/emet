@@ -450,6 +450,12 @@ def print_run_footer(session: ListenSession, *, stats: bool) -> None:
             f"\nnote: PortAudio reported {session.underflows} late callback(s): this process "
             f"did not hand the card audio in time and it inserted a gap."
         )
+    ignored = int(getattr(session, "own_voice_wakes", 0) or 0)
+    if ignored:
+        print(
+            f"\nnote: {ignored} wake(s) were ignored because the phrase ended in the tail of "
+            f"the robot's own voice, still in the air as it listened again."
+        )
     dropped = int(session.dropped or 0)
     charged = getattr(session, "stats", None)
     busy = min(dropped, int(getattr(charged, "dropped_busy", 0) or 0))

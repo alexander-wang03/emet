@@ -12,7 +12,41 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.1] - 2026-09-27
+## [0.5.2] - 2026-09-28
+
+Stop it waking on its own voice.
+
+### Added
+- The system prompt tells the model the phrase that wakes it; asked how to
+  wake it, the reference soul offered "Emet, wake up" (#12)
+- `release_audit.py --pr N --merge`, which merges only when every check
+  passed, pinned to the commit it checked, and `--pr N --ci`, the part of
+  that check a CI run can hold; the check now also refuses a version not
+  above master's, an entry that cites another pull request and uncommitted
+  changes, and a refused date prints the command that fixes it (#12)
+- `tools/one_breath_prompts.sh`, the prompts for recording one-breath
+  questions on a body, which the cut before the wake is tuned against (#12)
+- The run footer counts the wakes it ignored in the tail of the robot's own
+  voice (#12)
+
+### Changed
+- On a body with no echo cancellation, whatever waited in the capture queue
+  while the robot spoke is thrown away before the wake engine hears again,
+  and a phrase that ended in the tail of its voice is ignored, however late
+  the wake engine reports it: it heard its name in its own reply and
+  answered itself (#12)
+- The release audit runs in its own workflow, on every push to a pull
+  request and every title edit as well as every merge and tag, and checks
+  the pull request itself beside every version since 0.4.1 (#12)
+- `RELEASING.md` carries a Dependabot pull request's change into the next
+  versioned one, and merges through `--merge` (#12)
+
+### Fixed
+- The 0.5.1 entry carries the day it merged and was tagged, 2026-09-28 (#12)
+
+Verified on the laptop, 2026-09-28. Measurements in #12.
+
+## [0.5.1] - 2026-09-28
 
 Keep the words said in the same breath as the name.
 

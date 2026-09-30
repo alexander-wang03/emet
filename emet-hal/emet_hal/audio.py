@@ -353,9 +353,13 @@ class MicrophoneSource:
     PortAudio calls back on its own thread; frames cross into asyncio through a
     bounded queue. When the consumer falls behind the oldest frame is dropped
     and counted, because the alternative is an ever-growing backlog and a robot
-    that answers a question from a minute ago. `dropped` matters:
-    a non-zero value means wake words were missed, and the engine should say so
-    rather than let it pass as bad luck.
+    that answers a question from a minute ago. `dropped` matters: frames
+    dropped while the engine was listening mean wake words may have been
+    missed, and the engine should say so rather than let it pass as bad luck.
+    It also counts frames lost while the engine was busy on purpose, which
+    miss nothing it was listening for: the backlog past two seconds while the
+    robot speaks or thinks, and what the engine throws away with
+    `discard_queued()` when it listens again. The engine tells the two apart.
     """
 
     #: Roughly two seconds at the default frame size. Long enough to ride out a
@@ -454,6 +458,27 @@ class MicrophoneSource:
         if self._queue is None:
             return None
         return await self._queue.get()
+
+    def discard_queued(self) -> int:
+        """Throw away every frame waiting to be read; return how many.
+
+        For the engine, when it listens again after the robot has spoken, on
+        a body that cannot cancel its echo: everything queued meanwhile goes,
+        up to two seconds, which ends with the robot's own voice. They are
+        counted in `dropped`, since they are audio the loop never saw, and
+        the live clock line explains its skew with that count.
+        """
+        if self._queue is None:
+            return 0
+        thrown = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            thrown += 1
+        self.dropped += thrown
+        return thrown
 
     async def stop(self) -> None:
         if self._stream is not None:

@@ -540,6 +540,14 @@ class AudioSource(Protocol):
     `read()` returns exactly `format.frame_bytes` bytes, or None when the
     source has ended: a file always does, a microphone never should.
 
+    Three more the engine reads when a source has them, and does without when
+    it does not: `dropped` and `overflows`, counts of audio lost, and
+    `discard_queued()`, which throws away every frame waiting to be read. The
+    engine calls it when it listens again after the robot has spoken, on a
+    body with no echo cancellation, since what waited meanwhile ends with the
+    robot's own voice. A live source without it is not protected from that:
+    its backlog reaches the wake engine.
+
     **Construction.** Implementations discovered through the `emet.audio`
     entry-point group are built as `cls(config, fmt)`, where `config` is the
     manifest's `audio.input` block and `fmt` the format the consumer needs.
@@ -572,6 +580,14 @@ class AudioSink(Protocol):
     **Construction** matches sources exactly. Implementations discovered
     through the `emet.audio_out` entry-point group are built as
     `cls(config, fmt)`, where `config` is the manifest's `audio.output` block.
+
+    One more the engine reads when a sink has it: `stream_latency_s`, the
+    seconds between `play()` and the sound in the room, or None when the sink
+    plays into a room and cannot say. Having the attribute at all is how a
+    sink says it plays into a room. On a body with no echo cancellation the
+    engine then keeps the robot's own sounds (the listening click, the tail
+    of a reply) from being heard as a person; a sink without it, like `null`
+    and `wav`, is taken to make no sound anybody hears.
     """
 
     format: AudioFormat

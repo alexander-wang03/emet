@@ -1156,3 +1156,18 @@ def test_a_device_portaudio_cannot_name_still_starts(monkeypatch):
 
     assert run(scenario()) == (None, True)
     assert run(named(Speaker({}))) is None
+
+
+def test_the_microphone_throws_away_what_waited_while_the_robot_spoke():
+    """The engine empties the queue when it listens again after the robot
+    has spoken, on a body with no echo cancellation. What it throws away is
+    audio the loop never saw, so it is counted as dropped, and the live
+    clock line explains its skew with that count."""
+    src = MicrophoneSource({"channels": 1})
+    assert src.discard_queued() == 0, "never started: nothing to throw away"
+    src._queue = asyncio.Queue(maxsize=src.QUEUE_FRAMES)
+    for _ in range(3):
+        src._queue.put_nowait(bytes(src.format.frame_bytes))
+    assert src.discard_queued() == 3
+    assert src.dropped == 3 and src._queue.empty()
+    assert src.discard_queued() == 0 and src.dropped == 3

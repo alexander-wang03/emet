@@ -77,8 +77,10 @@ class SessionStats:
     #: Turns whose silence window was extended once because the words so
     #: far looked unfinished.
     extended: int = 0
-    #: Frames the source discarded because the loop fell behind. Not the same
-    #: as being slow: this is audio that was never seen at all.
+    #: Frames the source discarded: audio that was never seen at all. Not the
+    #: same as being slow. `dropped_busy` below says how many of them were
+    #: lost while the loop was not listening on purpose; the rest mean it
+    #: fell behind.
     dropped: int = 0
     #: Callbacks PortAudio flagged with an input overflow: the sound card
     #: lost audio before the source saw it. A count of callbacks, not of

@@ -16,15 +16,20 @@ python tools/release_check.py .
 python tools/check_style.py .
 ```
 
-On the day of the merge, before merging, check the pull request itself:
+On the day of the merge, check the pull request and merge it in one
+command, so the merge cannot run when the check refuses:
 
 ```sh
-python tools/release_audit.py --pr <N>
+python tools/release_audit.py --pr <N> --merge
 ```
 
-It refuses a draft, a red or pending check, a head other than this
-checkout's, a title other than the changelog entry's, an AI attribution line,
-a version already tagged, and an entry not dated today.
+It refuses a version not above master's, a draft, a red or pending check, a
+head other than this checkout's, uncommitted changes in the checkout, a
+title other than the changelog entry's, an entry that cites another pull
+request, an AI attribution line, a version already tagged, and an entry not
+dated today; for the date it prints the command that fixes it. Only when all
+of that passes does it squash-merge, under the entry's title, with a sign-off
+body, pinned to the commit it checked.
 
 The tag itself is made by `tools/tag_release.py`, which runs the first three
 again and refuses a dirty tree, a branch other than master, a version the
@@ -36,8 +41,15 @@ a major after its release page, the whole chain is checked once more:
 python tools/release_audit.py --complete
 ```
 
-The `release audit` CI job runs the same audit on every pull request, merge
-and tag, allowing only the newest version to be unfinished.
+The `release audit` workflow runs the history audit on every pull request,
+merge and tag, allowing only the newest version to be unfinished, and on a
+pull request `--pr <N> --ci` as well: the bump, the title, the cited pull
+request, no attribution. It reruns when a title is edited on GitHub.
+
+**Dependabot.** Every merge is a version, so a Dependabot pull request is
+never merged as it stands; the audit fails it. Its change goes into the next
+versioned pull request (`git cherry-pick -s <its commit>` on that branch),
+and the Dependabot pull request is closed.
 
 Everything below is what a script cannot check.
 
@@ -143,7 +155,7 @@ that is merely out of date, so re-read:
   the entry, and the pull request carries the measurements.
 - Every commit in the release is signed off, or the DCO check fails the PR.
 - The entry is dated the day of the merge. `release_audit.py --pr` refuses
-  any other day.
+  any other day, and `--merge` merges only past that check.
 
 ## 9. Audit the chain
 
@@ -157,7 +169,10 @@ day, and nothing reaching GitHub carries an AI attribution line.
 > the entry's `### Added`, `### Changed` and `### Fixed` headings to git's
 > default message cleanup, and so did the v0.5.0 release page made from the
 > tag. The 0.4.1 pull request's body carried an attribution line until it
-> was edited out. Each passed every check that existed at the time.
+> was edited out. Each passed every check that existed at the time. Then
+> 0.5.1 went out dated a day early too: the audit refused the merge, and the
+> merge ran anyway, because the check and `gh pr merge` were two lines of
+> one pasted block. The merge now runs from inside the check.
 
 ---
 

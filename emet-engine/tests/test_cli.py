@@ -563,6 +563,15 @@ def test_a_clean_run_says_nothing_about_either(capsys):
     assert "dropped" not in out
 
 
+def test_wakes_in_the_tail_of_its_own_voice_are_reported(capsys):
+    """So a run on the body shows the tail rule at work."""
+    cli.print_run_footer(footer_session(own_voice_wakes=2), stats=False)
+    assert "2 wake(s) were ignored because the phrase ended in the tail" in capsys.readouterr().out
+
+    cli.print_run_footer(footer_session(), stats=False)
+    assert "tail" not in capsys.readouterr().out
+
+
 def test_frames_dropped_waiting_for_the_words_are_explained_without_a_reply(capsys):
     """`emet-listen --transcribe` waits for every final and was never counted
     busy by its flags, so a five-second final read as the loop not keeping
