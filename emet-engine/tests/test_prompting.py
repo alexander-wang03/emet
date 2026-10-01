@@ -143,3 +143,28 @@ def test_the_guide_glosses_what_a_name_does_not_say():
     guide = tag_guide(["express.curiosity", "move.approach"])
     assert "[express.curiosity], [move.approach] to come closer." in guide
     assert "never read aloud" in guide and "at most one in a reply" in guide
+
+
+# ------------------------------------------------------------ the wake phrase
+
+
+def test_the_model_is_told_the_phrase_that_wakes_it():
+    """Asked how to wake it on the reference body, it offered "Emet, wake up"
+    (2026-09-27): the soul's `identity.wake_word` never reached the prompt."""
+    from emet_engine.prompting import wake_line
+
+    soul = {"identity": {"name": "Emet", "wake_word": "hey emet"}, "persona": {"system_prompt": "You are Emet."}}
+    model = SelfModel(facts=(BodyFact("voice", "You speak through a speaker."),))
+    text = system_prompt(soul, self_model=model, tags=["express.curiosity"])
+    persona, woken, body, tags, rule = text.split("\n\n")
+    assert persona == "You are Emet."
+    assert woken == wake_line(soul)
+    assert '"hey emet"' in woken
+    assert body.startswith(SELF_MODEL_HEADING) and rule == SPOKEN_ALOUD
+
+
+def test_a_soul_with_no_wake_phrase_is_told_none():
+    from emet_engine.prompting import wake_line
+
+    assert wake_line({"identity": {"name": "Emet"}}) is None
+    assert "wake you" not in system_prompt({"identity": {"name": "Emet"}})

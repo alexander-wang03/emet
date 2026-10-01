@@ -1,11 +1,11 @@
 """What the language model is told, and what it remembers of the conversation.
 
-The system prompt is assembled here, in four parts and in this order: the
-soul's persona; the self-model, which is the body told plainly, presences and
-absences both (`DESIGN.md` section 7); the tags this body can act on; and a
-rule about speaking aloud. The memories the sensitivity floor lets through
-join it here in 0.6, and nothing below this line changes when they do: a
-`Prompt` is what leaves, whatever went into it.
+The system prompt is assembled here, in five parts and in this order: the
+soul's persona; the phrase that wakes it; the self-model, which is the body
+told plainly, presences and absences both (`DESIGN.md` section 7); the tags
+this body can act on; and a rule about speaking aloud. The memories the
+sensitivity floor lets through join it here in 0.6, and nothing below this
+line changes when they do: a `Prompt` is what leaves, whatever went into it.
 
 **The body enters the prompt only through the self-model.** The soul names no
 hardware (principle 1), the language model plugin knows nothing about the
@@ -21,6 +21,10 @@ this body: every `express` tag, because its chain always ends in a filler in
 the reply's voice; `attend` and `move` tags only where a part performs them.
 A speakerphone asked to come here reads in its self-model that it has no
 wheels, and is not handed a `[move.approach]` it could only explain away.
+
+**The phrase that wakes it.** `identity.wake_word` is the soul's, and the
+model was never told it: asked how to wake it, the reference soul answered
+"Say, 'Emet, wake up.'" (2026-09-27). Two sentences say it now.
 
 The conversation is short on purpose. A robot on a desk is spoken to in
 bursts, and a language model is billed on everything it is shown, so only
@@ -38,6 +42,7 @@ from emet_sdk.types import Message, Prompt, SelfModel, ToolSpec
 
 __all__ = [
     "SPOKEN_ALOUD",
+    "wake_line",
     "SELF_MODEL_HEADING",
     "SELF_MODEL_PREFACE",
     "DEFAULT_MAX_TOKENS",
@@ -121,11 +126,23 @@ def persona(soul: Mapping[str, Any]) -> str:
     return written
 
 
+def wake_line(soul: Mapping[str, Any]) -> str | None:
+    """The phrase that wakes this soul, as the model is told it, or None for
+    a soul with no `identity.wake_word`."""
+    phrase = " ".join(str((soul.get("identity") or {}).get("wake_word") or "").split())
+    if not phrase:
+        return None
+    return (
+        f'People wake you by saying "{phrase}". If someone asks how to wake you '
+        f"or get your attention, that is the phrase to give them."
+    )
+
+
 def body_section(self_model: SelfModel) -> str:
     """The self-model as the prompt carries it: heading, preface, a fact a line.
 
-    One block with no blank line inside it, so the prompt's four parts stay
-    four paragraphs."""
+    One block with no blank line inside it, so each of the prompt's parts
+    stays one paragraph."""
     return "\n".join([SELF_MODEL_HEADING, SELF_MODEL_PREFACE, self_model.text])
 
 
@@ -175,13 +192,17 @@ def system_prompt(
     self_model: SelfModel | None = None,
     tags: Sequence[str] = (),
 ) -> str:
-    """The persona, the body, the tags, and the rule about speaking aloud.
+    """The persona, the wake phrase, the body, the tags, and the rule about
+    speaking aloud.
 
     Without a self-model (a caller that has not booted a body) the prompt is
-    the persona and the rule. The rule names no speaker since 0.5: the
-    self-model describes the body.
+    the persona, the wake phrase and the rule. The rule names no speaker
+    since 0.5: the self-model describes the body.
     """
     parts = [persona(soul)]
+    woken = wake_line(soul)
+    if woken:
+        parts.append(woken)
     if self_model is not None and self_model.facts:
         parts.append(body_section(self_model))
     if tags:

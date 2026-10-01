@@ -318,6 +318,20 @@ class ListenSession:
         self._latest_partial = ""
         #: The intents the model tagged into its most recent spoken reply.
         self.last_intents: list[Intent] = []
+        #: How many times the robot has made a sound that reached the sink,
+        #: and that count as of the last frame the loop read. A difference
+        #: when the wake engine is about to hear again means the robot spoke
+        #: while nothing was reading the microphone.
+        self._playbacks = 0
+        self._playbacks_heard = 0
+        #: After the robot spoke: how much audio after listening resumed is
+        #: the tail of its voice still in the air, whole frames, and how much
+        #: has been fed since. None when there is no tail to judge.
+        self._tail_ms: float | None = None
+        self._since_listening_ms = 0.0
+        #: Wakes ignored because the phrase ended in that tail.
+        self.own_voice_wakes = 0
+        self._warned_no_discard = False
 
         self._wake: Any = None
         self._stt: Any = None
@@ -418,6 +432,9 @@ class ListenSession:
         self._audio = source_cls(self._input_block, self.format)
         await self._audio.start()
         self._record_state()
+        # The boot tones played before the microphone opened, so nothing of
+        # them waits in its queue.
+        self._playbacks_heard = self._playbacks
 
         log.info(
             "listening for %r via %s on %s at %d Hz",
@@ -533,7 +550,9 @@ class ListenSession:
         try:
             for sentence in sentences_of(text):
                 await self._mouth.say(sentence, from_reply=from_reply)
-            return await self._mouth.finish()
+            spoken = await self._mouth.finish()
+            self._count_playback(spoken)
+            return spoken
         except BaseException:
             # Interrupted mid-line: stop the words now, so nothing said on
             # the way down (the muted tone) queues behind the rest of them.
@@ -541,6 +560,16 @@ class ListenSession:
             raise
         finally:
             self._charge_busy(before)
+
+    def _count_playback(self, spoken: Sequence[SpokenSentence] | None = None) -> None:
+        """Note that the robot made a sound: raw audio played, or any
+        sentence whose audio reached the voice's output, a sentence the voice
+        broke off part way included, since its first chunks were already
+        playing. Only a reply that produced no audio at all made none;
+        counting one too many costs a discard, one too few a robot that
+        answers itself."""
+        if spoken is None or any(s.audio_bytes for s in spoken):
+            self._playbacks += 1
 
     async def _utter(self, sentence: str) -> None:
         """One sentence, as the `speak` intent it travels as."""
@@ -775,6 +804,8 @@ class ListenSession:
         before = self.dropped
         try:
             await self._sink.play(pcm)
+            if pcm:
+                self._count_playback()
         except BaseException:
             # Cut off part way (Ctrl-C during the boot chime): drop the rest,
             # so the sink holds no tail that `stop()` would take for a
@@ -811,7 +842,9 @@ class ListenSession:
         try:
             for sentence in sentences_of(text):
                 await self._utter(sentence)
-            return await self._mouth.finish()
+            spoken = await self._mouth.finish()
+            self._count_playback(spoken)
+            return spoken
         except BaseException:
             await self._mouth.hush()
             raise
@@ -826,11 +859,14 @@ class ListenSession:
         The detector is reset after every event rather than before the next
         read: its hypothesis persists until the utterance is closed, so without
         this one wake becomes one event per frame for the rest of the session.
+        A caller that has the robot speak between events gets the same guard
+        against its own voice as `turns()`.
         """
         if self._audio is None or self._wake is None:
             raise EngineError("session was not started")
 
         while True:
+            self._listen_again()
             frame = await self._audio.read()
             if frame is None:
                 return
@@ -839,6 +875,8 @@ class ListenSession:
             with Stopwatch() as watch:
                 event = await self._wake.process(frame)
             self._record(watch.elapsed_ms)
+            if await self._own_tail(event):
+                event = None
             if event is not None:
                 self.stats.wakes += 1
                 yield event
@@ -864,6 +902,12 @@ class ListenSession:
         see the words so far, so words the energy detector never saw start
         (said inside the click's deaf window, or before the wake fired) end
         the turn on silence rather than after the whole lead-in.
+
+        Between one turn and the next the caller answers, and the robot may
+        speak. The microphone is not read meanwhile, so the capture queue
+        holds whatever waited there, the robot's own voice when it has just
+        spoken; on a body that cannot cancel its own echo that is thrown away
+        before the wake engine hears again (`_listen_again`).
         """
         if self._audio is None or self._wake is None or self.format is None:
             raise EngineError("session was not started")
@@ -875,6 +919,8 @@ class ListenSession:
         recent: deque[bytes] = deque(maxlen=math.ceil(MAX_WAKE_LAG_MS / self.format.frame_ms) + 1)
 
         while True:
+            if endpointer is None:
+                self._listen_again()
             frame = await self._audio.read()
             if frame is None:
                 if endpointer is not None and pending is not None:
@@ -894,6 +940,8 @@ class ListenSession:
                 self._record(watch.elapsed_ms)
                 if self._stt is not None:
                     recent.append(frame)
+                if await self._own_tail(event):
+                    event = None
                 if event is not None:
                     self.stats.wakes += 1
                     await self._wake.reset()
@@ -914,6 +962,9 @@ class ListenSession:
                     await self._listening(endpointer)
                 continue
 
+            # The loop is reading: a sound made now (the listening click) is
+            # the endpointer's to judge, and nothing of it waits unheard.
+            self._playbacks_heard = self._playbacks
             partial: Transcript | None = None
             with Stopwatch() as watch:
                 utterance = endpointer.feed(frame)
@@ -932,6 +983,96 @@ class ListenSession:
                 yield pending, await self._transcribed(utterance)
                 endpointer = None
                 pending = None
+
+    def _echo_ms(self) -> float | None:
+        """How long the robot's own sound lingers at its microphone after the
+        sink has taken it: the sink's output latency and one frame. None when
+        the robot cannot hear itself: a recording, which never heard it; a
+        body that declares echo cancellation; or a sink that plays into no
+        room (`null`, `wav`), which reports no latency at all."""
+        if self.format is None or self.source_name == "wav":
+            return None
+        if str(self._input_block.get("aec") or "none") != "none":
+            return None
+        if not hasattr(self._sink, "stream_latency_s"):
+            return None
+        latency = getattr(self._sink, "stream_latency_s", None)
+        latency_ms = float(latency) * 1000.0 if latency else DEFAULT_OUTPUT_LATENCY_MS
+        return latency_ms + self.format.frame_ms
+
+    def _listen_again(self) -> None:
+        """Before the wake engine hears again: if the robot made a sound since
+        the loop last read the microphone, forget what waited meanwhile.
+
+        Kept on the session, so it holds for `turns()`, for `wakes()`, and
+        for a caller that starts a fresh iterator after speaking."""
+        if self._playbacks != self._playbacks_heard:
+            self._playbacks_heard = self._playbacks
+            self._forget_own_voice()
+
+    def _forget_own_voice(self) -> None:
+        """Throw away what waited in the capture queue while the robot spoke.
+
+        The loop does not read the microphone while the robot speaks, so the
+        capture queue holds whatever waited there, up to its length (two
+        seconds on the shipped microphone), when it listens again: the end
+        of the robot's own reply, since listening resumes as soon as the
+        last sound has gone. On a body with no echo cancellation that is the
+        robot talking to itself: on the reference body "Say, 'Emet, wake
+        up.'" woke it twice in two, and it answered its own "wake up"
+        (2026-09-27). So the queue is emptied, and its frames are counted as
+        lost while busy, which they were; and a phrase that ended in the
+        tail still in the air, the output latency and a frame rounded up to
+        whole frames, is ignored when the wake engine reports it, however
+        late that is (`_own_tail`).
+
+        A source with no `discard_queued()` keeps its backlog, and the tail
+        then covers only the oldest frames of it, so such a source is not
+        protected; the first time, the log says so. Barge-in, in 1.0, reads
+        the microphone while the robot speaks and replaces all of this with
+        echo cancellation.
+        """
+        echo_ms = self._echo_ms()
+        if echo_ms is None or self.format is None:
+            return
+        discard = getattr(self._audio, "discard_queued", None)
+        if callable(discard):
+            before = self.dropped
+            discard()
+            self._charge_busy(before)
+        elif not self._warned_no_discard:
+            self._warned_no_discard = True
+            log.warning(
+                "the audio source %r cannot throw away what it queued while the robot spoke; "
+                "on a body with aec: none the robot may wake on its own voice",
+                self.source_name,
+            )
+        frame = self.format.frame_ms
+        self._tail_ms = math.ceil(echo_ms / frame - 1e-9) * frame
+        self._since_listening_ms = 0.0
+
+    async def _own_tail(self, event: WakeEvent | None) -> bool:
+        """Spend one frame of the tail after the robot spoke. True when this
+        frame's wake is its own voice, which is then reset and counted.
+
+        Judged by where the phrase ended, not by when the event came: a wake
+        engine reports a phrase late (pocketsphinx 150 to 220 ms, which it
+        says as `lag_ms`), so a phrase that ended in the tail can be reported
+        a frame or two after the tail itself. The window stays open for the
+        tail and the longest lag the loop allows."""
+        if self._tail_ms is None or self.format is None:
+            return False
+        self._since_listening_ms += self.format.frame_ms
+        hidden = False
+        if event is not None:
+            ended_ms = self._since_listening_ms - min(event.lag_ms, MAX_WAKE_LAG_MS)
+            if ended_ms <= self._tail_ms + 1e-6:
+                hidden = True
+                self.own_voice_wakes += 1
+                await self._wake.reset()
+        if self._since_listening_ms >= self._tail_ms + MAX_WAKE_LAG_MS - 1e-6:
+            self._tail_ms = None
+        return hidden
 
     async def _listening(self, endpointer: Endpointer) -> None:
         """Show that the robot is listening, and do not mistake the showing
@@ -952,15 +1093,11 @@ class ListenSession:
         deafens anything.
         """
         performed = await self._signal("listening")
-        if performed is None or not performed.audio_ms or self.format is None:
+        if performed is None or not performed.audio_ms:
             return
-        if self.source_name == "wav" or str(self._input_block.get("aec") or "none") != "none":
-            return
-        latency = getattr(self._sink, "stream_latency_s", None)
-        if not hasattr(self._sink, "stream_latency_s"):
-            return
-        latency_ms = float(latency) * 1000.0 if latency else DEFAULT_OUTPUT_LATENCY_MS
-        endpointer.deafen(performed.audio_ms + latency_ms + self.format.frame_ms)
+        echo_ms = self._echo_ms()
+        if echo_ms is not None:
+            endpointer.deafen(performed.audio_ms + echo_ms)
 
     def _heard(self, partial: Transcript | None) -> None:
         """Keep a partial transcript as the words so far, and show it."""
@@ -1187,6 +1324,7 @@ class ListenSession:
             except BaseException:
                 await mouth.hush()
                 raise
+        self._count_playback(spoken)
         heard = [s for s in spoken if s.ok and s.audio_bytes]
         self.stats.record_speech(
             # A reply nobody heard has no first sound. `on_first_audio` fires
@@ -1344,11 +1482,13 @@ class ListenSession:
 
     @property
     def dropped(self) -> int:
-        """Frames the source discarded because this loop fell behind.
+        """Frames the source discarded: because this loop fell behind, or on
+        purpose while the robot was busy, speaking or thinking, which
+        `stats.dropped_busy` counts apart.
 
         Read defensively: `AudioSource` does not require it, and a file cannot
-        drop anything. Non-zero means wake words were missed, and a robot that
-        knows it missed something should be able to say so rather than let it
-        pass as bad luck.
+        drop anything. Frames dropped while listening mean wake words may have
+        been missed, and a robot that knows it missed something should be
+        able to say so rather than let it pass as bad luck.
         """
         return int(getattr(self._audio, "dropped", 0) or 0)

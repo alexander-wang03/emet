@@ -1,0 +1,58 @@
+# The release audit, `tools/release_audit.py`, read-only.
+#
+# Every version since the rule that every merge to master is one: the commit,
+# the tag, the changelog entry, the release page and the pull request carry
+# the same sentence and the same day, the tags are signed, and nothing
+# carries an AI attribution line. The newest version may be pending (merged
+# and not yet tagged, or tagged and waiting for its page); the release run
+# finishes with `--complete`. On a pull request it also checks the pull
+# request itself, as far as CI can: the version bumped above master's, the
+# title as the entry says, the entry citing this pull request, no
+# attribution, not yet tagged.
+#
+# Apart from ci.yml so that a title or body edited on GitHub reruns this
+# without rerunning every suite. Editing a merged pull request fires the same
+# event against a stale merge ref, so the job runs only for open ones.
+#
+# No concurrency group. An edit and `gh pr ready` a second apart start two
+# runs on one commit, and a run cancelled by the other could be the one a
+# required check on master reads. The job is read-only and takes seconds,
+# so every run finishes.
+
+name: release audit
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  audit:
+    name: release audit
+    if: github.event_name != 'pull_request' || github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Every version since 0.4.1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/release_audit.py
+      # Runs even when the history above failed, so a pull request learns
+      # about its own title in the same run.
+      - name: This pull request, as far as CI can tell
+        if: github.event_name == 'pull_request' && !cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python tools/release_audit.py --pr "$PR" --ci

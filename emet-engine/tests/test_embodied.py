@@ -825,3 +825,115 @@ def test_the_replayed_body_is_the_body_the_live_run_described():
     replayed = _replay(manifest, "recording.wav")["audio"]["input"]
     assert replayed["source"] == "wav" and replayed["params"] == {"path": "recording.wav"}
     assert (replayed["channels"], replayed["doa"], replayed["aec"]) == (4, True, "hardware")
+
+
+# ------------------------------------------------- its own voice, in talk()
+
+
+#: Where the capture queue ends in a test recording; see test_session.py.
+QUEUE_END = b"QUEUE-END"
+
+
+def discarding(source):
+    """The microphone's `discard_queued()` on the wav source: throw away the
+    frames up to and including the next `QUEUE_END`, counted as dropped."""
+    calls = []
+
+    def discard_queued():
+        thrown = 0
+        while True:
+            raw = source._wav.readframes(source.format.frame_samples)
+            if len(raw) < source.format.frame_bytes:
+                break
+            thrown += 1
+            if QUEUE_END in raw:
+                break
+        source.dropped = getattr(source, "dropped", 0) + thrown
+        calls.append(thrown)
+        return thrown
+
+    return discard_queued, calls
+
+
+#: Its own voice saying the phrase and more, as it waited in the queue.
+OWN_REPLY = frame(PHRASE.encode()) + frame(b"wake") + frame(b"up") + frame(QUEUE_END) + frame() * 40
+
+
+def talk_on_the_body(tmp_path, pcm, *, aec=None, soul_doc=None, stt_error=None, **models):
+    """`emet-talk` on the reference body's manifest (`aec: none`), its ears on
+    a file posing as the live card, its mouth on a sink that plays into a
+    room, and every provider a mock."""
+    manifest = body_like("pi-speakerphone.yaml", write_wav(tmp_path / "t.wav", pcm), **models)
+    if aec is not None:
+        manifest["audio"]["input"]["aec"] = aec
+    session = talking(manifest, soul_doc)
+
+    async def scenario():
+        async with session:
+            session.source_name = "microphone"
+            session._sink.stream_latency_s = 0.05
+            session._audio.discard_queued, calls = discarding(session._audio)
+            if stt_error is not None:
+
+                async def finish():
+                    return Transcript(text="", final=True, error=stt_error)
+
+                session._stt.finish = finish
+            return [x async for x in session.talk()], calls, session.own_voice_wakes
+
+    return run(scenario())
+
+
+@pytest.mark.parametrize(("aec", "exchanges"), [(None, 1), ("hardware", 2)])
+def test_a_spoken_reply_is_forgotten_before_it_listens_again(tmp_path, aec, exchanges):
+    """The path where it happened: `emet-talk` on the reference body answered
+    its own "Say, 'Emet, wake up.'" (2026-09-27). A body with echo
+    cancellation keeps its queue, and the phrase in it is heard."""
+    pcm = spoken(b"what", b"time") + OWN_REPLY
+    got, calls, _ = talk_on_the_body(tmp_path, pcm, aec=aec, chat={"reply": "Say hey emet, wake up."})
+    assert len(got) == exchanges
+    assert got[0].reply is not None and got[0].spoken
+    assert (len(calls) == 1) == (aec is None)
+
+
+def test_the_nothing_heard_line_is_forgotten_too(tmp_path):
+    """A false wake answered with the soul's `nothing_heard` line, said
+    through `speak_text`, then its own voice in the queue."""
+    pcm = frame() + frame(PHRASE.encode()) + frame() * 40 + OWN_REPLY
+    got, calls, _ = talk_on_the_body(tmp_path, pcm, soul_doc=soul(persona={"lines": {"nothing_heard": "Yes?"}}))
+    assert len(got) == 1 and got[0].line == "Yes?"
+    assert len(calls) == 1
+
+
+def test_the_failed_line_is_forgotten_too(tmp_path):
+    """Words that never arrived: `signal.offline`, whose explain rung says
+    the soul's `failed` line through the voice, then its own voice."""
+    pcm = spoken(b"hello", b"there") + OWN_REPLY
+    got, calls, _ = talk_on_the_body(
+        tmp_path, pcm, soul_doc=soul(persona={"lines": {"failed": "Lost it."}}), stt_error="OSError: no network",
+    )
+    assert len(got) == 1 and got[0].line == "Lost it."
+    assert len(calls) == 1
+
+
+def test_a_sentence_the_voice_broke_off_still_counts_as_its_voice(tmp_path):
+    """A cloud voice over a phone hotspot can drop a sentence part way, after
+    its first chunks played. That sentence failed and was still heard in
+    the room, so the queue is still forgotten."""
+    pcm = spoken(b"what", b"time") + OWN_REPLY
+    got, calls, _ = talk_on_the_body(tmp_path, pcm, chat={"reply": "Say hey emet, wake up."}, tts={"fail_on": "wake"})
+    assert len(got) == 1
+    (sentence,) = [s for s in got[0].spoken if s.from_reply]
+    assert not sentence.ok and sentence.audio_bytes > 0, "failed after its first chunk"
+    assert len(calls) == 1
+
+
+def test_the_listening_click_alone_forgets_nothing(tmp_path):
+    """The click plays while the loop is reading, and the endpointer judges
+    it. A false wake answered with silence made no other sound, so a person
+    saying the name straight after is heard, and nothing is thrown away."""
+    pcm = frame() + frame(PHRASE.encode()) + frame() * 40 + frame(PHRASE.encode()) + frame(b"hello") + frame() * 40
+    got, calls, _ = talk_on_the_body(tmp_path, pcm)
+    assert len(got) == 2, "the name said straight after the silent false wake was heard"
+    assert got[0].spoken == () and got[1].spoken, "only the second turn made a sound"
+    assert len(calls) <= 1, "at most one discard, after the second turn spoke"

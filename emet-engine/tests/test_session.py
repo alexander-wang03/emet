@@ -1376,3 +1376,204 @@ def test_talk_needs_every_stage(tmp_path):
                     pass
 
     run(scenario())
+
+# ------------------------------------------------------ its own voice, heard
+
+
+#: Marks where the capture queue ends in a test recording: the frames up to
+#: and including it waited while the robot spoke, the ones after it arrive
+#: once listening resumes. The mock wake engine ignores it.
+QUEUE_END = b"QUEUE-END"
+
+
+def discarding(source):
+    """A stand-in for the microphone's `discard_queued()` on the wav source:
+    throw away the frames up to and including the next `QUEUE_END`, and
+    count them as dropped, as the microphone does."""
+    calls = []
+
+    def discard_queued():
+        thrown = 0
+        while True:
+            raw = source._wav.readframes(source.format.frame_samples)
+            if len(raw) < source.format.frame_bytes:
+                break
+            thrown += 1
+            if QUEUE_END in raw:
+                break
+        source.dropped = getattr(source, "dropped", 0) + thrown
+        calls.append(thrown)
+        return thrown
+
+    return discard_queued, calls
+
+
+#: A turn that ends on silence after twelve quiet frames at the default
+#: patience, then what waited while the robot answered: a little of the
+#: room, then its own voice saying the phrase.
+TURN = frame() + frame(PHRASE.encode()) + loud_frame() * 5 + frame() * 12
+OWN_VOICE = TURN + frame() * 4 + frame(PHRASE.encode()) + frame(QUEUE_END) + frame() * 40
+
+
+def own_voice_run(
+    tmp_path, pcm, *, speak_between=True, aec=None, live=True, latency_s=0.05, discard=True, lag_frames=0,
+):
+    wake = {"lag_frames": lag_frames} if lag_frames else {}
+    manifest = body(write_wav(tmp_path / "own.wav", pcm), **wake)
+    if aec is not None:
+        manifest["audio"]["input"]["aec"] = aec
+    session = ListenSession(manifest, soul())
+
+    async def scenario():
+        calls = []
+        async with session:
+            if live:
+                session.source_name = "microphone"  # the file stands in for a live card
+            if latency_s is not None:
+                session._sink.stream_latency_s = latency_s  # a sink playing into a room
+            if discard:
+                session._audio.discard_queued, calls = discarding(session._audio)
+            turns = []
+            async for event, utterance in session.turns():
+                turns.append(utterance)
+                if speak_between and len(turns) == 1:
+                    await session.say(loud_frame())  # the reply, played into the room
+            return turns, calls, session.stats, session.own_voice_wakes
+
+    return run(scenario())
+
+
+def test_what_it_said_while_not_listening_is_thrown_away_before_it_listens(tmp_path):
+    """On the reference body it heard "hey emet" in its own "Say, 'Emet, wake
+    up.'" and answered its own "wake up", twice in two (2026-09-27). The
+    capture queue held its voice when it listened again."""
+    turns, calls, stats, _ = own_voice_run(tmp_path, OWN_VOICE)
+    assert len(turns) == 1, "it did not wake on its own voice"
+    assert calls == [6]
+    assert stats.dropped == 6 and stats.dropped_busy == 6, "lost while busy, and counted"
+
+
+def test_nothing_is_thrown_away_when_it_did_not_speak(tmp_path):
+    """The queue then holds the room, and a person may already be saying
+    its name again."""
+    turns, calls, _, _ = own_voice_run(tmp_path, OWN_VOICE, speak_between=False)
+    assert len(turns) == 2 and calls == []
+
+
+@pytest.mark.parametrize("case", ["aec", "replay", "no room"])
+def test_a_body_that_cannot_hear_itself_keeps_everything(tmp_path, case):
+    """Echo cancellation takes its voice out, a recording never heard it,
+    and a sink that plays into no room made no sound to hear."""
+    kwargs = {
+        "aec": {"aec": "hardware"},
+        "replay": {"live": False},
+        "no room": {"latency_s": None},
+    }[case]
+    turns, calls, _, _ = own_voice_run(tmp_path, OWN_VOICE, **kwargs)
+    assert len(turns) == 2 and calls == []
+
+
+@pytest.mark.parametrize(
+    ("at", "own"),
+    [(1, True), (2, True), (3, False)],
+)
+def test_the_tail_is_whole_frames_and_a_person_just_after_it_is_heard(tmp_path, at, own):
+    """The speaker is still sounding the last of the reply for its output
+    latency when the loop listens again. At 50 ms and an 80 ms frame that is
+    130 ms, rounded up to two whole frames: a phrase ending in either is its
+    own voice, and one ending in the third frame is a person."""
+    pcm = TURN + frame(QUEUE_END) + frame() * (at - 1) + frame(PHRASE.encode()) + frame() * 40
+    turns, _, stats, ignored = own_voice_run(tmp_path, pcm)
+    assert ignored == (1 if own else 0)
+    assert len(turns) == (1 if own else 2)
+
+
+@pytest.mark.parametrize(
+    ("at", "own"),
+    [(2, True), (3, False)],
+)
+def test_a_phrase_that_ended_in_the_tail_is_its_own_voice_however_late_it_is_reported(tmp_path, at, own):
+    """A wake engine reports a phrase late: pocketsphinx 150 to 220 ms after
+    it ended. Here two frames late, so a phrase that ended in the tail's
+    second frame is reported in the fourth, after the tail, and is still its
+    own voice; one that ended in the third frame is a person."""
+    pcm = TURN + frame() * 2 + frame(QUEUE_END) + frame() * (at - 1) + frame(PHRASE.encode()) + frame() * 40
+    turns, _, _, ignored = own_voice_run(tmp_path, pcm, lag_frames=2)
+    assert ignored == (1 if own else 0)
+    assert len(turns) == (1 if own else 2)
+
+
+def test_wakes_gets_the_same_guard(tmp_path):
+    """`wakes()`, the two-line way to use a session, and a caller that has
+    the robot speak between its events."""
+    pcm = frame() + frame(PHRASE.encode()) + frame() * 5 + frame(PHRASE.encode()) + frame(QUEUE_END) + frame() * 10
+    manifest = body(write_wav(tmp_path / "w.wav", pcm))
+    session = ListenSession(manifest, soul())
+
+    async def scenario():
+        async with session:
+            session.source_name = "microphone"
+            session._sink.stream_latency_s = 0.05
+            session._audio.discard_queued, calls = discarding(session._audio)
+            events = []
+            async for event in session.wakes():
+                events.append(event)
+                await session.say(loud_frame())
+            return events, calls
+
+    events, calls = run(scenario())
+    assert len(events) == 1 and calls == [7], "the five quiet frames, its own voice, and the marker"
+
+
+def test_a_fresh_iterator_after_speaking_gets_the_same_guard(tmp_path):
+    """The check lives on the session, so a caller that takes one turn,
+    speaks, and starts `turns()` again is covered too."""
+    manifest = body(write_wav(tmp_path / "f.wav", OWN_VOICE))
+    session = ListenSession(manifest, soul())
+
+    async def scenario():
+        async with session:
+            session.source_name = "microphone"
+            session._sink.stream_latency_s = 0.05
+            session._audio.discard_queued, calls = discarding(session._audio)
+            first = session.turns()
+            await first.__anext__()
+            await first.aclose()
+            await session.say(loud_frame())
+            rest = [u async for _, u in session.turns()]
+            return rest, calls
+
+    rest, calls = run(scenario())
+    assert rest == [] and calls == [6]
+
+
+def test_a_source_that_cannot_throw_its_queue_away_is_not_protected(tmp_path, caplog):
+    """`discard_queued()` is optional in the contract. Without it nothing is
+    thrown away, the tail covers only the oldest frames of the backlog, and
+    the log says so once: a phrase in those frames is ignored, one later in
+    the backlog wakes it."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="emet_engine.session")
+    early = TURN + frame(PHRASE.encode()) + frame() * 40
+    turns, _, stats, ignored = own_voice_run(tmp_path, early, discard=False)
+    assert len(turns) == 1 and ignored == 1 and stats.dropped == 0
+    assert sum("cannot throw away" in r.getMessage() for r in caplog.records) == 1
+
+    late = TURN + frame() * 4 + frame(PHRASE.encode()) + frame() * 40
+    turns, _, _, ignored = own_voice_run(tmp_path, late, discard=False)
+    assert len(turns) == 2 and ignored == 0, "later in the backlog, its own voice still wakes it"
+
+
+def test_a_sentence_counts_as_sound_when_any_of_its_audio_played():
+    """A sentence the voice broke off part way already played its first
+    chunks; only one that produced no audio at all made no sound."""
+    from emet_engine.speech import SpokenSentence
+
+    session = ListenSession(body("unused.wav"), soul())
+    session._count_playback([SpokenSentence("Lost.", 0, error="the voice failed")])
+    assert session._playbacks == 0
+    session._count_playback([SpokenSentence("Say, Emet, wake up.", 2048, error="ReadError mid-sentence")])
+    assert session._playbacks == 1
+    session._count_playback([SpokenSentence("Hi.", 3200)])
+    assert session._playbacks == 2

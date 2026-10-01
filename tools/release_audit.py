@@ -23,19 +23,37 @@ The newest version may be unfinished, merged and not yet tagged or tagged
 and waiting for its page, and is reported as pending. `--complete` makes
 pending a failure; the release run ends with it.
 
-`--pr N` is the check before merging: pull request N is ready, green,
-mergeable, at this checkout's HEAD, titled as its changelog entry, free of
-attribution, not yet tagged, and its entry is dated today. The date is the
-one a script can hold only on the day: 0.4.1 and 0.5.0 were both dated the
-day their pull requests were finished, a day before they merged.
+`--pr N` is the check before merging. Every push can hold five of its
+questions: the version bumped above master's, the title the changelog entry's,
+an entry that cites pull request N and no other, no attribution, not yet
+tagged. The merge day holds the rest: ready, every check green, mergeable,
+this checkout at the pull request's head with nothing uncommitted, and the
+entry dated today. The date is the one a script can hold only on the day:
+0.4.1, 0.5.0 and 0.5.1 were each dated the day their pull requests were
+finished, a day before they merged. A wrong date prints the command that
+fixes it.
 
-Read-only: git and the GitHub CLI (`gh`, authenticated), nothing written.
+`--merge` with `--pr` merges pull request N, squashed under its title with a
+sign-off body and pinned to the head commit it checked, only when every check
+passed. 0.5.1 went out with the wrong date because the check and
+`gh pr merge` were two lines of one pasted block, and the second ran after
+the first refused.
+
+`--ci` with `--pr` asks only the five questions every push can hold, for the
+CI run on a pull request. A Dependabot pull request fails it, as it should:
+merged as it stands it puts a commit on master that is not a version.
+
+Read-only, except that `--merge` runs `gh pr merge`: git and the GitHub CLI
+(`gh`, authenticated).
 
 Usage:
     python tools/release_audit.py
     python tools/release_audit.py --complete
-    python tools/release_audit.py --pr 11
-Exit:   0 nothing wrong, 1 a problem found (each is printed).
+    python tools/release_audit.py --pr 12
+    python tools/release_audit.py --pr 12 --merge
+    python tools/release_audit.py --pr 12 --ci
+Exit:   0 nothing wrong (and merged, with --merge), 1 a problem found or the
+        merge failed (each is printed).
 """
 
 from __future__ import annotations
@@ -59,6 +77,10 @@ FIRST = (0, 4, 1)
 #: Tags before this went through git's default message cleanup, which drops
 #: every line that starts with `#`, and so lost the entry's `###` headings.
 VERBATIM_FROM = (0, 5, 1)
+
+#: The one address besides a GitHub noreply one that may sign a merge: it
+#: lands in master's history, and a personal address must never.
+PROJECT_ADDRESS = "wake.up.emet@gmail.com"
 
 TITLE = re.compile(r"^(\d+)\.(\d+)\.(\d+): (.+)$")
 HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})\s*$")
@@ -87,13 +109,21 @@ class Audit:
         self.ref = ref
         self.problems: list[str] = []
         self.pending: list[str] = []
+        #: Commands that fix a problem found, printed after the problems.
+        self.fixes: list[str] = []
+        #: The commit the pre-merge check read, which the merge is pinned to.
+        self.head = ""
         self.repo = ""
 
     # ----------------------------------------------------------- plumbing
 
     def run(self, *args: str) -> tuple[int, str]:
+        """The exit code, and stdout; on a failure stdout and stderr both,
+        since `gh pr checks` prints its table to stdout and exits non-zero."""
         result = subprocess.run(args, cwd=self.root, capture_output=True, text=True, encoding="utf-8")
-        return result.returncode, (result.stdout if result.returncode == 0 else result.stderr).strip()
+        if result.returncode == 0:
+            return 0, result.stdout.strip()
+        return result.returncode, (result.stdout.strip() + "\n" + result.stderr.strip()).strip()
 
     def git(self, *args: str) -> str:
         code, out = self.run("git", *args)
@@ -262,7 +292,15 @@ class Audit:
 
     # ----------------------------------------------------- before a merge
 
-    def before_merge(self, number: str) -> None:
+    def before_merge(self, number: str, *, ci: bool = False) -> str | None:
+        """Pull request N, checked before its merge. Returns the title it
+        merges under, or None when it cannot be read.
+
+        With `ci`, only what holds on every push: the bump, the title, the
+        cited pull request, no attribution, not yet tagged. The day, the
+        draft, the head, a clean tree, the checks and whether GitHub can
+        merge it are the merge day's questions.
+        """
         declared = set()
         for pkg in PACKAGES:
             text = (self.root / pkg / "pyproject.toml").read_text(encoding="utf-8")
@@ -270,41 +308,109 @@ class Audit:
             declared.add(m.group(1) if m else "")
         if len(declared) != 1:
             self.problems.append(f"the packages declare {sorted(declared)}; release_check.py says more")
-            return
+            return None
         (version,) = declared
+        code, text = self.run("git", "show", f"{self.ref}:emet-sdk/pyproject.toml")
+        on_master = re.search(r'^version = "([^"]+)"', text, re.MULTILINE) if code == 0 else None
+        if on_master is None:
+            self.problems.append(f"{self.ref} declares no version to compare with")
+        elif _numbers(version) <= _numbers(on_master.group(1)):
+            self.problem(
+                version,
+                f"not above {on_master.group(1)}, what master declares: every merge is a version, "
+                f"and a change that is not one (a Dependabot update) goes into the next pull request "
+                f"that is (RELEASING.md)",
+            )
         entry = self.entry(version)
         if entry is None:
             self.problem(version, "CHANGELOG.md has no entry")
-            return
-        today = datetime.date.today().isoformat()
-        if entry.date != today:
-            self.problem(version, f"the entry is dated {entry.date}; merged today it is {today}")
+            return None
+        cited = sorted(set(CITED.findall(entry.message)), key=int)
+        if cited != [str(number)]:
+            self.problem(version, f"the entry cites {', '.join('#' + c for c in cited) or 'no pull request'}, not #{number}")
+        if not ci:
+            today = datetime.date.today().isoformat()
+            if entry.date != today:
+                self.problem(version, f"the entry is dated {entry.date}; merged today it is {today}")
+                self.fixes.append(
+                    f"sed -i 's/^## \\[{version}\\] - {entry.date}/## [{version}] - {today}/' CHANGELOG.md"
+                    f" && git add CHANGELOG.md && git commit -s -m \"Date the {version} entry the day it merges\""
+                    f" && git push"
+                )
         pr = self.gh(
             "pr", "view", number, "--json", "state,isDraft,title,body,headRefOid,baseRefName,mergeable"
         )
         if not isinstance(pr, dict):
             self.problems.append(f"#{number} could not be read")
-            return
+            return None
         title = f"{version}: {entry.summary}"
         if pr.get("title") != title:
             self.problem(version, f"#{number} is titled {pr.get('title')!r}, not {title!r}")
-        if pr.get("state") != "OPEN" or pr.get("isDraft"):
-            self.problem(version, f"#{number} is {'a draft' if pr.get('isDraft') else pr.get('state')}")
-        if pr.get("baseRefName") != "master":
-            self.problem(version, f"#{number} would merge into {pr.get('baseRefName')}, not master")
-        if pr.get("mergeable") != "MERGEABLE":
-            self.problem(version, f"#{number} is {pr.get('mergeable')}, not mergeable")
-        head = self.git("rev-parse", "HEAD")
-        if pr.get("headRefOid") != head:
-            self.problem(version, f"#{number}'s head is {str(pr.get('headRefOid'))[:7]}, this checkout is {head[:7]}")
         self.attribution(version, f"#{number}'s body", pr.get("body") or "")
         code, _ = self.run("git", "ls-remote", "--exit-code", "--tags", "origin", f"v{version}")
         if code == 0 or self.git("tag", "--list", f"v{version}"):
             self.problem(version, f"v{version} already exists")
+        if ci:
+            return title
+        if pr.get("state") != "OPEN" or pr.get("isDraft"):
+            self.problem(version, f"#{number} is {'a draft' if pr.get('isDraft') else pr.get('state')}")
+        if pr.get("baseRefName") != "master":
+            self.problem(version, f"#{number} would merge into {pr.get('baseRefName')}, not master")
+        mergeable = pr.get("mergeable")
+        if mergeable == "UNKNOWN":
+            self.problem(version, f"#{number}: GitHub has not yet worked out whether it can merge; run this again")
+        elif mergeable != "MERGEABLE":
+            self.problem(version, f"#{number} is {mergeable}, not mergeable")
+        head = self.git("rev-parse", "HEAD")
+        if pr.get("headRefOid") != head:
+            self.problem(version, f"#{number}'s head is {str(pr.get('headRefOid'))[:7]}, this checkout is {head[:7]}")
+        # What was read is the working tree; what GitHub merges is the pull
+        # request's commit. They are the same files only when nothing is
+        # left uncommitted, and the merge is pinned to that commit.
+        if self.git("status", "--porcelain", "--untracked-files=no"):
+            self.problem(version, "the working tree has uncommitted changes; the check read them, the merge would not take them")
+        self.head = head
         code, out = self.run("gh", "pr", "checks", number)
         if code != 0:
             waiting = [line for line in out.splitlines() if "\tpass\t" not in line and line.strip()]
             self.problem(version, "the checks are not all green: " + "; ".join(waiting[:4]))
+        return title
+
+    def merge(self, number: str, title: str) -> int:
+        """Squash-merge pull request N under `title`, with a sign-off body.
+
+        The sign-off is git's own identity, and it lands in master's history,
+        so it has to be an address that may be public: a GitHub noreply
+        address or the project's.
+        """
+        _, name = self.run("git", "config", "user.name")
+        _, email = self.run("git", "config", "user.email")
+        if not name or not email:
+            print("release-audit: git has no user.name or user.email to sign the merge with", file=sys.stderr)
+            return 1
+        if not (email.endswith("@users.noreply.github.com") or email == PROJECT_ADDRESS):
+            print(
+                f"release-audit: git's user.email is {email!r}; the sign-off lands in master's history, "
+                f"so it must be a GitHub noreply address or {PROJECT_ADDRESS}",
+                file=sys.stderr,
+            )
+            return 1
+        if not self.head:
+            print("release-audit: no head commit was checked, so there is nothing to pin the merge to", file=sys.stderr)
+            return 1
+        print(f"release-audit: merging #{number} at {self.head[:7]} as {title!r}")
+        # `--match-head-commit`: GitHub refuses the merge if the pull request
+        # moved after it was checked.
+        return subprocess.run(
+            ["gh", "pr", "merge", number, "--squash", "--subject", title,
+             "--body", f"Signed-off-by: {name} <{email}>", "--match-head-commit", self.head,
+             "--delete-branch"],
+            cwd=self.root,
+        ).returncode
+
+
+def _numbers(version: str) -> tuple[int, ...]:
+    return tuple(int(n) for n in version.split(".") if n.isdigit())
 
 
 def _cleaned(message: str) -> str:
@@ -322,10 +428,16 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="release_audit.py", description=__doc__.split("\n\n")[0])
     parser.add_argument("--complete", action="store_true", help="fail on a newest version still pending")
     parser.add_argument("--pr", metavar="N", help="check pull request N before merging it, instead")
+    parser.add_argument("--merge", action="store_true", help="with --pr: merge it, only when every check passed")
+    parser.add_argument("--ci", action="store_true", help="with --pr: only what a CI run can hold on every push")
     parser.add_argument("--ref", default="origin/master", help="the history to audit (default: origin/master)")
     parser.add_argument("--changelog", default="CHANGELOG.md", help="the changelog to audit against")
     parser.add_argument("--root", default=".", help="repository root (default: .)")
     args = parser.parse_args(argv[1:])
+    if (args.merge or args.ci) and not args.pr:
+        parser.error("--merge and --ci go with --pr N")
+    if args.merge and args.ci:
+        parser.error("--merge is for the merge day, --ci for every push; not both")
     # A title quoted back may hold what a Windows console cannot print.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -335,9 +447,10 @@ def main(argv: list[str]) -> int:
     audit = Audit(root, (root / args.changelog).resolve(), args.ref)
     if not audit.start():
         return 1
+    title: str | None = None
     if args.pr:
-        audit.before_merge(args.pr)
-        scope = f"#{args.pr} before its merge"
+        title = audit.before_merge(args.pr, ci=args.ci)
+        scope = f"#{args.pr} " + ("as CI can see it" if args.ci else "before its merge")
     else:
         audit.history()
         scope = f"every version on {args.ref} since {'.'.join(map(str, FIRST))}"
@@ -349,11 +462,16 @@ def main(argv: list[str]) -> int:
     if args.complete:
         for note in audit.pending:
             print(f"  x not finished: {note}")
+    for fix in audit.fixes:
+        print(f"\n  fix: {fix}")
     failed = bool(audit.problems) or (args.complete and bool(audit.pending))
     if failed:
-        print(f"\n{len(audit.problems) + (len(audit.pending) if args.complete else 0)} problem(s) in {scope}.")
+        count = len(audit.problems) + (len(audit.pending) if args.complete else 0)
+        print(f"\n{count} problem(s) in {scope}." + (" Nothing was merged." if args.merge else ""))
         return 1
     print(f"release-audit: ok, {scope}")
+    if args.merge and title is not None:
+        return audit.merge(args.pr, title)
     return 0
 
 
