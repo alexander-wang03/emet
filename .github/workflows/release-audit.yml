@@ -13,6 +13,11 @@
 # Apart from ci.yml so that a title or body edited on GitHub reruns this
 # without rerunning every suite. Editing a merged pull request fires the same
 # event against a stale merge ref, so the job runs only for open ones.
+#
+# No concurrency group. An edit and `gh pr ready` a second apart start two
+# runs on one commit, and a run cancelled by the other could be the one a
+# required check on master reads. The job is read-only and takes seconds,
+# so every run finishes.
 
 name: release audit
 
@@ -26,10 +31,6 @@ on:
 permissions:
   contents: read
   pull-requests: read
-
-concurrency:
-  group: release-audit-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   audit:
