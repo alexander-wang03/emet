@@ -12,13 +12,14 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.2] - 2026-09-28
+## [0.5.2] - 2026-09-30
 
 Stop it waking on its own voice.
 
 ### Added
-- The system prompt tells the model the phrase that wakes it; asked how to
-  wake it, the reference soul offered "Emet, wake up" (#12)
+- The system prompt tells the model the phrase that wakes it: asked how to
+  wake it at 0.5.1, the reference soul offered "Emet, wake up" where the
+  phrase is "hey emet" (#12)
 - `release_audit.py --pr N --merge`, which merges only when every check
   passed, pinned to the commit it checked, and `--pr N --ci`, the part of
   that check a CI run can hold; the check now also refuses a version not
@@ -44,7 +45,8 @@ Stop it waking on its own voice.
 ### Fixed
 - The 0.5.1 entry carries the day it merged and was tagged, 2026-09-28 (#12)
 
-Verified on the laptop, 2026-09-28. Measurements in #12.
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-09-29. Measurements in #12.
 
 ## [0.5.1] - 2026-09-28
 
