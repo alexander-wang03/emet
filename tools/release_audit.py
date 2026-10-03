@@ -52,8 +52,8 @@ Usage:
     python tools/release_audit.py --pr 12
     python tools/release_audit.py --pr 12 --merge
     python tools/release_audit.py --pr 12 --ci
-Exit:   0 nothing wrong (and merged, with --merge), 1 a problem found or the
-        merge failed (each is printed).
+Exit:   0 nothing wrong (and merged, with --merge), 1 a problem found, GitHub
+        not answering, or the merge failed (each is printed).
 """
 
 from __future__ import annotations
@@ -93,6 +93,24 @@ ATTRIBUTION = re.compile(
     re.IGNORECASE,
 )
 
+#: What gh prints when the thing asked for does not exist: `gh api` on a 404,
+#: `gh release view` with no release, `gh pr view` with no such pull request
+#: (gh 2.100.0, verified 2026-10-01). Any other failure raises Unanswered.
+#: Read as absence, a single HTTP 502 fails the required check under the
+#: wrong cause, and passes a patch with its release page unread.
+#: `gh release view` prints its text after some 502s too; `page()` checks it.
+NOT_FOUND = ("(HTTP 404)", "release not found", "Could not resolve to a PullRequest")
+
+
+class Unanswered(Exception):
+    """A question the audit asked got no answer it can use: a gh call failed
+    without gh's not-found text, `gh release view` found no release that the
+    list of releases has, or `git ls-remote` failed. When GitHub did not
+    answer (a 502, a timeout, no network), a second run can get through; a
+    403, or a --json field this gh does not know, fails the same way every
+    run. Nothing is known about the thing asked about, so the run stops
+    there, with a message that names the cause."""
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -114,16 +132,20 @@ class Audit:
         #: The commit the pre-merge check read, which the merge is pinned to.
         self.head = ""
         self.repo = ""
+        #: The tags in GitHub's list of releases, read once by `listed()`.
+        self.release_tags: set[str] | None = None
 
     # ----------------------------------------------------------- plumbing
 
     def run(self, *args: str) -> tuple[int, str]:
-        """The exit code, and stdout; on a failure stdout and stderr both,
-        since `gh pr checks` prints its table to stdout and exits non-zero."""
+        """The exit code, and stdout; on a failure stderr, then stdout. Stdout
+        is kept since `gh pr checks` prints its table there and exits
+        non-zero. Stderr goes first so the first line is the tool's own:
+        `gh api` prints the response body to stdout, a 502's included."""
         result = subprocess.run(args, cwd=self.root, capture_output=True, text=True, encoding="utf-8")
         if result.returncode == 0:
             return 0, result.stdout.strip()
-        return result.returncode, (result.stdout.strip() + "\n" + result.stderr.strip()).strip()
+        return result.returncode, (result.stderr.strip() + "\n" + result.stdout.strip()).strip()
 
     def git(self, *args: str) -> str:
         code, out = self.run("git", *args)
@@ -132,11 +154,14 @@ class Audit:
         return out
 
     def gh(self, *args: str) -> object | None:
-        """The JSON `gh` prints, or None when the thing asked for does not exist."""
+        """The JSON `gh` prints, or None when gh says the thing asked for does
+        not exist (`NOT_FOUND`). Any other failure raises Unanswered."""
         code, out = self.run("gh", *args)
-        if code != 0:
+        if code == 0:
+            return json.loads(out) if out else None
+        if any(text in out for text in NOT_FOUND):
             return None
-        return json.loads(out) if out else None
+        raise Unanswered(_first_line(out) or f"gh {args[0]} exited {code}")
 
     def problem(self, version: str, msg: str) -> None:
         self.problems.append(f"{version}: {msg}")
@@ -249,6 +274,12 @@ class Audit:
 
     def page(self, version: str, tag: str, entry: Entry, numbers: tuple[int, ...], *, newest: bool) -> None:
         release = self.gh("release", "view", tag, "--json", "name,body,isPrerelease,isDraft")
+        # `gh release view` asks for the published release and for a draft at
+        # once, and says "release not found" when one lookup says so and the
+        # other gets a 502 (gh 2.100.0, verified 2026-10-01). Read as absence,
+        # a minor's page is reported missing and a patch's page passes unread.
+        if release is None and self.listed(tag):
+            raise Unanswered(f"gh release view {tag} found no release, and the list of releases has one")
         if numbers[2] != 0:
             if release is not None:
                 self.problem(version, "a patch has a release page; a patch's tag is its release")
@@ -269,6 +300,16 @@ class Audit:
         if release.get("isDraft"):
             self.problem(version, "the release page is still a draft")
         self.attribution(version, "the release page", release.get("body") or "")
+
+    def listed(self, tag: str) -> bool:
+        """Whether GitHub's list of releases has one for `tag`, a draft
+        included when the token can push. The list is one request, made at
+        most once a run, and holds up to a hundred releases; the project
+        makes one per minor and major."""
+        if self.release_tags is None:
+            releases = self.gh("api", f"repos/{self.repo}/releases?per_page=100") or []
+            self.release_tags = {r.get("tag_name") for r in releases if isinstance(r, dict)}
+        return tag in self.release_tags
 
     def pull_request(self, version: str, entry: Entry, sha: str) -> None:
         cited = sorted(set(CITED.findall(entry.message)), key=int)
@@ -294,7 +335,8 @@ class Audit:
 
     def before_merge(self, number: str, *, ci: bool = False) -> str | None:
         """Pull request N, checked before its merge. Returns the title it
-        merges under, or None when it cannot be read.
+        merges under, or None when it cannot be read; raises Unanswered when
+        GitHub does not answer.
 
         With `ci`, only what holds on every push: the bump, the title, the
         cited pull request, no attribution, not yet tagged. The day, the
@@ -347,7 +389,12 @@ class Audit:
         if pr.get("title") != title:
             self.problem(version, f"#{number} is titled {pr.get('title')!r}, not {title!r}")
         self.attribution(version, f"#{number}'s body", pr.get("body") or "")
-        code, _ = self.run("git", "ls-remote", "--exit-code", "--tags", "origin", f"v{version}")
+        # `--exit-code` exits 2 when origin has no such tag. Any other failure
+        # is origin not answering, and read as "not tagged" it passes this
+        # question without an answer.
+        code, out = self.run("git", "ls-remote", "--exit-code", "--tags", "origin", f"v{version}")
+        if code not in (0, 2):
+            raise Unanswered(_first_line(out) or f"git ls-remote exited {code}")
         if code == 0 or self.git("tag", "--list", f"v{version}"):
             self.problem(version, f"v{version} already exists")
         if ci:
@@ -372,7 +419,16 @@ class Audit:
         self.head = head
         code, out = self.run("gh", "pr", "checks", number)
         if code != 0:
-            waiting = [line for line in out.splitlines() if "\tpass\t" not in line and line.strip()]
+            # gh prints a row per check, its fields split by tabs, and an
+            # error as one line with no tab. A failure with no row, other than
+            # gh's "no checks reported", is GitHub not answering: read as a red
+            # check, it sends the reader to a page that is green. Counting tabs
+            # would drop the last row, since run() strips the tab before its
+            # empty description.
+            rows = [line for line in out.splitlines() if "\t" in line]
+            if not rows and "no checks reported" not in out:
+                raise Unanswered(_first_line(out) or f"gh pr checks exited {code}")
+            waiting = [line for line in rows if "\tpass\t" not in line] or [_first_line(out)]
             self.problem(version, "the checks are not all green: " + "; ".join(waiting[:4]))
         return title
 
@@ -413,6 +469,10 @@ def _numbers(version: str) -> tuple[int, ...]:
     return tuple(int(n) for n in version.split(".") if n.isdigit())
 
 
+def _first_line(text: str) -> str:
+    return next((line.strip() for line in text.splitlines() if line.strip()), "")
+
+
 def _cleaned(message: str) -> str:
     """A message as git's default cleanup leaves it: `#` lines dropped and
     runs of blank lines folded to one."""
@@ -448,12 +508,22 @@ def main(argv: list[str]) -> int:
     if not audit.start():
         return 1
     title: str | None = None
-    if args.pr:
-        title = audit.before_merge(args.pr, ci=args.ci)
-        scope = f"#{args.pr} " + ("as CI can see it" if args.ci else "before its merge")
-    else:
-        audit.history()
-        scope = f"every version on {args.ref} since {'.'.join(map(str, FIRST))}"
+    try:
+        if args.pr:
+            title = audit.before_merge(args.pr, ci=args.ci)
+            scope = f"#{args.pr} " + ("as CI can see it" if args.ci else "before its merge")
+        else:
+            audit.history()
+            scope = f"every version on {args.ref} since {'.'.join(map(str, FIRST))}"
+    except Unanswered as unanswered:
+        # This line alone: the problems found before it are part of an
+        # audit, and a count of them would read as the whole.
+        print(
+            f"release-audit: GitHub did not answer ({unanswered}); run it again"
+            + (". Nothing was merged." if args.merge else ""),
+            file=sys.stderr,
+        )
+        return 1
 
     for note in audit.pending:
         print(f"release-audit: pending, {note}")
