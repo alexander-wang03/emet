@@ -20,6 +20,25 @@ def stats(frame_ms: float = 80.0) -> SessionStats:
 # ------------------------------------------------------------------ counting
 
 
+def test_the_name_cut_line_counts_the_handovers_and_the_cuts_that_moved():
+    """The rule that leaves the end of the name out says nothing per wake,
+    so the footer is where a run on the body shows it at work."""
+    s = stats()
+    assert "name cut" not in s.report(live=False), "nothing handed over, no line"
+    s.name_cut_ms.extend([0.0, 130.0, 0.0, 90.0])
+    line = next(row for row in s.report(live=False).splitlines() if "name cut" in row)
+    assert "2 of 4 handover(s)" in line
+    assert "mean 110 ms" in line and "max 130" in line
+
+
+def test_a_name_cut_line_with_nothing_moved_says_so():
+    s = stats()
+    s.name_cut_ms.extend([0.0, 0.0])
+    line = next(row for row in s.report(live=False).splitlines() if "name cut" in row)
+    assert "0 of 2 handover(s)" in line
+    assert "mean" not in line
+
+
 def test_a_fresh_run_claims_nothing():
     s = stats()
     assert s.frames == 0

@@ -56,6 +56,14 @@ prints as `said`. With `--stats`, an `stt final` line reports the wait from
 the endpoint to the final transcript, which is the first latency a person
 feels.
 
+A wake fires a little after the phrase ends, so the transcriber is first
+handed the audio in between, which holds the start of a question said in
+the same breath as the name. When the end of the name is still sounding at
+the start of that audio and fades before the question begins, it is written
+as silence. With `--stats`, a `name cut` line counts those handovers and how
+many had the end of the name cut from their start, with the mean and longest
+cut in milliseconds.
+
 Keys are read from a file rather than exported in every shell: put
 `NAME=value` lines in `~/.config/emet/keys.env` (or `/etc/emet/keys.env` for
 an installed robot, or a file named with `--keys`), `chmod 600` it, and

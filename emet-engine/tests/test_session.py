@@ -645,16 +645,18 @@ def test_what_the_wake_engine_heard_after_the_phrase_reaches_the_transcriber(tmp
 
 def test_an_engine_that_reports_no_lag_hands_over_nothing_before_the_wake(tmp_path):
     """The phrase is never handed over: with no lag the transcriber starts
-    at the frame after the wake, as in 0.5.0."""
+    at the frame after the wake, as in 0.5.0, and the footer has no
+    handover to count."""
     pcm = frame() + frame(PHRASE.encode()) + frame(b"time") + frame(b"is it") + frame() * 20
     session = transcribing(tmp_path, "z.wav", pcm)
 
     async def scenario():
         async with session:
-            return [u async for _, u in session.turns()]
+            return [u async for _, u in session.turns()], session.stats.name_cut_ms
 
-    (utterance,) = run(scenario())
+    (utterance,), counted = run(scenario())
     assert utterance.transcript is not None and utterance.transcript.text == "time is it"
+    assert counted == [], "nothing handed over, so nothing for the footer to count"
 
 
 def test_the_audio_before_the_wake_is_cut_where_the_phrase_ended():
@@ -750,10 +752,11 @@ def test_a_vowel_that_dies_away_is_cut_where_it_has_fallen_far_enough():
 def test_a_dip_in_the_fading_name_does_not_stop_the_search():
     """The sound of "-met" can dip for one window as it fades and come
     back: before the cut that lost "What's" it came back 3.1 dB above its
-    quietest window, and before others up to 3.6 dB (laptop, 2026-10-02).
-    A stop that low would leave the end of the name in front of the
-    question."""
-    fading = square(8000, 20) + square(5250, 10) + square(8000, 20)  # back up 3.7 dB
+    quietest window, and before the other cuts that move on five
+    recordings it rose up to 5.3 dB above the quietest window before it
+    (laptop, 2026-10-01 to 03). A stop that low would leave the end of
+    the name in front of the question."""
+    fading = square(8000, 20) + square(4300, 10) + square(8000, 20)  # back up 5.4 dB
     pause, question = square(50, 100), square(6000, 50)
     out = handed_over(square(8000, 40), fading + pause + question)
     assert out == bytes(2 * 640 + len(fading)) + pause + question
@@ -765,19 +768,24 @@ def test_a_question_that_rises_out_of_the_fade_stops_the_search():
     measured from the quietest window so far, so the search stops there.
     Measured from the start, or from the window before, it goes unseen,
     and the closure of a stop inside the question is taken for the end of
-    the name."""
-    after = (square(8000, 20) + square(1600, 30) + square(2400, 10) + square(3600, 10)
-             + square(5000, 50) + square(50, 40) + square(6000, 40))
-    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+    the name. The room's hiss in every window holds the first difference
+    flat, so only the level stop sees the rise."""
+    after = (mix(tone(8000, 200, 20), hiss(20)) + mix(tone(1600, 200, 30), hiss(30))
+             + mix(tone(2400, 200, 10), hiss(10)) + mix(tone(3600, 200, 10), hiss(10))
+             + mix(tone(5000, 200, 50), hiss(50)) + hiss(40) + mix(tone(6000, 200, 40), hiss(40)))
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
 
 
 def test_a_rise_of_7_db_out_of_the_fade_ends_the_search():
     """A question that starts softly rises only a few dB out of the fading
     name. 7 dB above the quietest window ends the search; with the line
     any higher, the closure after it would be taken for the end of the
-    name and the question's first syllable written as silence."""
-    after = square(8000, 20) + square(1600, 30) + square(3600, 100) + square(50, 30) + square(6000, 20)
-    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+    name and the question's first syllable written as silence. The room's
+    hiss in every window holds the first difference flat, so only the
+    level stop sees the rise."""
+    after = (mix(tone(8000, 200, 20), hiss(20)) + mix(tone(1600, 200, 30), hiss(30))
+             + mix(tone(3640, 200, 100), hiss(100)) + hiss(30) + mix(tone(6000, 200, 20), hiss(20)))
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
 
 
 @pytest.mark.parametrize("louder", ["first", "second"])
@@ -821,6 +829,217 @@ def test_a_tail_cut_short_by_the_longest_lag_is_never_moved():
     after = square(8000, 80) + square(50, 70) + square(6000, 250) + square(190, 80) + square(6000, 320)
     tail = after[-2 * 10240:]  # 640 ms, eight whole frames: nothing to pad
     assert handed_over(square(8000, 160), after) == tail
+
+
+def test_a_tail_cut_short_by_what_was_kept_is_never_moved():
+    """The loop keeps what the wake engine heard since the start or the last
+    wake, and a lag reported past that puts the start of what it kept after
+    the phrase was said to end, inside whatever followed. Measured there,
+    the pause would pass for the end of the name and the word before it
+    would be written as silence. pocketsphinx and the mock report only
+    audio they heard since their last reset, which the loop makes at the
+    wake where it clears what it kept, so neither reports such a lag; the
+    rule is for a wake engine that does."""
+    from emet_engine.session import said_with_the_name
+    from emet_sdk.types import AudioFormat
+
+    kept = square(8000, 80) + square(50, 80) + square(6000, 80)
+    frames = [kept[i:i + FRAME_BYTES] for i in range(0, len(kept), FRAME_BYTES)]
+    assert b"".join(said_with_the_name(400.0, frames, AudioFormat())) == kept
+
+
+def tone(amplitude: int, hz: float, ms: float) -> bytes:
+    """A sine whose RMS is the amplitude, at 16 kHz: 200 Hz for a vowel's
+    voicing, 6 kHz for the hiss of an "s". Every use fills its 10 ms
+    windows with whole periods."""
+    import math
+    from array import array
+
+    samples = int(16000 * ms / 1000)
+    peak = amplitude * math.sqrt(2.0)
+    return array("h", [round(peak * math.sin(2 * math.pi * hz * i / 16000)) for i in range(samples)]).tobytes()
+
+
+def mix(*sounds: bytes) -> bytes:
+    """Sounds of one length, heard together."""
+    from array import array
+
+    parts = []
+    for sound in sounds:
+        samples = array("h")
+        samples.frombytes(sound)
+        parts.append(samples)
+    assert len({len(p) for p in parts}) == 1
+    return array("h", [sum(v) for v in zip(*parts)]).tobytes()
+
+
+def hiss(ms: float) -> bytes:
+    """A room's steady hiss, the same in every window."""
+    return square(300, ms)
+
+
+def test_an_s_said_straight_on_from_the_name_is_handed_over_whole():
+    """In "hey emet, stop" said in one breath, the "s" runs on from the
+    fading vowel with no pause and no rise in level, and the closure of the
+    "t" behind it falls far enough to pass for the end of the name. The
+    first difference rises 26 dB at the "s" here. On the reference body,
+    with the phrase's end placed 15 to 79 ms earlier, the level rule alone
+    wrote some or all of the hiss of an "s" as silence at 37 placements,
+    and at each the first difference had risen 13 to 21 dB (laptop
+    replays, 2026-10-02 and 03)."""
+    vowel, s = tone(8000, 200, 20) + tone(3000, 200, 30), tone(2500, 6000, 60)
+    after = vowel + s + square(50, 40) + tone(6000, 200, 50)
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_rise_of_6_1_db_in_the_first_difference_ends_the_search():
+    """A fricative can start faint under the fading vowel and add only
+    hiss: 6.1 dB up in the first difference with the level flat ends the
+    search. The narrowest such rise on the reference body was 6.13 dB, in
+    front of the "s" of one "stop" with the phrase end placed 44 ms
+    earlier, where the level rule's cut fell at the end of a 1 ms burst
+    before its hiss; the "h" of a "how" in the soak recording rose 6.2 to
+    7.7 dB where the cut fell past its start by eye (laptop replays over
+    every phase of a 1 ms shift, 2026-10-02 and 03). With the line at
+    6.2 dB, that cut would go through, and so would three cuts 15 ms
+    into that "h"."""
+    faint = mix(tone(2000, 200, 10), tone(149, 6000, 10))
+    after = (tone(8000, 200, 20) + tone(2000, 200, 30) + faint + tone(2000, 200, 20)
+             + square(50, 40) + tone(6000, 200, 80))
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_fading_name_that_brightens_5_db_is_still_cut():
+    """The end of "emet" can brighten a little as it fades: before every
+    cut the level rule made short of the question's first sound, on five
+    recordings with the phrase end placed up to 100 ms later or 70 ms
+    earlier, the first difference came back at most 4.5 dB above the
+    lowest before it at the window phase replayed (laptop, 2026-10-02).
+    At 5 dB the cut still moves to the pause."""
+    faint = mix(tone(2000, 200, 10), tone(125, 6000, 10))
+    vowel = tone(8000, 200, 20) + tone(2000, 200, 30) + faint + tone(2000, 200, 20)
+    pause, question = square(50, 40), tone(6000, 200, 80)
+    out = handed_over(tone(8000, 200, 40), vowel + pause + question)
+    assert out == bytes(2 * 640 + len(vowel)) + pause + question
+
+
+def test_a_quiet_s_at_the_line_is_never_the_cut():
+    """An "s" can start late in one window and be quiet enough to reach the
+    line in the next. Read after the fall, that window would be the cut and
+    the start of the "s" in the window before it written as silence: on the
+    reference body one "s" dipped to the line 14 ms after it began, and a
+    first-difference test read after the fall let the cut through there
+    once that "s" was 1 to 5 dB quieter (laptop, 2026-10-02). Read before
+    the fall, the rise stops the search."""
+    onset = mix(tone(1000, 200, 10), bytes(2 * 128) + tone(700, 6000, 2), hiss(10))
+    after = (mix(tone(8000, 200, 20), hiss(20)) + mix(tone(1000, 200, 30), hiss(30)) + onset
+             + mix(tone(700, 6000, 50), hiss(50)) + hiss(40) + mix(tone(6000, 200, 50), hiss(50)))
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
+
+
+def test_the_rooms_own_hiss_is_never_a_rise():
+    """A room's steady hiss is in every window, the name's included, so
+    measured from the lowest first difference before it, it never reads as
+    a new sound: here the hiss is louder in the first difference than the
+    fading vowel, and the cut still moves to the pause."""
+    vowel = mix(tone(8000, 200, 30), hiss(30)) + mix(tone(2500, 200, 40), hiss(40))
+    pause, question = hiss(100), mix(tone(6000, 200, 30), hiss(30))
+    out = handed_over(tone(8000, 200, 40), vowel + pause + question)
+    assert out == bytes(2 * 640 + len(vowel)) + pause + question
+
+
+def test_a_rise_in_the_first_difference_is_measured_from_the_lowest_before_it():
+    """The window quietest by level need not be the one with the lowest
+    first difference: a faint hiss can lift the second while the level
+    falls. Here a sound that brightens 8 dB above the lowest first
+    difference so far, and only 4 dB above that of the quietest window,
+    stops the search; measured from the quietest window's, it would not,
+    and the closure after it would write it as silence."""
+    low = tone(1300, 200, 10)
+    quietest = mix(tone(1033, 200, 10), tone(77, 6000, 10))
+    brighter = mix(tone(1636, 200, 10), tone(123, 6000, 10))
+    after = tone(3277, 200, 20) + low + quietest + brighter + square(50, 40) + tone(6000, 200, 30)
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_voiced_sound_rising_out_of_the_fade_in_a_hissing_room_ends_the_search():
+    """The level stop still matters where the first difference cannot see
+    the rise: a voiced sound rising 7 dB over two windows out of the fading
+    name, with the room's hiss in every window holding the first difference
+    flat. Missed, the hissing pause after it would pass for the end of the
+    name."""
+    after = (mix(tone(8000, 200, 20), hiss(20)) + mix(tone(1500, 200, 10), hiss(10))
+             + mix(tone(850, 200, 10), hiss(10)) + mix(tone(1315, 200, 10), hiss(10))
+             + mix(tone(1997, 200, 10), hiss(10)) + hiss(40) + mix(tone(6000, 200, 20), hiss(20)))
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
+
+
+def name_cut_after(tmp_path, name: str, handed: bytes) -> list[float]:
+    """The footer's record of the cut, for one wake whose engine fires a
+    frame after the phrase and hands `handed` over."""
+    pcm = frame() + frame(PHRASE.encode()) + handed + frame(b"time") + frame(b"is it") + frame() * 20
+    manifest = body(write_wav(tmp_path / name, pcm), lag_frames=1)
+    session = transcribing(tmp_path, name, pcm, manifest=manifest)
+
+    async def scenario():
+        async with session:
+            [u async for _, u in session.turns()]
+            return session.stats.name_cut_ms
+
+    return run(scenario())
+
+
+def test_the_stats_count_how_much_of_the_name_was_left_out(tmp_path):
+    """Nothing on the console says the cut moved, so `--stats` counts it:
+    30 ms of the name's tail left out of one handover, none out of a
+    handover whose words fill it."""
+    assert name_cut_after(tmp_path, "cut.wav", square(8000, 30) + square(50, 50)) == [30.0]
+    assert name_cut_after(tmp_path, "whole.wav", b"what".ljust(FRAME_BYTES, b" ")) == [0.0]
+
+
+def test_the_footer_counts_only_the_end_of_the_name_written_as_silence(tmp_path):
+    """pocketsphinx reports its lag in 10 ms steps and the loop hands over
+    whole 80 ms frames, so wherever the lag is not a whole number of
+    frames the first frame handed over starts with the end of the phrase
+    written as silence: on 28 of the 29 wakes of four recordings (laptop
+    replays, 2026-10-03). Counted with the cut, that silence would have
+    the footer read 28 of the 29 as moved, where the cut moved 7. Here
+    the lag is 130 ms: 30 ms of the phrase, then the 50 ms of the name
+    the cut leaves out."""
+    from dataclasses import replace
+
+    vowel, pause, question = square(8000, 50), square(50, 40), square(6000, 40)
+    pcm = frame() + frame(PHRASE.encode()) + square(8000, 30) + vowel + pause + question + frame() * 20
+    manifest = body(write_wav(tmp_path / "p.wav", pcm), lag_frames=2)
+    session = transcribing(tmp_path, "p.wav", pcm, manifest=manifest)
+
+    async def scenario():
+        async with session:
+            whole_frames = session._wake.process
+
+            async def in_10_ms_steps(chunk):  # the mock's lag is whole frames, which leave no pad
+                event = await whole_frames(chunk)
+                return None if event is None else replace(event, lag_ms=130.0)
+
+            session._wake.process = in_10_ms_steps
+            [u async for _, u in session.turns()]
+            return session.stats.name_cut_ms
+
+    assert run(scenario()) == [50.0]
+
+
+def test_the_count_is_the_end_of_the_name_alone():
+    """The footer counts what the cut took for the end of the name. The
+    phrase written as silence to fill the first frame is the wake engine's
+    own cut: counted, every wake whose lag is not whole frames would read
+    as a cut that moved, whether the cut moved or not."""
+    from emet_engine.session import cut_before_the_question
+    from emet_sdk.types import AudioFormat
+
+    vowel, pause, question = square(8000, 80), square(50, 100), square(6000, 20)
+    for heard, name in [(square(8000, 40) + vowel + pause + question, len(vowel) // 2), (square(8000, 240), 0)]:
+        frames = [heard[i:i + FRAME_BYTES] for i in range(0, len(heard), FRAME_BYTES)]
+        assert cut_before_the_question(200.0, frames, AudioFormat())[1] == name
 
 
 def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):

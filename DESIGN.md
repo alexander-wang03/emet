@@ -1122,11 +1122,14 @@ breath has started the question inside that moment. The wake engine reports how
 late it fired (`WakeEvent.lag_ms`), and the engine hands the transcriber that
 much of the audio before the wake, with the phrase itself written as silence.
 Where the wake engine says the phrase ended can be early, with the last vowel
-of the name still sounding; when that sound falls 20 dB before anything new
-starts, it is written as silence too. In one of ten one-breath "hey emet,
-what's two plus two" recorded on the reference body, 80 ms of "emet" in front
-of "what's" cost that word on all three replays at that cut (laptop,
-2026-10-01 and 02).
+of the name still sounding. When that sound falls 20 dB before anything new
+starts, it is written as silence too. A rise of 6 dB in level counts as
+something new, and so does a rise of 6 dB in the first difference (each sample
+less the one before, which weights high frequencies up): an "s" said straight
+on from the name shows the second when its level does not. In one of ten
+one-breath "hey emet, what's two plus two" recorded on the reference body,
+80 ms of "emet" in front of "what's" cost that word on all three replays at
+that cut (laptop, 2026-10-01 and 02).
 While the energy detector has not seen speech start, the endpointer can also
 see the words so far, so an answer said entirely inside the listening click's
 deaf window, or before the wake fired, ends the turn one patience later rather
