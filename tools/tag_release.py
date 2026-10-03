@@ -16,10 +16,20 @@ check here is a mistake that has been made or nearly made:
     version drift    the tag says 0.3, a pyproject still says 0.2
     no entry         a version with nothing in the changelog is a tag with
                      nothing to say
+    day after        a tag made the morning after its merge is dated a day
+                     after its commit: the history audit fails every later
+                     pull request, and no entry date can fix it
 
 Every merge to master is one version, so this runs after every merge. The
 tag message is the version's section of CHANGELOG.md: the summary line
 first, as `X.Y.Z: Summary`, then the entries.
+
+The tag carries its commit's day, because `release_audit.py` holds the
+entry, the squash commit and the tag to one day. Made on another day, it
+takes the commit's time through GIT_COMMITTER_DATE, and the day is read
+back from the tag before anything is pushed. An entry dated another day
+than its commit gets a warning and the command that moves it, and the tag
+goes ahead: the tag is right, and the entry moves in a pull request.
 
 Nothing here bypasses the person: it runs `git tag` and, only with `--push`,
 `git push`. It never commits and never touches the index.
@@ -34,7 +44,10 @@ Exit:   0 tagged (or dry run printed), 1 a check failed.
 from __future__ import annotations
 
 import argparse
+import datetime
+import os
 import re
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -84,6 +97,16 @@ def changelog_section(changelog: Path, version: str) -> tuple[str, str] | None:
     summary = body[0].strip().rstrip(".")
     rest = "\n".join(body[1:]).strip("\n")
     return summary, rest
+
+
+def entry_date(changelog: Path, version: str) -> str | None:
+    """The date on one version's heading, `## [X.Y.Z] - YYYY-MM-DD`, or None."""
+    heading = re.compile(r"^## \[" + re.escape(version) + r"\] - (\d{4}-\d{2}-\d{2})\s*$")
+    for line in changelog.read_text(encoding="utf-8").splitlines():
+        m = heading.match(line)
+        if m:
+            return m.group(1)
+    return None
 
 
 def tag_message(version: str, summary: str, rest: str) -> str:
@@ -169,25 +192,47 @@ def main(argv: list[str]) -> int:
             print(result.stdout, end="")
             return fail(f"{script} failed; fix that before tagging")
 
+    # The day on the tag. release_audit.py holds the entry, the squash commit
+    # and the tag to one day, and the commit's day is set when it merges, so
+    # a tag made the morning after would fail the history audit on every
+    # later pull request. Made on another day, the tag takes the commit's
+    # time: git dates a tag from GIT_COMMITTER_DATE (git-tag(1), "On
+    # Backdating Tags"). On the commit's own day git dates it now.
+    committed_at = git(root, "log", "-1", "--format=%cI")
+    committed_on = git(root, "log", "-1", "--format=%cd", "--date=short")
+    today = datetime.date.today().isoformat()
+    backdate = {"GIT_COMMITTER_DATE": committed_at} if committed_on != today else {}
+    entry_on = entry_date(changelog, version)
+
     # `verbatim`: git's default cleanup strips every line that starts with
     # `#` as a comment, which took the entry's `### Added`, `### Changed` and
     # `### Fixed` out of the v0.4.1 and v0.5.0 tags, and out of the v0.5.0
     # release page made from its tag.
     commands = [
-        ["git", "tag", "-s", "--cleanup=verbatim", tag, "-m", message],
-        ["git", "tag", "-v", tag],
+        (["git", "tag", "-s", "--cleanup=verbatim", tag, "-m", message], backdate),
+        (["git", "tag", "-v", tag], {}),
     ]
     if args.push:
-        commands.append(["git", "push", "origin", tag])
+        commands.append((["git", "push", "origin", tag], {}))
 
     print(f"tag-release: {tag} at {git(root, 'rev-parse', '--short', 'HEAD')} ({expected})")
-    for cmd in commands:
+    if backdate:
+        print(f"tag-release: merged {committed_on} and today is {today}, so the tag takes the commit's time, {committed_at}")
+    for cmd, env in commands:
         shown = " ".join(c for c in cmd if c != message) + (" <changelog entry>" if message in cmd else "")
+        shown = "".join(f"{k}={v} " for k, v in env.items()) + shown
         if args.dry_run:
             print(f"  would run: {shown}")
             continue
         print(f"  {shown}")
-        result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, encoding="utf-8")
+        # The script alone dates the tag. On the commit's own day it sets no
+        # GIT_COMMITTER_DATE, so one left exported in the shell would date the
+        # tag instead; set to another day, it would fail the read-back on
+        # every rerun.
+        inherited = {k: v for k, v in os.environ.items() if k != "GIT_COMMITTER_DATE"}
+        result = subprocess.run(
+            cmd, cwd=root, capture_output=True, text=True, encoding="utf-8", env={**inherited, **env}
+        )
         if result.stdout.strip():
             print("    " + result.stdout.strip().replace("\n", "\n    "))
         if result.returncode != 0:
@@ -195,17 +240,38 @@ def main(argv: list[str]) -> int:
             return fail(f"{shown} failed")
         if result.stderr.strip() and cmd[1] == "tag" and "-v" in cmd:
             print("    " + result.stderr.strip().replace("\n", "\n    "))
+        # The day the audit will read is the one git wrote. A tag made across
+        # midnight, or a variable that never reached git, stops here, before
+        # the push.
+        if cmd[1:3] == ["tag", "-s"]:
+            dated = git(root, "for-each-ref", f"refs/tags/{tag}", "--format=%(taggerdate:short)")
+            if dated != committed_on:
+                return fail(
+                    f"{tag} is dated {dated} and its commit {committed_on}, which the history audit "
+                    f"refuses. Nothing was pushed: delete it with git tag -d {tag}, then run this again"
+                )
 
     if not args.push and not args.dry_run:
         print(f"tag-release: made and verified. Push it with: git push origin {tag}")
     minor_or_major = version.endswith(".0")
     if minor_or_major:
+        # gh's --notes-from-tag fills only the page's body. Without --title the
+        # page has no name, and release_audit.py fails it on every run until it
+        # is edited (gh 2.100.0, laptop, 2026-10-02). Quoted for the shell: in
+        # double quotes a backtick in the summary runs as a command.
         print(
             f"tag-release: a minor or major, so it gets a GitHub release too: "
-            f"gh release create {tag} --verify-tag --prerelease --notes-from-tag"
+            f"gh release create {tag} --verify-tag --prerelease --title {shlex.quote(expected)} --notes-from-tag"
         )
     else:
         print("tag-release: a patch. The tag is the release; no GitHub release page for it")
+    if entry_on != committed_on:
+        print(
+            f"tag-release: the {version} entry is dated {entry_on} and its commit {committed_on}. The tag keeps "
+            f"the commit's day; the history audit fails this tag's run, and every pull request until one "
+            f"moves the entry to it:\n"
+            f"  fix: sed -i 's/^## \\[{version}\\] - {entry_on}/## [{version}] - {committed_on}/' CHANGELOG.md"
+        )
     return 0
 
 

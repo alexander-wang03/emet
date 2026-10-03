@@ -5,11 +5,15 @@
 #
 #   bash tools/soak_prompts.sh & arecord -D plughw:3,0 -f S16_LE -r 16000 -c 1 -d 600 ~/soak-10min.wav
 #
-# 58 prompts, one every ten seconds, the cadence of the x86 baseline. Every
-# sixth prompt is a decoy that must not wake the robot, which fixes the tally:
-# 49 wake phrases and 9 decoys. In the replay report, wakes above 49 are false
-# fires and wakes below 49 are misses. Speak at a normal distance and volume,
-# and leave the room's ordinary noise in.
+# 58 prompts, one every ten seconds after a five-second lead, the cadence of
+# the x86 baseline. Every sixth prompt is a decoy that must not wake the
+# robot, which fixes the tally: 49 wake phrases and 9 decoys. In the replay
+# report, wakes above 49 are false fires and wakes below 49 are misses. Speak
+# at a normal distance and volume, and leave the room's ordinary noise in.
+#
+# The lead gives a replay 5 s of room before the first phrase, which every
+# clip made for --replay needs: the wake decoder first updates its cepstral
+# mean about 3 s in. It was 3 s until 0.5.3.
 #
 # SOAK_INTERVAL and SOAK_LEAD (seconds) exist so the script can be checked
 # quickly without waiting ten minutes.
@@ -17,7 +21,7 @@
 set -u
 
 INTERVAL="${SOAK_INTERVAL:-10}"
-LEAD="${SOAK_LEAD:-3}"
+LEAD="${SOAK_LEAD:-5}"
 COUNT=58
 
 SENTENCES=(

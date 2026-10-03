@@ -105,6 +105,13 @@ class SessionStats:
     #: every turn rather than guessed from a vendor's page.
     final_ms: list[float] = field(default_factory=list)
 
+    #: Per wake whose words said with the name went to the transcriber: how
+    #: much of the start of that audio was taken for the end of the name and
+    #: written as silence, in milliseconds, 0 when the cut stayed where the
+    #: wake engine put it. The console says nothing per wake, so this is
+    #: where a run on the body shows whether the cut moved.
+    name_cut_ms: list[float] = field(default_factory=list)
+
     #: Per answered turn: milliseconds from the final transcript to the first
     #: word of the reply, and to the whole reply. The first is what a person
     #: waits in silence; the second is what a speaker would need to keep up.
@@ -262,6 +269,13 @@ class SessionStats:
                 f"  stt final     mean {sum(self.final_ms) / len(self.final_ms):.0f} ms   "
                 f"max {max(self.final_ms):.0f}   ({len(self.final_ms)} turn(s), "
                 f"endpoint to final transcript)"
+            )
+        if self.name_cut_ms:
+            moved = [ms for ms in self.name_cut_ms if ms > 0]
+            detail = f"   mean {sum(moved) / len(moved):.0f} ms   max {max(moved):.0f}" if moved else ""
+            lines.append(
+                f"  name cut      {len(moved)} of {len(self.name_cut_ms)} handover(s){detail}   "
+                f"(the end of the name written as silence)"
             )
         if self.reply_first_ms:
             lines.append(
