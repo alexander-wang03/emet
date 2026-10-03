@@ -257,6 +257,8 @@ from emet_engine.turn import looks_incomplete  # noqa: E402
         ("Hmm, um", True),
         ("It costs 3.5 dollars", False),
         ("Thank you", False),
+        ("No", False),
+        ("The answer is no", False),
         ('He said "and', True),
     ],
 )
