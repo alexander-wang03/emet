@@ -626,7 +626,11 @@ def test_what_the_wake_engine_heard_after_the_phrase_reaches_the_transcriber(tmp
     is it" in one breath lost "what" on the reference body 11 times in 12:
     the transcriber started at the frame after the wake. The engine now
     hands it the frames the wake engine reports it had already heard."""
-    pcm = frame() + frame(PHRASE.encode()) + frame(b"what") + frame(b"time") + frame(b"is it") + frame() * 20
+    # The word fills its frame, as speech does. Four bytes and then digital
+    # silence would sound like the end of the name falling quiet, which the
+    # cut leaves out (`past_the_name`).
+    said = b"what".ljust(FRAME_BYTES, b" ")
+    pcm = frame() + frame(PHRASE.encode()) + said + frame(b"time") + frame(b"is it") + frame() * 20
     manifest = body(write_wav(tmp_path / "w.wav", pcm), lag_frames=1)
     session = transcribing(tmp_path, "w.wav", pcm, manifest=manifest)
 
@@ -671,6 +675,152 @@ def test_the_audio_before_the_wake_is_cut_where_the_phrase_ended():
     assert said_with_the_name(0.0, [b"B" * FRAME_BYTES], fmt) == []
     assert said_with_the_name(80.0, [], fmt) == []
     assert said_with_the_name(5000.0, [b"B" * FRAME_BYTES], fmt) == [b"B" * FRAME_BYTES], "no more than was heard"
+
+
+def square(amplitude: int, ms: float) -> bytes:
+    """A square wave whose RMS is its amplitude, at 16 kHz."""
+    from array import array
+
+    samples = int(16000 * ms / 1000)
+    return array("h", [amplitude if i % 2 else -amplitude for i in range(samples)]).tobytes()
+
+
+def handed_over(phrase: bytes, after: bytes) -> bytes:
+    """What said_with_the_name hands over when the wake engine heard
+    `phrase` and then `after`, and fired at the end of `after`."""
+    from emet_engine.session import said_with_the_name
+    from emet_sdk.types import AudioFormat
+
+    heard = phrase + after
+    assert len(heard) % FRAME_BYTES == 0, "whole frames, as the loop keeps them"
+    frames = [heard[i:i + FRAME_BYTES] for i in range(0, len(heard), FRAME_BYTES)]
+    lag_ms = len(after) / 2 / 16000 * 1000
+    return b"".join(said_with_the_name(lag_ms, frames, AudioFormat()))
+
+
+def test_the_end_of_the_name_is_left_out_when_it_falls_quiet_first():
+    """The wake engine can say the phrase ended while the vowel of "-met"
+    still sounds. When that sound falls quiet before the question starts,
+    the cut moves to where it fell: Deepgram dropped "What's" behind 80 ms
+    of the vowel on all three replays at that cut, of a take recorded on
+    the reference body (laptop replays, 2026-10-01 and 02)."""
+    vowel, pause, question = square(8000, 80), square(50, 100), square(6000, 20)
+    out = handed_over(square(8000, 40), vowel + pause + question)
+    assert out == bytes(2 * 640 + len(vowel)) + pause + question
+
+
+def test_a_question_that_rises_out_of_the_name_is_handed_over_whole():
+    """No fall, no move: the question rises out of the end of "emet" with
+    nothing 20 dB down in the handover, so the cut stays where the wake
+    engine put it and the question's first sound is handed over."""
+    after = square(3000, 30) + square(8000, 170)
+    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_quiet_moment_after_a_rise_is_never_taken_for_the_end_of_the_name():
+    """The closure of a stop inside the question is as quiet as a pause.
+    Once something new has started, nothing after it is cut."""
+    after = square(300, 30) + square(8000, 50) + square(5, 40) + square(8000, 80)
+    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_fall_short_of_the_threshold_moves_nothing():
+    """A vowel that fades by less than the threshold is left as it is."""
+    from emet_engine.session import NAME_TAIL_DROP_DB
+
+    assert NAME_TAIL_DROP_DB == 20.0
+    after = square(8000, 80) + square(1000, 100) + square(6000, 20)  # 18 dB down
+    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_vowel_that_dies_away_is_cut_where_it_has_fallen_far_enough():
+    """A vowel dies away over several windows. On take 04 of the
+    two-plus-two recording "-met" fell from -18.5 to -38.7 dBFS over
+    130 ms, at most 8.2 dB in one window, and rose 3.1 dB on the way
+    (laptop, 2026-10-02). Measured window to window, or from the quietest
+    window so far, that fall never reaches 20 dB, and the cut stays where
+    Deepgram dropped "What's". Here no step is over 5.8 dB, one window
+    rises 3.1 dB, and the eleventh is the first 20 dB down."""
+    steps = [8000, 7000, 5600, 4500, 3500, 2600, 1900, 2720, 1400, 1000, 790]
+    after = b"".join(square(a, 10) for a in steps) + square(600, 70) + square(6000, 20)
+    cut = 10 * 320  # ten 10 ms windows of the vowel, in bytes
+    assert handed_over(square(8000, 40), after) == bytes(2 * 640 + cut) + after[cut:]
+
+
+def test_a_dip_in_the_fading_name_does_not_stop_the_search():
+    """The sound of "-met" can dip for one window as it fades and come
+    back: before the cut that lost "What's" it came back 3.1 dB above its
+    quietest window, and before others up to 3.6 dB (laptop, 2026-10-02).
+    A stop that low would leave the end of the name in front of the
+    question."""
+    fading = square(8000, 20) + square(5250, 10) + square(8000, 20)  # back up 3.7 dB
+    pause, question = square(50, 100), square(6000, 50)
+    out = handed_over(square(8000, 40), fading + pause + question)
+    assert out == bytes(2 * 640 + len(fading)) + pause + question
+
+
+def test_a_question_that_rises_out_of_the_fade_stops_the_search():
+    """A question can start while the name is still fading, a few dB a
+    window and still below where the handover started. The rise is
+    measured from the quietest window so far, so the search stops there.
+    Measured from the start, or from the window before, it goes unseen,
+    and the closure of a stop inside the question is taken for the end of
+    the name."""
+    after = (square(8000, 20) + square(1600, 30) + square(2400, 10) + square(3600, 10)
+             + square(5000, 50) + square(50, 40) + square(6000, 40))
+    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+
+
+def test_a_rise_of_7_db_out_of_the_fade_ends_the_search():
+    """A question that starts softly rises only a few dB out of the fading
+    name. 7 dB above the quietest window ends the search; with the line
+    any higher, the closure after it would be taken for the end of the
+    name and the question's first syllable written as silence."""
+    after = square(8000, 20) + square(1600, 30) + square(3600, 100) + square(50, 30) + square(6000, 20)
+    assert handed_over(square(8000, 40), after) == bytes(2 * 640) + after
+
+
+@pytest.mark.parametrize("louder", ["first", "second"])
+def test_the_fall_is_measured_from_the_louder_of_the_first_two_windows(louder):
+    """Either of the first two windows can be the louder. Measured from the
+    quieter, this 21 dB fall reads as 17 dB and leaves 80 ms of the name in
+    front of the question."""
+    vowel = {
+        "first": square(8000, 10) + square(5000, 70),
+        "second": square(5000, 10) + square(8000, 70),
+    }[louder]
+    pause, question = square(700, 100), square(6000, 20)
+    out = handed_over(square(8000, 40), vowel + pause + question)
+    assert out == bytes(2 * 640 + len(vowel)) + pause + question
+
+
+def test_the_edges_of_the_measured_audio_are_never_cut():
+    """pocketsphinx reports its lag in whole 10 ms steps; another wake
+    engine can report a shorter lag, or one that ends inside a window. A
+    tail under two windows is handed over as it is, since there is no
+    second window to measure. A part window at the end is never measured:
+    measured, the 5 ms of silence in it would write the steady vowel
+    before it as silence."""
+    from emet_engine.session import said_with_the_name
+    from emet_sdk.types import AudioFormat
+
+    vowel = square(8000, 80)
+    (only,) = said_with_the_name(10.0, [vowel], AudioFormat())
+    assert only == bytes(FRAME_BYTES - 320) + vowel[-320:]
+
+    after = square(8000, 200) + bytes(160)
+    assert handed_over(square(8000, 35), after) == bytes(2 * 560) + after
+
+
+def test_a_tail_cut_short_by_the_longest_lag_is_never_moved():
+    """A lag reported past MAX_WAKE_LAG_MS hands over only the last 640 ms,
+    which start after the phrase was said to end: here 160 ms after, inside
+    "what's". A pause between two words there is the question's own, and
+    taken for the end of the name it would cost the 240 ms of "what's" the
+    tail still holds."""
+    after = square(8000, 80) + square(50, 70) + square(6000, 250) + square(190, 80) + square(6000, 320)
+    tail = after[-2 * 10240:]  # 640 ms, eight whole frames: nothing to pad
+    assert handed_over(square(8000, 160), after) == tail
 
 
 def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):
@@ -1417,12 +1567,13 @@ OWN_VOICE = TURN + frame() * 4 + frame(PHRASE.encode()) + frame(QUEUE_END) + fra
 
 def own_voice_run(
     tmp_path, pcm, *, speak_between=True, aec=None, live=True, latency_s=0.05, discard=True, lag_frames=0,
+    transcribe=False,
 ):
     wake = {"lag_frames": lag_frames} if lag_frames else {}
     manifest = body(write_wav(tmp_path / "own.wav", pcm), **wake)
     if aec is not None:
         manifest["audio"]["input"]["aec"] = aec
-    session = ListenSession(manifest, soul())
+    session = ListenSession(manifest, soul(provider="mock") if transcribe else soul(), transcribe=transcribe)
 
     async def scenario():
         calls = []
@@ -1501,6 +1652,28 @@ def test_a_phrase_that_ended_in_the_tail_is_its_own_voice_however_late_it_is_rep
     turns, _, _, ignored = own_voice_run(tmp_path, pcm, lag_frames=2)
     assert ignored == (1 if own else 0)
     assert len(turns) == (1 if own else 2)
+
+
+def test_a_wake_ignored_as_its_own_voice_hands_nothing_to_the_transcriber(tmp_path):
+    """The words said with the name reach the transcriber only for a wake
+    that counts. Handed over for a wake ignored as the robot's own voice,
+    they would start the person's next question with its own words."""
+    # Each word fills its frame, as speech does. A word and then digital
+    # silence would be cut as the end of the name (`past_the_name`), so the
+    # robot's word would reach the transcriber as silence, and this test
+    # would still pass with the handover moved ahead of the own-voice check.
+    robot, what = (word.ljust(FRAME_BYTES, b" ") for word in (b"robot", b"what"))
+    pcm = (
+        TURN
+        + frame(QUEUE_END)
+        + frame(PHRASE.encode()) + robot  # its own voice, ending in the tail
+        + frame() * 4
+        + frame(PHRASE.encode()) + what + frame(b"time")  # a person
+        + frame() * 40
+    )
+    turns, _, _, ignored = own_voice_run(tmp_path, pcm, lag_frames=1, transcribe=True)
+    assert ignored == 1
+    assert [u.transcript.text for u in turns] == ["", "what time"]
 
 
 def test_wakes_gets_the_same_guard(tmp_path):
