@@ -44,10 +44,8 @@ Cut the end of the name from a one-breath question.
 - `tag_release.py` printed its `gh release create` line with no `--title`,
   and a page made from it would fail the release audit (#13)
 
-Verified on the laptop, 2026-10-03. The reference body, a Raspberry Pi 5
-with a USB microphone and speaker, ran it on 2026-10-02 before the
-first-difference stop, the `name cut` line and the lone "no". Measurements
-in #13.
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-10-02 and 2026-10-03. Measurements in #13.
 
 ## [0.5.2] - 2026-09-30
 
