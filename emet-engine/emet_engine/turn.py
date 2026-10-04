@@ -74,10 +74,13 @@ from emet_engine.vad import EnergyVad, VadTuning
 __all__ = ["Endpointer", "Utterance", "EndReason", "DEFAULT_PATIENCE_MS", "DANGLING_WORDS", "looks_incomplete"]
 
 #: Words a sentence does not end on. A transcript whose last word is one of
-#: these was cut mid-clause, whatever the punctuation says: articles,
+#: these was cut mid-clause unless an end mark follows it: articles,
 #: conjunctions, prepositions, the determiners that lead an object, the
 #: auxiliaries that lead a verb, and the sounds a person makes while finding
-#: the next word.
+#: the next word. "no" is left out, though it can lead an object ("no
+#: milk"): on its own it is a whole answer, as "yes" is, and Deepgram writes
+#: a lone "No" with no full stop, so "hey emet, no" waited a second
+#: patience window before the reply (laptop replays, 2026-10-02).
 DANGLING_WORDS: frozenset[str] = frozenset(
     """
     a an the
@@ -85,7 +88,7 @@ DANGLING_WORDS: frozenset[str] = frozenset(
     whether that which who whom whose where how why what
     to of in on at by for with from into onto about over under after before
     between through without within like than as per
-    my your his her its our their this these those some any every each no
+    my your his her its our their this these those some any every each
     is are was were be been being am do does did can could will would shall
     should may might must have has had
     um uh er

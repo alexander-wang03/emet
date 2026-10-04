@@ -60,6 +60,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from array import array
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -105,6 +106,7 @@ from emet_engine.self_model import compile_self_model
 from emet_engine.speech import Mouth, Sentences, SpokenSentence, split_sentences
 from emet_engine.state import BodyState
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance, looks_incomplete
+from emet_engine.vad import rms
 
 __all__ = ["EngineError", "ListenSession", "Exchange", "sentences_of"]
 
@@ -122,6 +124,58 @@ DEFAULT_OUTPUT_LATENCY_MS = 150.0
 #: lag reported past this is cut to it.
 MAX_WAKE_LAG_MS = 640.0
 
+#: How far the sound must fall, inside the audio handed over, before the
+#: cut moves past the end of the name. pocketsphinx can say the phrase
+#: ended while its last vowel still sounds: in a recording of ten one-breath
+#: "hey emet, what's two plus two" made on the reference body (2026-10-01)
+#: one cut fell 80 ms before the end of the vowel of "-met", and Deepgram
+#: dropped the "What's" behind it on all three replays at that cut (laptop,
+#: 2026-10-01 and 02). At 20 dB that cut moves 130 ms and Deepgram kept
+#: "What's"; its only final, the flush after CloseStream, read "What's 22",
+#: as two takes given a 10 ms fade-in at the old cut did. Four cuts in the
+#: one-breath recording of twenty questions moved 120 to 150 ms, and Deepgram
+#: kept the first word on each; the other 12 wakes of the two recordings were
+#: handed the same audio as before (one replay of each recording at 20 dB,
+#: laptop, 2026-10-02). 20 dB was chosen on these same 17 wakes, one speaker
+#: in one room.
+NAME_TAIL_DROP_DB = 20.0
+
+#: A window this far above the quietest one before it ends the search, and
+#: the cut never moves into it or past it, since the question may start
+#: there and a stop inside the question can fall as far as a pause: with a
+#: 10 dB fall and no stop, the cut on one "do you remember me" moved 150 ms,
+#: past the start of "do". A question that starts at the cut with no rise
+#: in level or first difference has only the 20 dB to keep it. Below about
+#: 5.3 dB the stop would end the search before the question starts: of the
+#: 12 cuts that move on five recordings, the sound in front of one rose
+#: 5.3 dB above the quietest window before it, and in front of three more
+#: 4.0 to 4.5 dB. On one more wake a low-frequency stretch after the vowel
+#: rose 6.8 dB, and the wake engine's own cut stands there (laptop
+#: replays, 2026-10-01 to 03).
+NAME_TAIL_RISE_DB = 6.0
+
+#: The same stop, read on each window's first difference (x[i] - x[i-1]),
+#: which weights the sound about 6 dB more for each octave up to 4 kHz, so a
+#: fricative's hiss counts for far more in it than a vowel's voicing. An "s"
+#: said straight on from "emet" ("hey emet, stop", reference body,
+#: 2026-10-02) held its level within 6 dB of the fading vowel. With the
+#: phrase end placed 15 to 79 ms earlier, 1 ms at a time, the level stop
+#: alone wrote some or all of its hiss as silence at 37 placements, and
+#: at each the first difference had risen 13 to 21 dB on the way. At one
+#: more, 44 ms earlier, its cut fell at the end of a 1 ms burst in front
+#: of the hiss, the "t" of "emet" released into the "s" or the "s"
+#: starting, after a rise of 6.1 dB, the narrowest margin. Its cuts into
+#: the breathy "h" of a "how" followed rises of 6.2 to 7.7 dB. Its sound
+#: moves read at most 3.5 dB within 10 ms of the lag pocketsphinx
+#: reported. With the phrase end moved 1 ms at a time from 100 ms later to
+#: 150 ms earlier, 390 of its 6850 sound moves read more than 6 dB; there
+#: the move is dropped and the wake engine's own cut stands (laptop
+#: replays of five recordings, 2026-10-02 and 03).
+NAME_TAIL_HIGH_RISE_DB = 6.0
+
+#: The windows the sound is measured in.
+NAME_TAIL_WINDOW_MS = 10.0
+
 
 def said_with_the_name(lag_ms: float, recent: Sequence[bytes], fmt: AudioFormat) -> list[bytes]:
     """The audio after the phrase ended that the wake engine had already
@@ -132,17 +186,103 @@ def said_with_the_name(lag_ms: float, recent: Sequence[bytes], fmt: AudioFormat)
     phrase; everything before that in the first frame is the phrase itself,
     and is written as silence rather than handed over, so the words said
     with the name arrive without the name. Nothing for a lag of 0.
+
+    Where the wake engine says the phrase ended can be early, with the end
+    of "emet" still sounding. When that sound falls quiet before anything
+    new starts, it is written as silence too (`past_the_name`). A tail cut
+    short, by `MAX_WAKE_LAG_MS` or by what was kept, is handed over as heard.
     """
+    return cut_before_the_question(lag_ms, recent, fmt)[0]
+
+
+def cut_before_the_question(
+    lag_ms: float, recent: Sequence[bytes], fmt: AudioFormat
+) -> tuple[list[bytes], int]:
+    """`said_with_the_name`'s frames, and how many samples at the start of
+    what came after the phrase were taken for the end of the name and
+    written as silence. The session counts those for `--stats`, since
+    nothing a person hears or reads on the console shows whether the cut
+    moved."""
     if lag_ms <= 0.0 or not recent:
-        return []
+        return [], 0
     audio = b"".join(recent)
     want = 2 * int(round(min(lag_ms, MAX_WAKE_LAG_MS) * fmt.sample_rate / 1000.0))
     tail = audio[len(audio) - min(want, len(audio)):]
     if not tail:
-        return []
+        return [], 0
+    name = 0
+    if lag_ms <= MAX_WAKE_LAG_MS and want <= len(audio):
+        # A tail cut short starts after the phrase was said to end, inside
+        # whatever followed it, where a pause between two words of the
+        # question would pass for the end of the name.
+        name = 2 * past_the_name(tail, fmt)
+    tail = bytes(name) + tail[name:]
     size = fmt.frame_bytes
     tail = bytes((-len(tail)) % size) + tail
-    return [tail[i:i + size] for i in range(0, len(tail), size)]
+    return [tail[i:i + size] for i in range(0, len(tail), size)], name // 2
+
+
+def past_the_name(tail: bytes, fmt: AudioFormat) -> int:
+    """How many samples at the start of `tail`, the audio about to be
+    handed over, are taken for the end of the name: none, unless its sound
+    falls quiet before anything new starts.
+
+    The sound is measured in whole windows of `NAME_TAIL_WINDOW_MS`, and it
+    starts at the louder of the first two, since either can be the louder
+    and a fall measured from the quieter reads short: of the 17 replayed
+    wakes Deepgram heard, the first window was the louder in 11 and the
+    second in 6 (laptop, 2026-10-02). The first window at least
+    `NAME_TAIL_DROP_DB` below that is where the name has ended, and
+    everything before it is taken for the name. The search stops at the
+    first window more than `NAME_TAIL_RISE_DB` above the quietest one
+    before it, or whose first difference is more than
+    `NAME_TAIL_HIGH_RISE_DB` above the lowest first difference of the
+    windows before it, since the question may start there. A vowel fades
+    in both measures; an "s" said straight on from the name rises in the
+    second when its level does not. Both are read before the fall, so a
+    fricative quiet enough to reach the line still stops the search. A
+    part window at the end is never measured and never cut.
+
+    The rule takes the start of `tail` to be the name and cannot check it,
+    so two cases can still write a first word, or its start, as silence:
+    a wake engine that places the phrase's end inside that word, when
+    nothing after the first window rises before a closure falls 20 dB,
+    and a fricative too faint to rise `NAME_TAIL_HIGH_RISE_DB`, such as a
+    weak "h" (laptop replays, 2026-10-03).
+    """
+    window = 2 * int(round(NAME_TAIL_WINDOW_MS * fmt.sample_rate / 1000.0))
+    count = len(tail) // window if window > 0 else 0
+    if count < 2:
+        return 0
+    levels = [_dbfs(rms(tail[k * window:(k + 1) * window])) for k in range(count)]
+    highs = [_dbfs(_rms_of_difference(tail[k * window:(k + 1) * window])) for k in range(count)]
+    start = max(levels[0], levels[1])
+    quietest, quietest_high = levels[0], highs[0]
+    for k in range(1, count):
+        if levels[k] > quietest + NAME_TAIL_RISE_DB or highs[k] > quietest_high + NAME_TAIL_HIGH_RISE_DB:
+            return 0
+        if levels[k] <= start - NAME_TAIL_DROP_DB:
+            return k * window // 2
+        quietest = min(quietest, levels[k])
+        quietest_high = min(quietest_high, highs[k])
+    return 0
+
+
+def _rms_of_difference(frame: bytes) -> float:
+    """Root mean square of one frame's first difference, x[i] - x[i-1], of
+    mono int16: the frame's sound with its high frequencies weighted up."""
+    samples = array("h")
+    samples.frombytes(frame)
+    if len(samples) < 2:
+        return 0.0
+    total = sum((b - a) * (b - a) for a, b in zip(samples, samples[1:]))
+    return math.sqrt(total / (len(samples) - 1))
+
+
+def _dbfs(level: float) -> float:
+    """An RMS level of int16 audio in dB below full scale. Digital silence
+    reads as -150."""
+    return 20.0 * math.log10(max(level, 1e-3) / 32768.0)
 
 
 def sentences_of(text: str) -> list[str]:
@@ -898,10 +1038,14 @@ class ListenSession:
         Before those frames it is fed what the wake engine had already heard
         after the phrase ended (`WakeEvent.lag_ms`): a detector fires a moment
         late, and "hey emet, what is two plus two" in one breath otherwise
-        loses "what". And while speech has not started, the endpointer can
-        see the words so far, so words the energy detector never saw start
-        (said inside the click's deaf window, or before the wake fired) end
-        the turn on silence rather than after the whole lead-in.
+        loses "what". Where the wake engine placed the phrase's end early,
+        with the end of the name still sounding, that sound is left out of it
+        if it falls 20 dB before anything new starts, and handed over if it
+        does not (`said_with_the_name`). And while speech has not started,
+        the endpointer can see the words so far, so words the energy detector
+        never saw start (said inside the click's deaf window, or before the
+        wake fired) end the turn on silence rather than after the whole
+        lead-in.
 
         Between one turn and the next the caller answers, and the robot may
         speak. The microphone is not read meanwhile, so the capture queue
@@ -956,7 +1100,10 @@ class ListenSession:
                     if self.on_wake is not None:
                         self.on_wake(event)
                     if self._stt is not None:
-                        for before in said_with_the_name(event.lag_ms, recent, self.format):
+                        handover, name = cut_before_the_question(event.lag_ms, recent, self.format)
+                        if handover:
+                            self.stats.name_cut_ms.append(1000.0 * name / self.format.sample_rate)
+                        for before in handover:
                             self._heard(await self._stt.feed(before))
                         recent.clear()
                     await self._listening(endpointer)

@@ -12,6 +12,41 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
+## [0.5.3] - 2026-10-04
+
+Cut the end of the name from a one-breath question.
+
+### Added
+- `--stats` prints a `name cut` line: of the wakes that handed the words
+  said with the name to the transcriber, how many had the end of the name
+  left out, and by how much (#13)
+- `tools/one_breath_prompts.sh` repeats one question with `ONE_BREATH_ONLY`
+  and `ONE_BREATH_TIMES` (#13)
+
+### Changed
+- The audio handed to the transcriber with a wake leaves out the end of
+  "emet" when it was still sounding, since the transcriber can drop the
+  question's first word behind it: the start is written as silence up to
+  where that sound has fallen 20 dB, unless the audio rises 6 dB first, in
+  level or with its high frequencies weighted up, where the question or an
+  "s" said straight on from the name begins (#13)
+- A lone "no" ends the turn after one patience window, as "yes" does (#13)
+- The prompt scripts give a replay 5 s of room before the first prompt, and
+  the one-breath script no longer promises a wake count (#13)
+
+### Fixed
+- A tag made on another day than its merge takes its commit's date, and
+  `tag_release.py` reads the day back before the push: dated a day late it
+  would have failed the release audit on every later pull request (#13)
+- `release_audit.py` read GitHub not answering as a missing tag, pull
+  request or page, or as a red check; it now stops with "GitHub did not
+  answer" and merges nothing (#13)
+- `tag_release.py` printed its `gh release create` line with no `--title`,
+  and a page made from it would fail the release audit (#13)
+
+Verified on the reference body, a Raspberry Pi 5 with a USB microphone and
+speaker, 2026-10-02 and 2026-10-03. Measurements in #13.
+
 ## [0.5.2] - 2026-09-30
 
 Stop it waking on its own voice.
