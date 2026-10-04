@@ -12,7 +12,7 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.3] - 2026-10-03
+## [0.5.3] - 2026-10-04
 
 Cut the end of the name from a one-breath question.
 
