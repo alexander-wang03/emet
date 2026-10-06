@@ -181,7 +181,7 @@ def test_the_request_says_linear16_at_the_formats_rate_with_interims_on():
     assert q["sample_rate"] == "16000"
     assert q["channels"] == "1"
     assert q["interim_results"] == "true"
-    assert q["punctuate"] == "true" and q["smart_format"] == "true"
+    assert q["punctuate"] == "true"
     assert q["model"] == DEFAULT_MODEL
 
 
@@ -202,6 +202,27 @@ def test_body_query_params_ride_along_but_cannot_change_the_format():
     assert q["vad_events"] == "true"
     assert q["sample_rate"] == "16000"
     assert q["encoding"] == "linear16"
+
+
+def test_no_final_is_held_for_formatting():
+    """With `smart_format` on, Deepgram may hold a final for up to 3 s of
+    silence to format an entity that looks unfinished, and the engine closes
+    the stream about a second after the last word: in the replays the only
+    final for "what's two plus two" was then the flush after the close, and
+    it read "What's 22". Off, the same audio got Deepgram's own final before
+    the close (laptop replays, 2026-10-02 to 05). Sent as "false", so a
+    change of Deepgram's default cannot bring the hold back."""
+    q = query_of(make(FakeServer()).request_url())
+    assert q["smart_format"] == "false"
+
+
+def test_a_body_can_set_a_key_the_plugin_sends():
+    """`params.query` is laid over the plugin's own keys, so a body that
+    wants numbers formatted, and accepts the held finals, says so in
+    `models.stt.params.query`. The format keys are the only ones it cannot
+    set, which the test above pins."""
+    stt = make(FakeServer(), query={"smart_format": True})
+    assert query_of(stt.request_url())["smart_format"] == "true"
 
 
 def test_the_url_can_point_at_a_self_hosted_deployment():
