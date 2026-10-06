@@ -45,6 +45,7 @@ from emet_sdk.validate import (
 
 from emet_engine.body import format_bindings
 from emet_engine.keys import load_keys
+from emet_engine.metrics import Handover
 from emet_engine.session import EngineError, ListenSession
 from emet_engine.turn import EndReason
 
@@ -125,6 +126,14 @@ def _on_wake(event: WakeEvent) -> None:
     """Printed the moment the name is heard, not when the turn ends: on a live
     run that is the difference between feedback and a second of doubt."""
     print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
+
+
+def _on_handover(handover: Handover) -> None:
+    """Under `--stats`, the line under each wake that handed words over: the
+    lag, the end of the name written as silence, and what the level stop
+    alone would have written. It prints before the first partial, so an odd
+    first word can be read against its cut."""
+    print(f"    {handover.text()}")
 
 
 class Caption:
@@ -286,6 +295,7 @@ async def _run(args: argparse.Namespace) -> int:
         reply=reply,
         speak=args.speak,
         on_wake=_on_wake,
+        on_handover=_on_handover if args.stats else None,
         on_partial=caption.show if transcribe else None,
         on_extended=_on_extended(caption) if transcribe else None,
         chains=getattr(args, "chains", None) or (),
@@ -563,7 +573,9 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="report whether the loop kept up: per-frame timings, frames over "
         "budget, and the real-time factor. This is how the ten-minute soak in "
-        "the 0.3 acceptance criteria is actually checked",
+        "the 0.3 acceptance criteria is actually checked. With a transcriber, "
+        "also a line under each wake: its lag, the end of the name written as "
+        "silence, and what the level stop alone would have written",
     )
     add_body_flags(parser)
     args = parser.parse_args(argv)

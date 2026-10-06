@@ -107,6 +107,22 @@ def test_two_exchanges_in_one_run_and_the_stats_at_the_end(tmp_path, monkeypatch
     assert "voice first" in text and "verdict" in text
 
 
+def test_stats_puts_each_wakes_cut_under_it(tmp_path, monkeypatch, capsys):
+    """With `--stats`, emet-talk says what went to the transcriber with the
+    name, in its own aside style; without it, nothing."""
+    pcm = frame() + frame(PHRASE.encode()) + b"what".ljust(2 * FRAME, b" ") + frame(b"time") + frame() * 20
+    manifest = body(write_wav(tmp_path / "s.wav", pcm))
+    manifest["audio"]["wake"]["params"] = {"lag_frames": 1}
+    stub_loaders(monkeypatch, manifest, soul())
+
+    assert talk.main(["body.yaml", "soul.yaml", "--stats"]) == 0
+    text = capsys.readouterr().out
+    assert "  (heard 'hey emet')\n  (lag 80 ms, name cut 0 ms, level stop alone 0 ms)\n" in text
+
+    assert talk.main(["body.yaml", "soul.yaml"]) == 0
+    assert "(lag " not in capsys.readouterr().out
+
+
 def test_a_false_wake_is_reported_and_not_answered(tmp_path, monkeypatch, capsys):
     wav = write_wav(tmp_path / "false.wav", false_wake())
     stub_loaders(monkeypatch, body(wav), soul())

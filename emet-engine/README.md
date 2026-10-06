@@ -62,7 +62,13 @@ the same breath as the name. When the end of the name is still sounding at
 the start of that audio and fades before the question begins, it is written
 as silence. With `--stats`, a `name cut` line counts those handovers and how
 many had the end of the name cut from their start, with the mean and longest
-cut in milliseconds.
+cut in milliseconds, and a line under each wake that handed audio over says
+which: `lag 190 ms, name cut 130 ms, level stop alone 130 ms`. The lag is
+where the wake engine put the end of the phrase; the name cut is how much of
+the start was written as silence; the level stop alone is what the rule
+would have written without its first-difference stop, which it never
+applies. The two differ only where that stop kept the wake engine's cut.
+`emet-talk --stats` prints the same line in parentheses.
 
 Keys are read from a file rather than exported in every shell: put
 `NAME=value` lines in `~/.config/emet/keys.env` (or `/etc/emet/keys.env` for

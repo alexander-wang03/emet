@@ -648,15 +648,17 @@ def test_an_engine_that_reports_no_lag_hands_over_nothing_before_the_wake(tmp_pa
     at the frame after the wake, as in 0.5.0, and the footer has no
     handover to count."""
     pcm = frame() + frame(PHRASE.encode()) + frame(b"time") + frame(b"is it") + frame() * 20
-    session = transcribing(tmp_path, "z.wav", pcm)
+    fired = []
+    session = transcribing(tmp_path, "z.wav", pcm, on_handover=fired.append)
 
     async def scenario():
         async with session:
-            return [u async for _, u in session.turns()], session.stats.name_cut_ms
+            return [u async for _, u in session.turns()], session.stats.name_cut_ms, session.stats.handovers
 
-    (utterance,), counted = run(scenario())
+    (utterance,), counted, handovers = run(scenario())
     assert utterance.transcript is not None and utterance.transcript.text == "time is it"
     assert counted == [], "nothing handed over, so nothing for the footer to count"
+    assert handovers == [] and fired == [], "and no line under the wake"
 
 
 def test_the_audio_before_the_wake_is_cut_where_the_phrase_ended():
@@ -974,6 +976,47 @@ def test_a_voiced_sound_rising_out_of_the_fade_in_a_hissing_room_ends_the_search
     assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
 
 
+def vowel(amplitude: int, ms: float) -> bytes:
+    """A vowel's voicing at 200 Hz with a formant's worth of 2 kHz, 6.3 times
+    weaker: 7.3 dB brighter in the first difference than a 200 Hz tone of
+    the same level, as a vowel is beside the "m" before it."""
+    return mix(tone(amplitude, 200, ms), tone(round(amplitude * 0.16), 2000, ms))
+
+
+def test_a_handover_that_starts_in_the_m_is_cut_where_the_name_falls():
+    """The "m" of "emet" is dark: its first difference is low. Where it opens
+    into the vowel the first difference rises 7.3 dB and the level 2 dB, as
+    the vowel's onset did at 337 placements of the laptop sweep (6.0 to
+    11.6 dB, the level at most 5.97 dB below the start). Read there, the
+    rise would hand the whole "-met" over, which put a word in front of the
+    question on 4 of 10 Deepgram replays (laptop, 2026-10-05); read only
+    once the sound has fallen, the cut moves to where it falls 20 dB."""
+    m = tone(4000, 200, 30)
+    body = vowel(5000, 60)
+    fade = vowel(2500, 10) + vowel(1250, 10) + vowel(625, 10) + vowel(312, 10)
+    pause, question = square(50, 30), tone(6000, 200, 40)
+    after = m + body + fade + pause + question
+    cut = 2 * 16 * (30 + 60 + 30)  # the m, the vowel and three windows of its fade
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640 + cut) + after[cut:]
+
+
+def test_a_brightening_before_the_name_has_fallen_6_db_is_not_read():
+    """On the laptop sweep the level had fallen at most 5.97 dB below the
+    start where the "m" opened into the vowel (one soak take, with the
+    phrase end placed 140 ms early). A rise of 8 dB in the first
+    difference with the level 5.9 dB down is still the name; the cut moves
+    to where the sound falls 20 dB. The tests above that read the first
+    difference after a fall of 10 dB hold the line from above."""
+    start = tone(4000, 200, 20)
+    down = tone(2027, 200, 10)  # 5.9 dB below the start
+    bright = mix(tone(1990, 200, 10), tone(481, 2000, 10))  # level flat, first difference up 8 dB
+    fall = tone(500, 200, 20) + tone(300, 200, 10)
+    pause, question = square(50, 30), tone(6000, 200, 100)
+    after = start + down + bright + fall + pause + question
+    cut = 2 * 16 * (20 + 10 + 10 + 20)
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640 + cut) + after[cut:]
+
+
 def name_cut_after(tmp_path, name: str, handed: bytes) -> list[float]:
     """The footer's record of the cut, for one wake whose engine fires a
     frame after the phrase and hands `handed` over."""
@@ -1040,6 +1083,91 @@ def test_the_count_is_the_end_of_the_name_alone():
     for heard, name in [(square(8000, 40) + vowel + pause + question, len(vowel) // 2), (square(8000, 240), 0)]:
         frames = [heard[i:i + FRAME_BYTES] for i in range(0, len(heard), FRAME_BYTES)]
         assert cut_before_the_question(200.0, frames, AudioFormat())[1] == name
+
+
+# ------------------------------------------------------ the line under a wake
+
+
+def record_for(phrase: bytes, after: bytes):
+    """What `--stats` prints under a wake whose engine heard `phrase` and
+    then `after`, and fired at the end of `after`."""
+    from emet_engine.session import cut_before_the_question, handover_record
+    from emet_sdk.types import AudioFormat
+
+    heard = phrase + after
+    assert len(heard) % FRAME_BYTES == 0, "whole frames, as the loop keeps them"
+    frames = [heard[i:i + FRAME_BYTES] for i in range(0, len(heard), FRAME_BYTES)]
+    lag_ms = len(after) / 2 / 16000 * 1000
+    _, name = cut_before_the_question(lag_ms, frames, AudioFormat())
+    return handover_record(lag_ms, frames, AudioFormat(), name)
+
+
+def test_each_handover_is_recorded_with_its_lag_and_both_cuts(tmp_path):
+    """The session keeps one record per handover, the one `--stats` prints:
+    30 ms of the name's tail written as silence, where the level stop alone
+    cuts the same, and a handover whose words fill it, cut by neither."""
+    from emet_engine.metrics import Handover
+
+    for name, handed, want in [
+        ("cut.wav", square(8000, 30) + square(50, 50), Handover(80.0, 80.0, 30.0, 30.0)),
+        ("whole.wav", b"what".ljust(FRAME_BYTES, b" "), Handover(80.0, 80.0, 0.0, 0.0)),
+    ]:
+        pcm = frame() + frame(PHRASE.encode()) + handed + frame(b"time") + frame(b"is it") + frame() * 20
+        session = transcribing(tmp_path, name, pcm, manifest=body(write_wav(tmp_path / name, pcm), lag_frames=1))
+
+        async def scenario():
+            async with session:
+                [u async for _, u in session.turns()]
+                return session.stats.handovers
+
+        assert run(scenario()) == [want]
+
+
+def test_the_level_stop_alone_reads_where_the_first_difference_kept_the_cut():
+    """An "s" said straight on from the name keeps the wake engine's cut, and
+    the line says the level stop alone would have cut 110 ms, into the "s":
+    the case the first-difference stop exists for, now visible per wake."""
+    vowel, s = tone(8000, 200, 20) + tone(3000, 200, 30), tone(2500, 6000, 60)
+    record = record_for(tone(8000, 200, 40), vowel + s + square(50, 40) + tone(6000, 200, 50))
+    assert (record.name_ms, record.level_ms, record.heard_ms) == (0.0, 110.0, 200.0)
+
+
+def test_a_cut_that_moved_is_the_level_stops_cut_too():
+    """Where the cut moves, the level stop alone cuts at the same window: the
+    two can only part as a cut kept where the level stop would move it."""
+    vowel, pause, question = square(8000, 80), square(50, 100), square(6000, 20)
+    record = record_for(square(8000, 40), vowel + pause + question)
+    assert (record.name_ms, record.level_ms) == (80.0, 80.0)
+
+
+def test_a_tail_cut_short_has_no_level_stop_alone():
+    """A tail cut short is never moved by either rule, and the line says how
+    much of it went over: the last 640 ms of an 800 ms lag."""
+    after = square(8000, 80) + square(50, 70) + square(6000, 250) + square(190, 80) + square(6000, 320)
+    record = record_for(square(8000, 160), after)
+    assert record.cut_short and (record.name_ms, record.level_ms, record.heard_ms) == (0.0, 0.0, 640.0)
+    assert record.lag_ms == 800.0, "the lag as the wake engine reported it"
+
+
+def test_the_line_under_a_wake_comes_before_its_first_partial(tmp_path):
+    """The record is made after the cut and before any of the handover is
+    fed, so on a terminal the line never lands inside a redrawn caption."""
+    seen: list[str] = []
+    said = b"what".ljust(FRAME_BYTES, b" ")
+    pcm = frame() + frame(PHRASE.encode()) + said + frame(b"time") + frame(b"is it") + frame() * 20
+    session = transcribing(
+        tmp_path, "o.wav", pcm, manifest=body(write_wav(tmp_path / "o.wav", pcm), lag_frames=1),
+        on_wake=lambda event: seen.append("wake"),
+        on_handover=lambda handover: seen.append("handover"),
+        on_partial=lambda partial: seen.append("partial"),
+    )
+
+    async def scenario():
+        async with session:
+            [u async for _, u in session.turns()]
+
+    run(scenario())
+    assert seen[:3] == ["wake", "handover", "partial"]
 
 
 def test_stopping_after_a_failed_transcriber_start_is_safe(tmp_path):

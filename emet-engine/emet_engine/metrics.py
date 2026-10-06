@@ -32,7 +32,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-__all__ = ["SessionStats", "Stopwatch"]
+__all__ = ["Handover", "SessionStats", "Stopwatch"]
 
 #: How many per-frame timings to keep for percentiles. Ten minutes at 80 ms
 #: frames is 7500, so this holds a whole soak run; a robot left on for a week
@@ -61,6 +61,39 @@ class Stopwatch:
         """Milliseconds so far, without stopping. For a first-token mark
         inside a block that keeps running."""
         return (time.perf_counter() - self._start) * 1000.0
+
+
+@dataclass(frozen=True)
+class Handover:
+    """One wake's words said with the name, as they went to the transcriber.
+
+    `--stats` prints it under the wake, so a turn whose first word came back
+    odd can be read against its cut. On 2026-10-03 the reference body's
+    footer counted 6 moved cuts in 26 and could not say whether "Was two
+    plus two." or "Hey. What's two plus two?" was one of them.
+
+    `lag_ms` is the lag the wake engine reported. `heard_ms` is the audio
+    after the phrase that was handed over: the lag, or less when the tail
+    was cut short by `MAX_WAKE_LAG_MS` or by what the loop kept. `name_ms`
+    is the start of it written as silence as the end of the name. `level_ms`
+    is what the level stop alone, the rule without its first-difference
+    stop, would have written; it is never applied, and the two differ only
+    where the first-difference stop kept the wake engine's cut. A tail cut
+    short is never moved, so both are 0 there. Every figure is audio, never
+    wall time, so two replays of one recording print the same lines.
+    """
+
+    lag_ms: float
+    heard_ms: float
+    name_ms: float
+    level_ms: float
+    cut_short: bool = False
+
+    def text(self) -> str:
+        line = f"lag {self.lag_ms:.0f} ms, name cut {self.name_ms:.0f} ms, level stop alone {self.level_ms:.0f} ms"
+        if self.cut_short:
+            line += f"; the last {self.heard_ms:.0f} ms handed over as heard"
+        return line
 
 
 @dataclass
@@ -108,9 +141,10 @@ class SessionStats:
     #: Per wake whose words said with the name went to the transcriber: how
     #: much of the start of that audio was taken for the end of the name and
     #: written as silence, in milliseconds, 0 when the cut stayed where the
-    #: wake engine put it. The console says nothing per wake, so this is
-    #: where a run on the body shows whether the cut moved.
+    #: wake engine put it. The footer counts these; `handovers` holds the
+    #: whole record of each, which `--stats` prints under its wake.
     name_cut_ms: list[float] = field(default_factory=list)
+    handovers: list[Handover] = field(default_factory=list)
 
     #: Per answered turn: milliseconds from the final transcript to the first
     #: word of the reply, and to the whole reply. The first is what a person
@@ -148,6 +182,10 @@ class SessionStats:
 
     def record_final(self, wait_ms: float) -> None:
         self.final_ms.append(wait_ms)
+
+    def record_handover(self, handover: Handover) -> None:
+        self.handovers.append(handover)
+        self.name_cut_ms.append(handover.name_ms)
 
     def record_reply(self, first_ms: float | None, done_ms: float) -> None:
         if first_ms is not None:

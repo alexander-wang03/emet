@@ -72,6 +72,7 @@ async def _run(args: argparse.Namespace) -> int:
         reply=True,
         speak=True,
         on_wake=lambda event: print(f"\n  (heard {event.phrase!r})", flush=True),
+        on_handover=(lambda handover: print(f"  ({handover.text()})", flush=True)) if args.stats else None,
         on_extended=lambda text: print("  (that sounded unfinished; waiting a little longer)", flush=True),
         chains=args.chains or (),
         state=args.state,
@@ -173,7 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         "--stats",
         action="store_true",
         help="report the loop's timings at the end: the wait for the words, "
-        "the first word, the first sound, and whether the loop kept up",
+        "the first word, the first sound, and whether the loop kept up; and "
+        "under each wake, its lag and the end of the name written as silence",
     )
     add_body_flags(parser)
     args = parser.parse_args(argv)

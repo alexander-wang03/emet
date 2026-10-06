@@ -226,6 +226,64 @@ def test_transcribe_prints_partials_as_they_arrive_and_then_what_was_said(
     assert out.index("heard 'hey emet'") < out.index("hearing 'what'")
 
 
+def handing_over(tmp_path, name: str) -> dict:
+    """A body whose wake engine fires a frame after the phrase, so the frame
+    it fired on goes to the transcriber with the name; two turns, one whose
+    handover ends on the name falling quiet and one whose words fill it."""
+    def frame(payload: bytes = b"") -> bytes:
+        return payload + bytes(2 * FRAME - len(payload))
+
+    from array import array
+
+    fading = array("h", [8000, -8000] * 240).tobytes() + array("h", [50, -50] * 400).tobytes()
+    # 2.4 s of silence after each turn: past the 1.8 s of a turn the trailing
+    # clause extends, so the second phrase always starts a turn of its own.
+    turn = lambda handed, word: frame() + frame(PHRASE.encode()) + handed + frame(word) + frame(b"x") + frame() * 30  # noqa: E731
+    pcm = turn(fading, b"what") + turn(b"what".ljust(2 * FRAME, b" "), b"time")
+    manifest = body(write_wav(tmp_path / name, pcm))
+    manifest["audio"]["wake"]["params"] = {"lag_frames": 1}
+    return manifest
+
+
+def test_stats_prints_each_handover_under_its_wake(tmp_path, monkeypatch, capsys):
+    """Under `--stats`, a line under each wake that handed words over: 30 ms
+    of the name written as silence in the first, none in the second, as the
+    footer counts them."""
+    stub_loaders(monkeypatch, handing_over(tmp_path, "h.wav"), soul(provider="mock"))
+
+    assert asyncio.run(cli._run(args(transcribe=True))) == 0
+
+    rows = capsys.readouterr().out.splitlines()
+    under = [rows[i + 1] for i, row in enumerate(rows) if row.startswith("  heard 'hey emet'")]
+    assert under == [
+        "    lag 80 ms, name cut 30 ms, level stop alone 30 ms",
+        "    lag 80 ms, name cut 0 ms, level stop alone 0 ms",
+    ]
+    assert any(row.startswith("  name cut      1 of 2 handover(s)") for row in rows)
+
+
+def test_without_stats_there_is_no_line_under_a_wake(tmp_path, monkeypatch, capsys):
+    stub_loaders(monkeypatch, handing_over(tmp_path, "q.wav"), soul(provider="mock"))
+
+    asyncio.run(cli._run(args(transcribe=True, stats=False)))
+
+    assert "    lag " not in capsys.readouterr().out
+
+
+def test_a_replay_prints_the_same_lines_under_its_wakes_every_time(tmp_path, monkeypatch, capsys):
+    """Every figure on the line is audio, never wall time, so a replay of a
+    body's recording prints what the harness can compare line for line."""
+    import re
+
+    stub_loaders(monkeypatch, handing_over(tmp_path, "r.wav"), soul(provider="mock"))
+    runs = []
+    for _ in range(2):
+        asyncio.run(cli._run(args(transcribe=True)))
+        runs.append([row for row in capsys.readouterr().out.splitlines() if row.startswith("    lag ")])
+    assert runs[0] == runs[1] and len(runs[0]) == 2
+    assert all(re.fullmatch(r"    lag \d+ ms, name cut \d+ ms, level stop alone \d+ ms", row) for row in runs[0])
+
+
 def test_without_the_flag_nothing_is_transcribed(tmp_path, monkeypatch, capsys):
     wav = write_wav(tmp_path / "quiet.wav", spoken(b"what", b"time"))
     stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
