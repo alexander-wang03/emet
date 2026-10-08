@@ -194,7 +194,8 @@ def test_the_souls_model_is_sent_and_reported():
 def test_body_query_params_ride_along_but_cannot_change_the_format():
     stt = make(
         FakeServer(),
-        query={"language": "en-GB", "keyterm": "Emet", "sample_rate": 8000, "encoding": "mulaw", "vad_events": True},
+        query={"language": "en-GB", "keyterm": "Emet", "sample_rate": 8000, "encoding": "mulaw", "channels": 2,
+               "vad_events": True},
     )
     q = query_of(stt.request_url())
     assert q["language"] == "en-GB"
@@ -202,27 +203,32 @@ def test_body_query_params_ride_along_but_cannot_change_the_format():
     assert q["vad_events"] == "true"
     assert q["sample_rate"] == "16000"
     assert q["encoding"] == "linear16"
+    assert q["channels"] == "1"
 
 
-def test_no_final_is_held_for_formatting():
+def test_the_request_carries_smart_format_false():
     """With `smart_format` on, Deepgram may hold a final for up to 3 s of
     silence to format an entity that looks unfinished, and the engine closes
-    the stream about a second after the last word: in the replays the only
-    final for "what's two plus two" was then the flush after the close, and
-    it read "What's 22". Off, the same audio got Deepgram's own final before
-    the close (laptop replays, 2026-10-02 to 05). Sent as "false", so a
-    change of Deepgram's default cannot bring the hold back."""
+    the stream about a second after the last word: on the 3 of 28 replayed
+    turns where "what's two plus two" read "What's 22", the only final was
+    the flush after the close. Off, the one of the three replayed on the
+    same bytes got Deepgram's own final before the close (laptop replays,
+    2026-10-01 to 03). Sent as "false", so a change of Deepgram's default
+    cannot bring the hold back."""
     q = query_of(make(FakeServer()).request_url())
     assert q["smart_format"] == "false"
 
 
 def test_a_body_can_set_a_key_the_plugin_sends():
-    """`params.query` is laid over the plugin's own keys, so a body that
-    wants numbers formatted, and accepts the held finals, says so in
-    `models.stt.params.query`. The format keys are the only ones it cannot
-    set, which the test above pins."""
-    stt = make(FakeServer(), query={"smart_format": True})
-    assert query_of(stt.request_url())["smart_format"] == "true"
+    """`params.query` is laid over the plugin's own `interim_results`,
+    `punctuate` and `smart_format`, so a body that wants numbers formatted,
+    and accepts the held finals, says so in `models.stt.params.query`. It
+    cannot set the format keys, which the audio format fixes, or `model`,
+    which comes from `models.stt.model`."""
+    stt = make(FakeServer(), query={"smart_format": True, "model": "nova-2"})
+    q = query_of(stt.request_url())
+    assert q["smart_format"] == "true"
+    assert q["model"] == DEFAULT_MODEL
 
 
 def test_the_url_can_point_at_a_self_hosted_deployment():

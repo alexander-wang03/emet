@@ -653,12 +653,12 @@ def test_an_engine_that_reports_no_lag_hands_over_nothing_before_the_wake(tmp_pa
 
     async def scenario():
         async with session:
-            return [u async for _, u in session.turns()], session.stats.name_cut_ms, session.stats.handovers
+            return [u async for _, u in session.turns()], session.stats.name_cut_ms
 
-    (utterance,), counted, handovers = run(scenario())
+    (utterance,), counted = run(scenario())
     assert utterance.transcript is not None and utterance.transcript.text == "time is it"
     assert counted == [], "nothing handed over, so nothing for the footer to count"
-    assert handovers == [] and fired == [], "and no line under the wake"
+    assert fired == [], "and no line under the wake"
 
 
 def test_the_audio_before_the_wake_is_cut_where_the_phrase_ended():
@@ -976,10 +976,10 @@ def test_a_voiced_sound_rising_out_of_the_fade_in_a_hissing_room_ends_the_search
     assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
 
 
-def vowel(amplitude: int, ms: float) -> bytes:
+def bright_vowel(amplitude: int, ms: float) -> bytes:
     """A vowel's voicing at 200 Hz with a formant's worth of 2 kHz, 6.3 times
-    weaker: 7.3 dB brighter in the first difference than a 200 Hz tone of
-    the same level, as a vowel is beside the "m" before it."""
+    weaker: 5.2 dB brighter in the first difference than a 200 Hz tone of
+    the same level, so 7.3 dB above an "m" 2 dB quieter, as below."""
     return mix(tone(amplitude, 200, ms), tone(round(amplitude * 0.16), 2000, ms))
 
 
@@ -989,13 +989,13 @@ def test_a_handover_that_starts_in_the_m_is_cut_where_the_name_falls():
     the vowel's onset did at 337 placements of the laptop sweep (6.0 to
     11.6 dB, the level at most 5.97 dB below the start). Read there, the
     rise would hand the whole "-met" over, which put a word in front of the
-    question on 4 of 10 Deepgram replays (laptop, 2026-10-05); read only
+    question on 4 of 10 takes Deepgram replayed (laptop, 2026-10-05); read only
     once the sound has fallen, the cut moves to where it falls 20 dB."""
     m = tone(4000, 200, 30)
-    body = vowel(5000, 60)
-    fade = vowel(2500, 10) + vowel(1250, 10) + vowel(625, 10) + vowel(312, 10)
+    held = bright_vowel(5000, 60)
+    fade = bright_vowel(2500, 10) + bright_vowel(1250, 10) + bright_vowel(625, 10) + bright_vowel(312, 10)
     pause, question = square(50, 30), tone(6000, 200, 40)
-    after = m + body + fade + pause + question
+    after = m + held + fade + pause + question
     cut = 2 * 16 * (30 + 60 + 30)  # the m, the vowel and three windows of its fade
     assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640 + cut) + after[cut:]
 
@@ -1004,17 +1004,47 @@ def test_a_brightening_before_the_name_has_fallen_6_db_is_not_read():
     """On the laptop sweep the level had fallen at most 5.97 dB below the
     start where the "m" opened into the vowel (one soak take, with the
     phrase end placed 140 ms early). A rise of 8 dB in the first
-    difference with the level 5.9 dB down is still the name; the cut moves
-    to where the sound falls 20 dB. The tests above that read the first
-    difference after a fall of 10 dB hold the line from above."""
+    difference with the level 5.97 dB down is still the name; the cut moves
+    to where the sound falls 20 dB. The test below holds the line from
+    above."""
     start = tone(4000, 200, 20)
-    down = tone(2027, 200, 10)  # 5.9 dB below the start
+    down = tone(2011, 200, 10)  # 5.97 dB below the start
     bright = mix(tone(1990, 200, 10), tone(481, 2000, 10))  # level flat, first difference up 8 dB
     fall = tone(500, 200, 20) + tone(300, 200, 10)
     pause, question = square(50, 30), tone(6000, 200, 100)
     after = start + down + bright + fall + pause + question
     cut = 2 * 16 * (20 + 10 + 10 + 20)
     assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640 + cut) + after[cut:]
+
+
+def test_a_brightening_once_the_name_has_fallen_6_db_ends_the_search():
+    """The same 8 dB brightening as the test above, with the quietest window
+    before it 6.1 dB below the start, is read: the search ends and the
+    handover goes over whole. The two tests hold `NAME_TAIL_HIGH_FALL_DB` at
+    6 dB from both sides. Without this one, the line could rise to just
+    under 10 dB and every other test would pass."""
+    start = tone(4000, 200, 20)
+    down = tone(1980, 200, 10)  # 6.1 dB below the start
+    bright = mix(tone(1944, 200, 10), tone(470, 2000, 10))  # level flat, first difference up 8 dB
+    fall = tone(500, 200, 20) + tone(300, 200, 10)
+    pause, question = square(50, 30), tone(6000, 200, 100)
+    after = start + down + bright + fall + pause + question
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
+
+
+def test_the_fall_before_a_brightening_is_measured_at_the_quietest_window():
+    """An "s" can come back louder than the faded vowel before it, within
+    the 6 dB of the level stop. Here the vowel dips 10 dB, comes back to
+    5 dB below the start, and an "s" follows at that level. The quietest
+    window before the "s" has fallen 10 dB, so the rise of its first
+    difference ends the search and the "s" goes over whole. Measured on the
+    "s" window itself, or on the window just before it, the fall is 5 dB,
+    the first difference is not read, and the pause after the "s" writes it
+    as silence."""
+    name = tone(8000, 200, 20) + tone(2530, 200, 10) + tone(4500, 200, 20)
+    s = mix(tone(900, 200, 60), tone(4400, 6000, 60))  # 5 dB below the start, 5 dB above the dip
+    after = name + s + square(50, 40) + tone(6000, 200, 50)
+    assert handed_over(tone(8000, 200, 40), after) == bytes(2 * 640) + after
 
 
 def name_cut_after(tmp_path, name: str, handed: bytes) -> list[float]:
@@ -1033,9 +1063,9 @@ def name_cut_after(tmp_path, name: str, handed: bytes) -> list[float]:
 
 
 def test_the_stats_count_how_much_of_the_name_was_left_out(tmp_path):
-    """Nothing on the console says the cut moved, so `--stats` counts it:
-    30 ms of the name's tail left out of one handover, none out of a
-    handover whose words fill it."""
+    """The footer counts how much of the name was left out: 30 ms of the
+    name's tail left out of one handover, none out of a handover whose
+    words fill it."""
     assert name_cut_after(tmp_path, "cut.wav", square(8000, 30) + square(50, 50)) == [30.0]
     assert name_cut_after(tmp_path, "whole.wav", b"what".ljust(FRAME_BYTES, b" ")) == [0.0]
 
@@ -1103,9 +1133,10 @@ def record_for(phrase: bytes, after: bytes):
 
 
 def test_each_handover_is_recorded_with_its_lag_and_both_cuts(tmp_path):
-    """The session keeps one record per handover, the one `--stats` prints:
-    30 ms of the name's tail written as silence, where the level stop alone
-    cuts the same, and a handover whose words fill it, cut by neither."""
+    """The session hands `on_handover` one record per handover, the one
+    `--stats` prints: 30 ms of the name's tail written as silence, where
+    the level stop alone cuts the same, and a handover whose words fill
+    it, cut by neither."""
     from emet_engine.metrics import Handover
 
     for name, handed, want in [
@@ -1113,14 +1144,18 @@ def test_each_handover_is_recorded_with_its_lag_and_both_cuts(tmp_path):
         ("whole.wav", b"what".ljust(FRAME_BYTES, b" "), Handover(80.0, 80.0, 0.0, 0.0)),
     ]:
         pcm = frame() + frame(PHRASE.encode()) + handed + frame(b"time") + frame(b"is it") + frame() * 20
-        session = transcribing(tmp_path, name, pcm, manifest=body(write_wav(tmp_path / name, pcm), lag_frames=1))
+        fired = []
+        session = transcribing(
+            tmp_path, name, pcm, manifest=body(write_wav(tmp_path / name, pcm), lag_frames=1),
+            on_handover=fired.append,
+        )
 
         async def scenario():
             async with session:
                 [u async for _, u in session.turns()]
-                return session.stats.handovers
 
-        assert run(scenario()) == [want]
+        run(scenario())
+        assert fired == [want]
 
 
 def test_the_level_stop_alone_reads_where_the_first_difference_kept_the_cut():
@@ -1132,12 +1167,41 @@ def test_the_level_stop_alone_reads_where_the_first_difference_kept_the_cut():
     assert (record.name_ms, record.level_ms, record.heard_ms) == (0.0, 110.0, 200.0)
 
 
+def test_the_record_under_a_wake_says_where_the_level_stop_alone_would_cut(tmp_path):
+    """The record the session hands `on_handover`, the one `--stats`
+    prints, where the two cuts differ: an "s" said straight on from a name
+    whose sound has fallen 8.5 dB keeps the wake engine's cut, where the
+    level stop alone would have written the first 50 ms as silence, the
+    "s" with them."""
+    from emet_engine.metrics import Handover
+
+    handed = tone(8000, 200, 20) + tone(3000, 200, 10) + tone(2500, 6000, 20) + square(50, 30)
+    assert len(handed) == FRAME_BYTES, "one frame, the lag the mock engine reports"
+    pcm = frame() + frame(PHRASE.encode()) + handed + frame(b"time") + frame(b"is it") + frame() * 20
+    fired = []
+    session = transcribing(
+        tmp_path, "s.wav", pcm, manifest=body(write_wav(tmp_path / "s.wav", pcm), lag_frames=1),
+        on_handover=fired.append,
+    )
+
+    async def scenario():
+        async with session:
+            [u async for _, u in session.turns()]
+
+    run(scenario())
+    assert fired == [Handover(80.0, 80.0, 0.0, 50.0)]
+
+
 def test_a_cut_that_moved_is_the_level_stops_cut_too():
     """Where the cut moves, the level stop alone cuts at the same window: the
-    two can only part as a cut kept where the level stop would move it."""
-    vowel, pause, question = square(8000, 80), square(50, 100), square(6000, 20)
-    record = record_for(square(8000, 40), vowel + pause + question)
-    assert (record.name_ms, record.level_ms) == (80.0, 80.0)
+    two can only part as a cut kept where the level stop would move it. Here
+    the name dies away over many windows, as in the test of a vowel that dies
+    away, so a level stop alone with its line 2 dB lower, or 0.2 dB higher,
+    would cut at another window."""
+    steps = [8000, 7000, 5600, 4500, 3500, 2600, 1900, 2720, 1400, 1000, 790]
+    after = b"".join(square(a, 10) for a in steps) + square(600, 70) + square(6000, 20)
+    record = record_for(square(8000, 40), after)
+    assert (record.name_ms, record.level_ms) == (100.0, 100.0)
 
 
 def test_a_tail_cut_short_has_no_level_stop_alone():

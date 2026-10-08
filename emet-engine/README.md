@@ -66,9 +66,12 @@ cut in milliseconds, and a line under each wake that handed audio over says
 which: `lag 190 ms, name cut 130 ms, level stop alone 130 ms`. The lag is
 where the wake engine put the end of the phrase; the name cut is how much of
 the start was written as silence; the level stop alone is what the rule
-would have written without its first-difference stop, which it never
-applies. The two differ only where that stop kept the wake engine's cut.
-`emet-talk --stats` prints the same line in parentheses.
+would have written without its stop on a rise with the high frequencies
+weighted up, and is never applied. The two differ only where that stop kept
+the wake engine's cut. When the lag passes what the loop keeps, the line
+ends `; the last 640 ms handed over as heard`, and neither cut is made.
+`emet-talk --stats` prints the same line in parentheses. Only the footer's
+line starts with `name cut`.
 
 Keys are read from a file rather than exported in every shell: put
 `NAME=value` lines in `~/.config/emet/keys.env` (or `/etc/emet/keys.env` for

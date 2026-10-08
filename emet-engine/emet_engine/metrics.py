@@ -65,7 +65,7 @@ class Stopwatch:
 
 @dataclass(frozen=True)
 class Handover:
-    """One wake's words said with the name, as they went to the transcriber.
+    """One wake's handover to the transcriber, in figures.
 
     `--stats` prints it under the wake, so a turn whose first word came back
     odd can be read against its cut. On 2026-10-03 the reference body's
@@ -75,12 +75,13 @@ class Handover:
     `lag_ms` is the lag the wake engine reported. `heard_ms` is the audio
     after the phrase that was handed over: the lag, or less when the tail
     was cut short by `MAX_WAKE_LAG_MS` or by what the loop kept. `name_ms`
-    is the start of it written as silence as the end of the name. `level_ms`
-    is what the level stop alone, the rule without its first-difference
-    stop, would have written; it is never applied, and the two differ only
-    where the first-difference stop kept the wake engine's cut. A tail cut
-    short is never moved, so both are 0 there. Every figure is audio, never
-    wall time, so two replays of one recording print the same lines.
+    is how much of its start was taken for the end of the name and written
+    as silence. `level_ms` is what the level stop alone, the rule without
+    its first-difference stop, would have written; it is never applied, and
+    the two differ only where the first-difference stop kept the wake
+    engine's cut. A tail cut short is never moved, so both are 0 there.
+    Every figure is audio, never wall time, so two replays of one recording
+    print the same lines.
     """
 
     lag_ms: float
@@ -141,10 +142,9 @@ class SessionStats:
     #: Per wake whose words said with the name went to the transcriber: how
     #: much of the start of that audio was taken for the end of the name and
     #: written as silence, in milliseconds, 0 when the cut stayed where the
-    #: wake engine put it. The footer counts these; `handovers` holds the
-    #: whole record of each, which `--stats` prints under its wake.
+    #: wake engine put it. The footer counts these; `--stats` prints the
+    #: whole record of each under its wake, from the session's `on_handover`.
     name_cut_ms: list[float] = field(default_factory=list)
-    handovers: list[Handover] = field(default_factory=list)
 
     #: Per answered turn: milliseconds from the final transcript to the first
     #: word of the reply, and to the whole reply. The first is what a person
@@ -184,7 +184,6 @@ class SessionStats:
         self.final_ms.append(wait_ms)
 
     def record_handover(self, handover: Handover) -> None:
-        self.handovers.append(handover)
         self.name_cut_ms.append(handover.name_ms)
 
     def record_reply(self, first_ms: float | None, done_ms: float) -> None:

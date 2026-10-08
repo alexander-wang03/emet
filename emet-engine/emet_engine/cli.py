@@ -129,7 +129,7 @@ def _on_wake(event: WakeEvent) -> None:
 
 
 def _on_handover(handover: Handover) -> None:
-    """Under `--stats`, the line under each wake that handed words over: the
+    """Under `--stats`, the line under each wake that handed audio over: the
     lag, the end of the name written as silence, and what the level stop
     alone would have written. It prints before the first partial, so an odd
     first word can be read against its cut."""
@@ -574,8 +574,9 @@ def main(argv: list[str] | None = None) -> int:
         help="report whether the loop kept up: per-frame timings, frames over "
         "budget, and the real-time factor. This is how the ten-minute soak in "
         "the 0.3 acceptance criteria is actually checked. With a transcriber, "
-        "also a line under each wake: its lag, the end of the name written as "
-        "silence, and what the level stop alone would have written",
+        "also a line under each wake that handed audio over: its lag, the end "
+        "of the name written as silence, and what the level stop alone would "
+        "have written",
     )
     add_body_flags(parser)
     args = parser.parse_args(argv)

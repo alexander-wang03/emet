@@ -236,9 +236,12 @@ def handing_over(tmp_path, name: str) -> dict:
     from array import array
 
     fading = array("h", [8000, -8000] * 240).tobytes() + array("h", [50, -50] * 400).tobytes()
+
     # 2.4 s of silence after each turn: past the 1.8 s of a turn the trailing
     # clause extends, so the second phrase always starts a turn of its own.
-    turn = lambda handed, word: frame() + frame(PHRASE.encode()) + handed + frame(word) + frame(b"x") + frame() * 30  # noqa: E731
+    def turn(handed: bytes, word: bytes) -> bytes:
+        return frame() + frame(PHRASE.encode()) + handed + frame(word) + frame(b"x") + frame() * 30
+
     pcm = turn(fading, b"what") + turn(b"what".ljust(2 * FRAME, b" "), b"time")
     manifest = body(write_wav(tmp_path / name, pcm))
     manifest["audio"]["wake"]["params"] = {"lag_frames": 1}
@@ -246,7 +249,7 @@ def handing_over(tmp_path, name: str) -> dict:
 
 
 def test_stats_prints_each_handover_under_its_wake(tmp_path, monkeypatch, capsys):
-    """Under `--stats`, a line under each wake that handed words over: 30 ms
+    """Under `--stats`, a line under each wake that handed audio over: 30 ms
     of the name written as silence in the first, none in the second, as the
     footer counts them."""
     stub_loaders(monkeypatch, handing_over(tmp_path, "h.wav"), soul(provider="mock"))
@@ -271,8 +274,8 @@ def test_without_stats_there_is_no_line_under_a_wake(tmp_path, monkeypatch, caps
 
 
 def test_a_replay_prints_the_same_lines_under_its_wakes_every_time(tmp_path, monkeypatch, capsys):
-    """Every figure on the line is audio, never wall time, so a replay of a
-    body's recording prints what the harness can compare line for line."""
+    """Every figure on the line is audio, never wall time, so two replays of
+    one recording print the same line under each wake."""
     import re
 
     stub_loaders(monkeypatch, handing_over(tmp_path, "r.wav"), soul(provider="mock"))
@@ -282,6 +285,22 @@ def test_a_replay_prints_the_same_lines_under_its_wakes_every_time(tmp_path, mon
         runs.append([row for row in capsys.readouterr().out.splitlines() if row.startswith("    lag ")])
     assert runs[0] == runs[1] and len(runs[0]) == 2
     assert all(re.fullmatch(r"    lag \d+ ms, name cut \d+ ms, level stop alone \d+ ms", row) for row in runs[0])
+
+
+def test_a_tail_cut_short_prints_the_same_line_on_every_replay(tmp_path, monkeypatch, capsys):
+    """The fourth figure, how much of a tail cut short was handed over, is
+    printed only for such a tail, and it is audio too: a 720 ms lag, past
+    `MAX_WAKE_LAG_MS`, prints the same line on every replay."""
+    manifest = body(write_wav(tmp_path / "late.wav", spoken(*[b"what"] * 9)))
+    manifest["audio"]["wake"]["params"] = {"lag_frames": 9}
+    stub_loaders(monkeypatch, manifest, soul(provider="mock"))
+    runs = []
+    for _ in range(2):
+        asyncio.run(cli._run(args(transcribe=True)))
+        runs.append([row for row in capsys.readouterr().out.splitlines() if row.startswith("    lag ")])
+    assert runs[0] == runs[1] == [
+        "    lag 720 ms, name cut 0 ms, level stop alone 0 ms; the last 640 ms handed over as heard"
+    ]
 
 
 def test_without_the_flag_nothing_is_transcribed(tmp_path, monkeypatch, capsys):

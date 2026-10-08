@@ -175,7 +175,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="report the loop's timings at the end: the wait for the words, "
         "the first word, the first sound, and whether the loop kept up; and "
-        "under each wake, its lag and the end of the name written as silence",
+        "under each wake that handed audio over, its lag, the end of the name "
+        "written as silence, and what the level stop alone would have written",
     )
     add_body_flags(parser)
     args = parser.parse_args(argv)

@@ -123,6 +123,18 @@ def test_stats_puts_each_wakes_cut_under_it(tmp_path, monkeypatch, capsys):
     assert "(lag " not in capsys.readouterr().out
 
 
+def test_stats_says_when_the_tail_was_handed_over_as_heard(tmp_path, monkeypatch, capsys):
+    """A 720 ms lag, past `MAX_WAKE_LAG_MS`, hands over the last 640 ms as
+    heard, and emet-talk's aside says so, as emet-listen's line does."""
+    manifest = body(write_wav(tmp_path / "late.wav", spoken(*[b"what"] * 9)))
+    manifest["audio"]["wake"]["params"] = {"lag_frames": 9}
+    stub_loaders(monkeypatch, manifest, soul())
+
+    assert talk.main(["body.yaml", "soul.yaml", "--stats"]) == 0
+    aside = "(lag 720 ms, name cut 0 ms, level stop alone 0 ms; the last 640 ms handed over as heard)"
+    assert f"  (heard 'hey emet')\n  {aside}\n" in capsys.readouterr().out
+
+
 def test_a_false_wake_is_reported_and_not_answered(tmp_path, monkeypatch, capsys):
     wav = write_wav(tmp_path / "false.wav", false_wake())
     stub_loaders(monkeypatch, body(wav), soul())

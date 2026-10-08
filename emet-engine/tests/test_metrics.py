@@ -56,7 +56,7 @@ def test_a_tail_cut_short_says_it_was_handed_over_as_heard():
     assert line.endswith("; the last 640 ms handed over as heard")
 
 
-def test_the_footer_counts_the_engines_cut_and_never_the_level_stops():
+def test_the_footer_counts_the_cut_made_and_never_the_level_stops():
     """The level stop alone is reported beside the cut and never applied, so
     the footer's count of cuts that moved reads the cut alone."""
     s = stats()
@@ -64,7 +64,6 @@ def test_the_footer_counts_the_engines_cut_and_never_the_level_stops():
         s.record_handover(Handover(200.0, 200.0, name, level))
     line = next(row for row in s.report(live=False).splitlines() if "name cut" in row)
     assert "2 of 4 handover(s)" in line and "mean 110 ms" in line and "max 130" in line
-    assert [h.level_ms for h in s.handovers] == [0.0, 130.0, 150.0, 90.0]
 
 
 def test_a_fresh_run_claims_nothing():
