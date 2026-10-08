@@ -12,6 +12,35 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
+## [0.5.4] - 2026-10-06
+
+Keep spoken numbers as words in the transcript.
+
+### Added
+- `--stats` prints a line under each wake that handed audio to the
+  transcriber, in `emet-listen` and `emet-talk`: the lag the wake engine
+  reported, how much of the start was cut as the end of the name, and what
+  the cut would have been with only its stop on a rise in level (#14)
+
+### Changed
+- The Deepgram transcriber sends `smart_format=false`, so numbers, dates,
+  times, amounts, emails and URLs reach the model as the words said, and no
+  final waits up to 3 s to be formatted. With it on, "what's two plus two"
+  came back "What's 22" when the only final was the flush after the stream
+  closed. A body can turn it back on in `models.stt.params.query` (#14)
+
+### Fixed
+- When a handover started inside the "m" of "emet" and the vowel rose
+  less than 6 dB in level, the stop on a rise with the high frequencies
+  weighted up fired where the "m" opens into its vowel, and the whole
+  "-met" went to the transcriber in front of the question; that stop is
+  now read only once the sound has fallen 6 dB below where the handover
+  started. Where the level rises more, the "-met" still goes over (#14)
+
+Verified on the laptop, 2026-10-05 to 2026-10-07, with recordings made on
+the reference body, a Raspberry Pi 5 with a USB microphone and speaker. The
+body has not run this code yet. Measurements in #14.
+
 ## [0.5.3] - 2026-10-04
 
 Cut the end of the name from a one-breath question.

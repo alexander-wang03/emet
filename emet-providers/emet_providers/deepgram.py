@@ -43,8 +43,14 @@ Params, all optional, from the body's `models.stt.params`:
 
     query        mapping of extra Deepgram query parameters (`language`,
                  `keyterm`, `endpointing`, ...), passed through as strings.
+                 The body's value replaces the plugin's own
+                 `interim_results`, `punctuate` and `smart_format`, so
+                 `smart_format: true` turns formatting back on, and with it
+                 the finals Deepgram holds to format an entity;
+                 `detect_entities: true` holds them the same way.
                  `encoding`, `sample_rate` and `channels` are fixed by the
-                 audio format and cannot be overridden here.
+                 audio format, and `model` by `models.stt.model`; none of
+                 them can be overridden here.
     timeout_s    seconds `finish()` waits for the final after CloseStream,
                  and the whole of the person's wait: a socket that will not
                  unwind is abandoned rather than waited on. Default 5.
@@ -88,15 +94,26 @@ DEFAULT_MODEL = "nova-3"
 #: reference soul uses, so a soul that says only `provider: deepgram` works.
 DEFAULT_KEY_ENV = "EMET_DEEPGRAM_KEY"
 
-#: Query parameters this plugin always sends. `interim_results` is the whole
-#: point of a streaming seam; `punctuate` and `smart_format` are what a
-#: language model downstream wants to read.
+#: Query parameters this plugin always sends; a body's `params.query`
+#: replaces any but the format keys. `interim_results` is the whole point of
+#: a streaming seam, and `punctuate` writes the end marks and commas the
+#: engine's trailing-clause check reads. `smart_format` is sent as false.
+#: On, Deepgram may hold a final for up to 3 s of silence to format an
+#: entity that looks unfinished (Deepgram's Smart Formatting page, read
+#: 2026-10-04), and the engine closes the stream about a second after the
+#: last word. On the 3 of 28 replayed turns where "what's two plus two"
+#: read "What's 22", the only final was the flush after the close; with it
+#: off, the one of the three replayed on the same bytes got Deepgram's own
+#: final, "What's two plus two", before the close, and a lone "No" that had
+#: waited 2.7 s for a flush got its own final too (laptop replays,
+#: 2026-10-01 to 05). So numbers, dates, times, currency, phone numbers,
+#: emails and URLs reach the model as words.
 FIXED_QUERY: Mapping[str, str] = {
     "encoding": "linear16",
     "channels": "1",
     "interim_results": "true",
     "punctuate": "true",
-    "smart_format": "true",
+    "smart_format": "false",
 }
 
 #: Keys the body may not override through `params.query`: the audio format

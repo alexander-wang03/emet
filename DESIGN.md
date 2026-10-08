@@ -1125,11 +1125,13 @@ Where the wake engine says the phrase ended can be early, with the last vowel
 of the name still sounding. When that sound falls 20 dB before anything new
 starts, it is written as silence too. A rise of 6 dB in level counts as
 something new, and so does a rise of 6 dB in the first difference (each sample
-less the one before, which weights high frequencies up): an "s" said straight
-on from the name shows the second when its level does not. In one of ten
-one-breath "hey emet, what's two plus two" recorded on the reference body,
-80 ms of "emet" in front of "what's" cost that word on all three replays at
-that cut (laptop, 2026-10-01 and 02).
+less the one before, which weights high frequencies up) once the sound has
+fallen 6 dB below where the handover started: an "s" said straight on from
+"emet" shows the second after the vowel has faded, when its level does not, and
+the "m" of "emet" opening into its vowel can show it before anything has. In
+one of ten one-breath "hey emet, what's two plus two" recorded on the reference
+body, 80 ms of "emet" in front of "what's" cost that word on all three replays
+at that cut (laptop, 2026-10-01 and 02).
 While the energy detector has not seen speech start, the endpointer can also
 see the words so far, so an answer said entirely inside the listening click's
 deaf window, or before the wake fired, ends the turn one patience later rather
