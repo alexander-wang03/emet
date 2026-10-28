@@ -12,7 +12,7 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.4] - 2026-10-06
+## [0.5.4] - 2026-10-27
 
 Keep spoken numbers as words in the transcript.
 
@@ -37,9 +37,9 @@ Keep spoken numbers as words in the transcript.
   now read only once the sound has fallen 6 dB below where the handover
   started. Where the level rises more, the "-met" still goes over (#14)
 
-Verified on the laptop, 2026-10-05 to 2026-10-07, with recordings made on
-the reference body, a Raspberry Pi 5 with a USB microphone and speaker. The
-body has not run this code yet. Measurements in #14.
+Verified on the laptop, 2026-10-05 to 2026-10-07, and on the reference
+body, a Raspberry Pi 5 with a USB microphone and speaker, 2026-10-07 and
+2026-10-26. Measurements in #14.
 
 ## [0.5.3] - 2026-10-04
 
