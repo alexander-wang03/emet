@@ -94,7 +94,7 @@ from emet_sdk.validate import (
 from emet_engine.acting import Actor, Performed, signal, speak
 from emet_engine.body import Body
 from emet_engine.intent_tags import IntentTags
-from emet_engine.metrics import SessionStats, Stopwatch
+from emet_engine.metrics import Handover, SessionStats, Stopwatch
 from emet_engine.prompting import (
     DEFAULT_MAX_TOKENS,
     Conversation,
@@ -169,9 +169,44 @@ NAME_TAIL_RISE_DB = 6.0
 #: moves read at most 3.5 dB within 10 ms of the lag pocketsphinx
 #: reported. With the phrase end moved 1 ms at a time from 100 ms later to
 #: 150 ms earlier, 390 of its 6850 sound moves read more than 6 dB; there
-#: the move is dropped and the wake engine's own cut stands (laptop
-#: replays of five recordings, 2026-10-02 and 03).
+#: 0.5.3 dropped the move and kept the wake engine's own cut (laptop
+#: replays of five recordings, 2026-10-02 and 03). This stop, read only
+#: after the fall of `NAME_TAIL_HIGH_FALL_DB`, drops 55 of the 390 (laptop,
+#: 2026-10-06). That narrowest margin, on a 1 ms grid, came after the sound
+#: had fallen 19.3 dB, so `NAME_TAIL_HIGH_FALL_DB` leaves it where it was.
+#: With the phrase end placed 43.50 and 43.56 ms earlier, between the
+#: grid's steps, the rise read 5.97 dB and the cut fell 1.3 to 1.4 ms past
+#: the start of the burst, with this stop or without it (laptop, 2026-10-07).
 NAME_TAIL_HIGH_RISE_DB = 6.0
+
+#: How far the sound must have fallen below where the handover started
+#: before a rise in the first difference ends the search. A handover that
+#: starts in the "m" of "emet" can brighten where the "m" opens into the
+#: vowel, before anything has faded: at 337 placements of the laptop sweep,
+#: with the phrase end placed 63 to 150 ms early, the first difference rose
+#: 6.0 to 11.6 dB there while the level was at most 5.97 dB below the start,
+#: and the whole "-met" was handed over. An "s" said straight on from "emet"
+#: comes after the vowel has faded into the "t": at the 38 placements where
+#: the level stop alone cut into the "s" of two "stop"s, the level had fallen
+#: 10.7 to 20 dB first. With the phrase end placed a sample at a time, that
+#: fall was 10.5 dB at the least, and 19.4 dB at about 3 m, so no "s" that
+#: 0.5.3 kept is cut at 6 dB in either recording (laptop replays of
+#: recordings made 2026-10-02 and 06, 2026-10-07). At 6 dB, 332 of the 337
+#: are cut where the sound falls 20 dB, no cut lands at or past a first sound
+#: by energy, crossing rate or eye at any placement of the laptop sweep for a
+#: line up to 10.7 dB (two of the 332, on one soak take, land 11 and 2 ms
+#: before its "h" by eye, past a forced alignment's first phone), and at
+#: the shipped wake threshold every reported lag of seven recordings is
+#: handed the same bytes (laptop, 2026-10-04). It does not reach every
+#: handover that starts in the "m": from starts 10 to 60 ms before the
+#: vowel the level stop often ends the search where the "m" opens into
+#: the vowel, before the sound has fallen 20 dB, and 8 to 14 of 17 such
+#: handovers still go over whole (laptop, 2026-10-06). A whole "-met"
+#: handed over put a word in front of the question on 4 of 10 takes
+#: Deepgram replayed ("Fifth can you hear me?"), where the same takes cut
+#: as the wake engine placed them read clean (laptop replays, 2026-10-02
+#: and 05).
+NAME_TAIL_HIGH_FALL_DB = 6.0
 
 #: The windows the sound is measured in.
 NAME_TAIL_WINDOW_MS = 10.0
@@ -200,29 +235,53 @@ def cut_before_the_question(
 ) -> tuple[list[bytes], int]:
     """`said_with_the_name`'s frames, and how many samples at the start of
     what came after the phrase were taken for the end of the name and
-    written as silence. The session counts those for `--stats`, since
-    nothing a person hears or reads on the console shows whether the cut
-    moved."""
-    if lag_ms <= 0.0 or not recent:
-        return [], 0
-    audio = b"".join(recent)
-    want = 2 * int(round(min(lag_ms, MAX_WAKE_LAG_MS) * fmt.sample_rate / 1000.0))
-    tail = audio[len(audio) - min(want, len(audio)):]
+    written as silence. The session records that count for `--stats`, which
+    prints it under each wake that handed audio over (`handover_record`)."""
+    tail, whole = _after_the_phrase(lag_ms, recent, fmt)
     if not tail:
         return [], 0
-    name = 0
-    if lag_ms <= MAX_WAKE_LAG_MS and want <= len(audio):
-        # A tail cut short starts after the phrase was said to end, inside
-        # whatever followed it, where a pause between two words of the
-        # question would pass for the end of the name.
-        name = 2 * past_the_name(tail, fmt)
+    # A tail cut short starts after the phrase was said to end, inside
+    # whatever followed it, where a pause between two words of the question
+    # would pass for the end of the name.
+    name = 2 * past_the_name(tail, fmt) if whole else 0
     tail = bytes(name) + tail[name:]
     size = fmt.frame_bytes
     tail = bytes((-len(tail)) % size) + tail
     return [tail[i:i + size] for i in range(0, len(tail), size)], name // 2
 
 
-def past_the_name(tail: bytes, fmt: AudioFormat) -> int:
+def handover_record(lag_ms: float, recent: Sequence[bytes], fmt: AudioFormat, name: int) -> Handover:
+    """What `--stats` prints for one handover: the lag, the `name` samples
+    `cut_before_the_question` wrote as silence, and what the level stop
+    alone would have written on the same tail, which shows where the
+    first-difference stop kept the wake engine's cut. That second pass costs
+    about 0.26 ms a wake on a 200 ms tail and 0.84 ms on a 640 ms one on the
+    laptop (2026-10-04), once a wake and outside the per-frame timing."""
+    tail, whole = _after_the_phrase(lag_ms, recent, fmt)
+    level = past_the_name(tail, fmt, first_difference=False) if whole and tail else 0
+    per_ms = fmt.sample_rate / 1000.0
+    return Handover(
+        lag_ms=float(lag_ms),
+        heard_ms=len(tail) / 2 / per_ms,
+        name_ms=name / per_ms,
+        level_ms=level / per_ms,
+        cut_short=bool(tail) and not whole,
+    )
+
+
+def _after_the_phrase(lag_ms: float, recent: Sequence[bytes], fmt: AudioFormat) -> tuple[bytes, bool]:
+    """The audio after the phrase ended, out of what the loop kept, and
+    whether it is all there: false when the lag passed `MAX_WAKE_LAG_MS` or
+    what the loop kept, so the tail starts after the phrase was said to end."""
+    if lag_ms <= 0.0 or not recent:
+        return b"", False
+    audio = b"".join(recent)
+    want = 2 * int(round(min(lag_ms, MAX_WAKE_LAG_MS) * fmt.sample_rate / 1000.0))
+    tail = audio[len(audio) - min(want, len(audio)):]
+    return tail, lag_ms <= MAX_WAKE_LAG_MS and want <= len(audio)
+
+
+def past_the_name(tail: bytes, fmt: AudioFormat, *, first_difference: bool = True) -> int:
     """How many samples at the start of `tail`, the audio about to be
     handed over, are taken for the end of the name: none, unless its sound
     falls quiet before anything new starts.
@@ -239,32 +298,63 @@ def past_the_name(tail: bytes, fmt: AudioFormat) -> int:
     `NAME_TAIL_HIGH_RISE_DB` above the lowest first difference of the
     windows before it, since the question may start there. A vowel fades
     in both measures; an "s" said straight on from the name rises in the
-    second when its level does not. Both are read before the fall, so a
-    fricative quiet enough to reach the line still stops the search. A
-    part window at the end is never measured and never cut.
+    second when its level does not. The second is read only once the
+    quietest window before has fallen `NAME_TAIL_HIGH_FALL_DB` below the
+    start, since the "m" of "emet" can brighten into its vowel before
+    anything has faded and an "s" said after "emet" comes after its vowel
+    has faded into the "t". Where either is read, it is read before the
+    window is checked against `NAME_TAIL_DROP_DB`, so a fricative quiet
+    enough to reach that line still stops the search once a window before
+    has fallen `NAME_TAIL_HIGH_FALL_DB`. A part window at the end is never
+    measured and never cut.
+
+    With `first_difference` false the search has the level stop alone, the
+    rule as it was before the first-difference stop. `--stats` reports that
+    cut beside the real one (`handover_record`) and never applies it.
 
     The rule takes the start of `tail` to be the name and cannot check it,
-    so two cases can still write a first word, or its start, as silence:
+    so three cases can still write a first word, or its start, as silence:
     a wake engine that places the phrase's end inside that word, when
-    nothing after the first window rises before a closure falls 20 dB,
-    and a fricative too faint to rise `NAME_TAIL_HIGH_RISE_DB`, such as a
-    weak "h" (laptop replays, 2026-10-03).
+    nothing after the first window rises before a closure falls 20 dB; a
+    fricative too faint to rise `NAME_TAIL_HIGH_RISE_DB`, such as a weak
+    "h" (laptop replays, 2026-10-03), the breathy "h" of "who", or at about
+    3 m an "h" or a "th" after a pause whose level stays near the 20 dB
+    line, as in 2 of 24 frame phases of one "how" replayed at the shipped
+    wake threshold and in one "thank you" at a placement like those shipped
+    wakes made (laptop replays of recordings made 2026-10-06, 2026-10-07);
+    and a fricative said before the name's sound has fallen
+    `NAME_TAIL_HIGH_FALL_DB`, which no recording has shown after "emet":
+    every "s" kept by the first-difference stop alone came after at least
+    10.5 dB of fade near and 19.4 dB at about 3 m, all from one speaker
+    (laptop replays of recordings made 2026-10-02 and 06, 2026-10-07).
+    Where that speaker ran a vowel straight into a fricative, the third
+    case wrote the whole "s" of "plus two" as silence at 2 of 1042 phrase
+    ends placed 1 ms apart, and the second case cut into or past the "z" of
+    "away is" at 1459 of 1871, 1435 of them with `NAME_TAIL_HIGH_FALL_DB`
+    at 0 too (laptop, 2026-10-07).
     """
     window = 2 * int(round(NAME_TAIL_WINDOW_MS * fmt.sample_rate / 1000.0))
     count = len(tail) // window if window > 0 else 0
     if count < 2:
         return 0
     levels = [_dbfs(rms(tail[k * window:(k + 1) * window])) for k in range(count)]
-    highs = [_dbfs(_rms_of_difference(tail[k * window:(k + 1) * window])) for k in range(count)]
+    highs = (
+        [_dbfs(_rms_of_difference(tail[k * window:(k + 1) * window])) for k in range(count)]
+        if first_difference else []
+    )
     start = max(levels[0], levels[1])
-    quietest, quietest_high = levels[0], highs[0]
+    quietest, quietest_high = levels[0], (highs[0] if highs else 0.0)
     for k in range(1, count):
-        if levels[k] > quietest + NAME_TAIL_RISE_DB or highs[k] > quietest_high + NAME_TAIL_HIGH_RISE_DB:
+        if levels[k] > quietest + NAME_TAIL_RISE_DB:
+            return 0
+        faded = quietest <= start - NAME_TAIL_HIGH_FALL_DB
+        if highs and faded and highs[k] > quietest_high + NAME_TAIL_HIGH_RISE_DB:
             return 0
         if levels[k] <= start - NAME_TAIL_DROP_DB:
             return k * window // 2
         quietest = min(quietest, levels[k])
-        quietest_high = min(quietest_high, highs[k])
+        if highs:
+            quietest_high = min(quietest_high, highs[k])
     return 0
 
 
@@ -331,10 +421,14 @@ class ListenSession:
     The iterator ends when the source does, which a file always does and a
     microphone never should.
 
-    `turns()` yields once per turn, after the person has stopped talking. Two
-    callbacks let a caller show something while the turn is still going:
-    `on_wake` fires the moment the name is heard, and `on_partial` fires with
-    each partial transcript while a transcriber is listening.
+    `turns()` yields once per turn, after the person has stopped talking.
+    Five callbacks let a caller show something while the turn is still
+    going: `on_wake` fires the moment the name is heard, `on_handover` fires
+    with what goes to the transcriber with it (a `Handover`), before any of
+    it is fed, `on_partial` fires with each partial transcript while a
+    transcriber is listening, `on_extended` fires with the words so far when
+    the turn's silence window is extended because they looked unfinished,
+    and `on_performed` fires with `signal.listening` once it is performed.
 
     `answer(text)` is the next step, taken by the caller after a turn: the
     words go to the language model with the persona and the conversation so
@@ -353,6 +447,7 @@ class ListenSession:
         reply: bool = False,
         speak: bool = False,
         on_wake: Callable[[WakeEvent], None] | None = None,
+        on_handover: Callable[[Handover], None] | None = None,
         on_partial: Callable[[Transcript], None] | None = None,
         on_extended: Callable[[str], None] | None = None,
         on_intent: Callable[[Intent], None] | None = None,
@@ -419,6 +514,9 @@ class ListenSession:
         #: robot heard its name.
         self.transcribe = transcribe
         self.on_wake = on_wake
+        #: Fires with each wake's handover to the transcriber, after the cut
+        #: and before the first frame of it is fed, so no caption is open.
+        self.on_handover = on_handover
         self.on_partial = on_partial
         #: Fires with the words so far when a turn's silence window is
         #: extended because they looked unfinished.
@@ -1100,10 +1198,13 @@ class ListenSession:
                     if self.on_wake is not None:
                         self.on_wake(event)
                     if self._stt is not None:
-                        handover, name = cut_before_the_question(event.lag_ms, recent, self.format)
-                        if handover:
-                            self.stats.name_cut_ms.append(1000.0 * name / self.format.sample_rate)
-                        for before in handover:
+                        frames, name = cut_before_the_question(event.lag_ms, recent, self.format)
+                        if frames:
+                            record = handover_record(event.lag_ms, recent, self.format, name)
+                            self.stats.record_handover(record)
+                            if self.on_handover is not None:
+                                self.on_handover(record)
+                        for before in frames:
                             self._heard(await self._stt.feed(before))
                         recent.clear()
                     await self._listening(endpointer)

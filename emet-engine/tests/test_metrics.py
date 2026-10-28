@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 
-from emet_engine.metrics import SAMPLE_CAP, SessionStats, Stopwatch
+from emet_engine.metrics import SAMPLE_CAP, Handover, SessionStats, Stopwatch
 
 
 def stats(frame_ms: float = 80.0) -> SessionStats:
@@ -21,8 +21,8 @@ def stats(frame_ms: float = 80.0) -> SessionStats:
 
 
 def test_the_name_cut_line_counts_the_handovers_and_the_cuts_that_moved():
-    """The rule that leaves the end of the name out says nothing per wake,
-    so the footer is where a run on the body shows it at work."""
+    """The footer counts the handovers and the cuts that moved; the line
+    `--stats` prints under each wake says which."""
     s = stats()
     assert "name cut" not in s.report(live=False), "nothing handed over, no line"
     s.name_cut_ms.extend([0.0, 130.0, 0.0, 90.0])
@@ -37,6 +37,33 @@ def test_a_name_cut_line_with_nothing_moved_says_so():
     line = next(row for row in s.report(live=False).splitlines() if "name cut" in row)
     assert "0 of 2 handover(s)" in line
     assert "mean" not in line
+
+
+def test_a_handover_line_reads_the_lag_and_both_cuts():
+    """The line under each wake, so a first word that came back odd on the
+    body can be read against its cut: on 2026-10-03 the footer counted 6
+    moved cuts in 26 and named none."""
+    assert Handover(190.0, 190.0, 130.0, 130.0).text() == "lag 190 ms, name cut 130 ms, level stop alone 130 ms"
+    assert Handover(180.0, 180.0, 0.0, 150.0).text() == "lag 180 ms, name cut 0 ms, level stop alone 150 ms"
+
+
+def test_a_tail_cut_short_says_it_was_handed_over_as_heard():
+    """A lag past what the loop keeps hands over the last of it unmoved.
+    The lag is printed as the wake engine reported it, and the line says
+    how much went over."""
+    line = Handover(700.0, 640.0, 0.0, 0.0, cut_short=True).text()
+    assert line.startswith("lag 700 ms, ")
+    assert line.endswith("; the last 640 ms handed over as heard")
+
+
+def test_the_footer_counts_the_cut_made_and_never_the_level_stops():
+    """The level stop alone is reported beside the cut and never applied, so
+    the footer's count of cuts that moved reads the cut alone."""
+    s = stats()
+    for name, level in [(0.0, 0.0), (130.0, 130.0), (0.0, 150.0), (90.0, 90.0)]:
+        s.record_handover(Handover(200.0, 200.0, name, level))
+    line = next(row for row in s.report(live=False).splitlines() if "name cut" in row)
+    assert "2 of 4 handover(s)" in line and "mean 110 ms" in line and "max 130" in line
 
 
 def test_a_fresh_run_claims_nothing():
