@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
+import subprocess
 import sys
 import wave
 from pathlib import Path
@@ -23,11 +25,77 @@ import pytest
 
 from emet_sdk.types import Transcript
 
-from emet_engine import cli
+from emet_engine import board, cli
 from emet_engine.session import ListenSession
 
 PHRASE = "hey emet"
 FRAME = 1280  # samples per frame at 16 kHz, 80 ms
+
+#: `git status --porcelain=v2 --branch` in a tree that matches its commit.
+COMMIT = "eb55748541483e9769610526bbaa21bfbe439f0b"
+CLEAN = f"# branch.oid {COMMIT}\n# branch.head master\n"
+
+#: The shape of the identity line, as a body runner would read it.
+IDENTITY = re.compile(
+    r"^(emet-listen|emet-talk): emet-sdk (\S+), emet-hal (\S+), emet-providers (\S+), emet-engine (\S+); "
+    r"revision (?:([0-9a-f]{12}), working tree (matches|differs)|unknown: (.+))$"
+)
+
+REAL_RUN_GIT = cli._run_git
+
+
+def git_says(stdout: str = CLEAN, code: int = 0, stderr: str = "", calls: list | None = None):
+    def run(args, directory):
+        if calls is not None:
+            calls.append((list(args), directory))
+        if isinstance(stdout, BaseException):
+            raise stdout
+        return subprocess.CompletedProcess(["git", *args], code, stdout, stderr)
+
+    return run
+
+
+@pytest.fixture(autouse=True)
+def no_real_board_or_git(monkeypatch):
+    """No test reads this machine's board or asks its git. Every run here
+    sees a tree that matches its commit and a board with neither reader,
+    which is Windows' footer, unless the test says otherwise."""
+    monkeypatch.setattr(cli, "_run_git", git_says())
+    monkeypatch.setattr(board, "find_vcgencmd", lambda: None)
+    monkeypatch.setattr(board, "load_average", lambda: None)
+
+
+def on_the_body(monkeypatch, *, temps=("49.9", "51.2"), flags=("0x0", "0x0"), loads=((0.07, 0.06, 0.05), (0.35, 0.12, 0.08))):
+    """The board readers of a Raspberry Pi, giving one reading at boot and
+    one at the footer. Returns the phase of the run each reading was taken
+    in: `boot` before the session starts, `running` after, `footer` once
+    the footer is printing. Values handed out in order cannot tell two
+    footer readings from one at boot and one at the footer; the phases can.
+    """
+    taken: dict[str, list[str]] = {"phases": []}
+    phase = {"now": "boot"}
+    printed = iter([f"temp={temps[0]}'C\n", f"throttled={flags[0]}\n", f"temp={temps[1]}'C\n", f"throttled={flags[1]}\n"])
+    load = iter(loads)
+
+    def load_average():
+        taken["phases"].append(phase["now"])
+        return next(load)
+
+    real_start, real_footer = ListenSession.start, cli.print_run_footer
+
+    async def start(self):
+        phase["now"] = "running"
+        await real_start(self)
+
+    def footer(*a, **kw):
+        phase["now"] = "footer"
+        return real_footer(*a, **kw)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+    monkeypatch.setattr(cli, "print_run_footer", footer)
+    monkeypatch.setattr(board, "find_vcgencmd", lambda: lambda command: next(printed))
+    monkeypatch.setattr(board, "load_average", load_average)
+    return taken
 
 
 def write_wav(path: Path, pcm: bytes) -> str:
@@ -949,3 +1017,233 @@ def test_a_warning_from_the_state_file_is_printed_even_when_something_was_kept(t
     assert "state: kept wake.mock (cmninit) for the next boot" in out
     assert "capability.eyes" not in out.split("state: kept", 1)[1].split("\n", 1)[0]
     assert "warning: capability.eyes gave a value that cannot be written down" in out
+
+
+# ------------------------------------------------------- the identity line
+
+
+def test_the_first_line_of_a_run_names_the_tree_that_ran(tmp_path, monkeypatch, capsys):
+    """The body runner's record of which tree ran: the four versions and the
+    revision, one line in a fixed shape, before anything else."""
+    wav = write_wav(tmp_path / "id.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    monkeypatch.setattr(cli, "_version", lambda name: "0.5.5")
+
+    asyncio.run(cli._run(args()))
+
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first == (
+        "emet-listen: emet-sdk 0.5.5, emet-hal 0.5.5, emet-providers 0.5.5, emet-engine 0.5.5; "
+        "revision eb5574854148, working tree matches"
+    )
+    assert IDENTITY.match(first)
+
+
+def test_a_boot_that_fails_still_names_its_tree(tmp_path, monkeypatch, capsys):
+    """A manifest that cannot be read stops the boot; the line was printed
+    before it, so the log says which tree failed."""
+    assert cli.main([str(tmp_path / "missing.yaml"), str(tmp_path / "soul.yaml")]) == 1
+
+    captured = capsys.readouterr()
+    assert IDENTITY.match(captured.out.splitlines()[0])
+    assert "could not read" in captured.err
+
+
+@pytest.mark.parametrize(
+    "stdout, code, stderr, expected",
+    [
+        (CLEAN, 0, "", "eb5574854148, working tree matches"),
+        (CLEAN + "1 .M N... 100644 100644 100644 0123 0123 emet-engine/emet_engine/cli.py\n", 0, "",
+         "eb5574854148, working tree differs"),
+        (CLEAN + "? tools/bank/\n", 0, "", "eb5574854148, working tree differs"),
+        ("# branch.oid (initial)\n# branch.head master\n", 0, "", "unknown: no commit yet"),
+        ("", 128, "fatal: not a git repository (or any of the parent directories): .git\n", "unknown: not a git checkout"),
+        ("", 129, "error: unknown option `no-ahead-behind'\n", "unknown: git exited 129"),
+    ],
+    ids=["clean", "a changed file", "an untracked file", "no commit", "not a checkout", "git fails"],
+)
+def test_the_revision_reads_git_status(monkeypatch, stdout, code, stderr, expected):
+    monkeypatch.setattr(cli, "_run_git", git_says(stdout, code, stderr))
+    assert cli.revision() == expected
+    assert IDENTITY.match(cli.identity_line("emet-talk"))
+
+
+def test_without_git_the_revision_is_unknown(monkeypatch):
+    monkeypatch.setattr(cli, "_run_git", git_says(FileNotFoundError("git")))
+    assert cli.revision() == "unknown: git not found"
+
+
+def test_a_git_that_hangs_is_given_up(monkeypatch):
+    monkeypatch.setattr(cli, "_run_git", git_says(subprocess.TimeoutExpired(["git"], cli.GIT_TIMEOUT_S)))
+    assert cli.revision() == "unknown: git took longer than 2 s"
+
+
+def test_an_installed_copy_never_asks_git(monkeypatch, tmp_path):
+    """A wheel's copy sits under site-packages, inside whatever checkout its
+    venv is in; git there would name a commit the copy was never built from."""
+    calls: list = []
+    monkeypatch.setattr(cli, "_run_git", git_says(calls=calls))
+    for installed in (
+        tmp_path / ".venv" / "lib" / "python3.13" / "site-packages" / "emet_engine",
+        tmp_path / "usr" / "lib" / "python3" / "dist-packages" / "emet_engine",
+    ):
+        assert cli.revision(installed) == "unknown: installed, not a checkout"
+    assert calls == []
+
+
+def test_git_is_asked_once_with_a_time_limit_and_without_the_index_lock(monkeypatch, tmp_path):
+    seen: list = []
+
+    def run(argv, **kwargs):
+        seen.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, CLEAN, "")
+
+    monkeypatch.setattr(cli, "_run_git", REAL_RUN_GIT)
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+    assert cli.revision(tmp_path) == "eb5574854148, working tree matches"
+    ((argv, kwargs),) = seen
+    assert argv[:4] == ["git", "-C", str(tmp_path), "status"]
+    assert "--porcelain=v2" in argv and "--untracked-files=normal" in argv and "--no-ahead-behind" in argv
+    assert kwargs["timeout"] == cli.GIT_TIMEOUT_S and kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["env"]["GIT_OPTIONAL_LOCKS"] == "0" and kwargs["env"]["LC_ALL"] == "C"
+
+
+def test_bytes_git_prints_that_are_not_utf8_never_stop_the_run(monkeypatch, tmp_path):
+    """A branch named "Á" (UTF-8 C3 81, which Windows' cp1252 cannot read)
+    and a lone 0xC1 (which UTF-8 cannot): decoded with the locale, the first
+    gave a false "no commit yet" on Windows and the second stopped
+    emet-listen before boot on the reference body (review, 2026-10-28).
+    A Python child prints the bytes in git's place, through `_run_git`'s
+    own arguments to `subprocess.run`, so the decoding tested is the real
+    one and no git is run."""
+    printed = (
+        b"# branch.oid " + COMMIT.encode() + b"\n# branch.head "
+        + "Á".encode("utf-8") + bytes([0xC1]) + b"\n"
+    )
+    child = f"import sys; sys.stdout.buffer.write(bytes({list(printed)}))"
+    real_run = subprocess.run
+
+    def as_git(argv, **kwargs):
+        return real_run([sys.executable, "-c", child], **kwargs)
+
+    monkeypatch.setattr(cli, "_run_git", REAL_RUN_GIT)
+    monkeypatch.setattr(cli.subprocess, "run", as_git)
+
+    assert cli.revision(tmp_path) == "eb5574854148, working tree matches"
+
+
+@pytest.mark.parametrize(
+    "failure, reason",
+    [
+        (PermissionError(13, "Permission denied"), "unknown: git could not run (PermissionError)"),
+        (OSError(8, "Exec format error"), "unknown: git could not run (OSError)"),
+        (subprocess.SubprocessError("broken pipe"), "unknown: git could not run (SubprocessError)"),
+    ],
+    ids=["not allowed", "will not start", "fails otherwise"],
+)
+def test_a_git_that_cannot_run_costs_the_revision_and_never_the_run(tmp_path, monkeypatch, capsys, failure, reason):
+    monkeypatch.setattr(cli, "_run_git", git_says(failure))
+    assert cli.revision() == reason
+
+    wav = write_wav(tmp_path / "g.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    assert asyncio.run(cli._run(args())) == 0
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first.endswith(f"; revision {reason}") and IDENTITY.match(first)
+
+
+def test_the_identity_line_is_printed_before_discovery(monkeypatch, capsys):
+    """Before discovery, so a body whose plugins will not load still names
+    its tree: discovery here prints a line of its own and finds nothing."""
+
+    class NothingInstalled:
+        @staticmethod
+        def discover():
+            print("discovering")
+            return {}
+
+    monkeypatch.setattr(cli, "PluginRegistry", NothingInstalled)
+
+    assert asyncio.run(cli._run(args())) == 2
+    lines = capsys.readouterr().out.splitlines()
+    assert IDENTITY.match(lines[0]) and lines[1] == "discovering"
+
+
+def test_a_package_that_is_not_installed_is_one_token(monkeypatch):
+    real_version = cli.metadata.version
+
+    def version(name):
+        if name == "emet-hal":
+            raise cli.metadata.PackageNotFoundError(name)
+        return real_version(name)
+
+    monkeypatch.setattr(cli.metadata, "version", version)
+    line = cli.identity_line("emet-listen")
+    assert ", emet-hal not-installed, " in line and IDENTITY.match(line)
+
+
+# ------------------------------------------------------ the board's state
+
+
+BOARD_LINES = [
+    "  board         at start: temp 49.9'C, throttled 0x0, load 0.07 0.06 0.05",
+    "  board         at end:   temp 51.2'C, throttled 0x0, load 0.35 0.12 0.08",
+    "  board         during the run: no throttle flag set",
+]
+
+
+def test_stats_prints_the_board_above_the_verdict_read_twice(tmp_path, monkeypatch, capsys):
+    """Once at boot, before the session starts, and once at the footer, and
+    never per frame: the readers give two readings and fail on a third, and
+    each reading records the phase it was taken in."""
+    wav = write_wav(tmp_path / "b.wav", saying(3))
+    stub_loaders(monkeypatch, body(wav), soul())
+    taken = on_the_body(monkeypatch)
+
+    assert asyncio.run(cli._run(args())) == 0
+
+    rows = capsys.readouterr().out.splitlines()
+    verdict = next(i for i, row in enumerate(rows) if row.startswith("  verdict "))
+    assert rows[verdict - 3:verdict] == BOARD_LINES
+    assert taken["phases"] == ["boot", "footer"]
+
+
+def test_without_stats_the_board_is_never_read(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "q.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    taken = on_the_body(monkeypatch)
+
+    asyncio.run(cli._run(args(stats=False)))
+
+    assert taken["phases"] == []
+    assert "  board " not in capsys.readouterr().out
+
+
+def test_where_neither_reader_exists_the_footer_has_no_board_line(tmp_path, monkeypatch, capsys):
+    """Windows: no vcgencmd and no load average, so nothing is printed for
+    either, where a line naming what is missing would be the same in every
+    footer."""
+    wav = write_wav(tmp_path / "w.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+
+    asyncio.run(cli._run(args()))
+
+    out = capsys.readouterr().out
+    assert "verdict" in out and "  board " not in out
+
+
+def test_the_footers_name_cut_line_is_still_the_only_one_that_starts_so(tmp_path, monkeypatch, capsys):
+    """`footer_name_cut.py` takes the first line that starts with `name cut`
+    once stripped, and `body_log_check.py` tells the footer's line from the
+    line under each wake the same way. A board with every flag decoded
+    leaves that alone."""
+    stub_loaders(monkeypatch, handing_over(tmp_path, "n.wav"), soul(provider="mock"))
+    on_the_body(monkeypatch, flags=("0x50000", "0x50005"))
+
+    asyncio.run(cli._run(args(transcribe=True)))
+
+    rows = capsys.readouterr().out.splitlines()
+    starting = [row for row in rows if row.strip().startswith("name cut")]
+    assert len(starting) == 1 and starting[0].startswith("  name cut      1 of 2 handover(s)")
+    assert "  board         during the run: under-voltage now, throttled now" in rows

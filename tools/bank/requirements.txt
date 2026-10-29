@@ -1,0 +1,51 @@
+# The bank tools' packages, for a tools venv only (D9, decided 2026-10-27):
+# a permissive package pinned here, installed only into a tools venv, and
+# imported by none of the four packages. Never install this into the repo's
+# venv or onto the reference body's. manifest.py, check.py and record.py
+# need none of it; label.py needs everything above the pytest group.
+#
+#   python -m venv <scratch>/tools-venv
+#   <scratch>/tools-venv/Scripts/python.exe -m pip install -r tools/bank/requirements.txt   (Windows)
+#   <scratch>/tools-venv/bin/python -m pip install -r tools/bank/requirements.txt           (Linux)
+#
+# Every pin is the full set pip resolved on the laptop (Windows x86-64,
+# Python 3.13.2, 2026-10-27). Each licence is PyPI's field or classifier for
+# that version, read through its JSON API on 2026-10-27.
+
+# What label.py imports
+faster-whisper==1.2.1        # MIT
+ctranslate2==4.8.3           # MIT; 4.8.4 (2026-10-25) was two days old, so the one before it
+pocketsphinx==5.1.1          # BSD (classifier); the same version as the repo venv's wake extra
+huggingface_hub==2.3.0       # Apache-2.0; fetches the model at its pinned revision
+numpy==2.5.4                 # BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+
+# What they pull in
+anyio==4.15.1                # MIT
+av==19.0.2                   # BSD-3-Clause; its wheels carry FFmpeg's libraries, whose licence in that build is unverified. label.py hands whisper samples, so av decodes nothing
+cffi==2.1.1                  # MIT-0
+click==8.5.0                 # BSD-3-Clause
+colorama==0.4.6              # BSD (classifier); pulled in on Windows only
+filelock==4.2.4              # MIT
+flatbuffers==25.12.19        # Apache 2.0
+fsspec==2026.9.0             # BSD-3-Clause
+h11==0.16.0                  # MIT
+hf-xet==1.7.0                # Apache-2.0
+httpcore2==2.16.0            # BSD-3-Clause
+httpx2==2.16.0               # BSD-3-Clause
+idna==3.20                   # BSD-3-Clause
+onnxruntime==1.31.1          # MIT; faster-whisper's voice filter, which label.py leaves off
+packaging==26.3              # Apache-2.0 OR BSD-2-Clause
+protobuf==7.36.2             # BSD-3-Clause
+pycparser==3.12              # BSD-3-Clause
+PyYAML==6.0.3                # MIT
+sounddevice==0.5.6           # MIT; pocketsphinx's dependency. label.py blocks its import, so no device opens
+tokenizers==0.23.3           # Apache (classifier)
+tqdm==4.70.1                 # MPL-2.0 AND MIT
+truststore==0.10.5           # MIT
+typing_extensions==4.16.0    # PSF-2.0
+
+# For the label tests that need faster-whisper
+pytest==9.1.1                # MIT
+iniconfig==2.3.1             # MIT
+pluggy==1.7.0                # MIT
+Pygments==2.21.0             # BSD-2-Clause

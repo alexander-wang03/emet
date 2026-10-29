@@ -224,6 +224,185 @@ def test_shutdown_forgets_the_utterance_in_progress():
     assert run(stt.feed(frame(b"thought"))) is None
 
 
+# --------------------------------------------------------------- cassettes
+
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+
+from emet_providers import cassette  # noqa: E402
+
+REQUEST = {"provider": "deepgram", "model": "nova-3", "sample_rate": 16000, "query": {"smart_format": "false"}}
+
+
+def pcm(n: int, size: int = FRAME_BYTES) -> bytes:
+    """Bytes that spell nothing, so only the cassette can answer."""
+    return bytes((n * 7 + i) % 200 + 1 if i % 2 else 0x80 + (n % 64) for i in range(size))
+
+
+def tape(tmp_path, frames, partials: dict[int, str], final: str, request=REQUEST, name="c.json"):
+    rec = cassette.TurnRecorder(request)
+    for n, f in enumerate(frames, 1):
+        rec.feed(f)
+        if n in partials:
+            rec.partial(partials[n])
+    turn = rec.turn(final, confidence=0.99, model_version="2025-04-17.21547", recorded="2026-10-27", source="test_mock")
+    return cassette.save(tmp_path / name, [turn])
+
+
+def through(stt, frames):
+    async def scenario():
+        partials = [await stt.feed(f) for f in frames]
+        return partials, await stt.finish()
+
+    return run(scenario())
+
+
+def test_a_cassette_gives_the_recorded_partials_and_final_for_the_same_bytes(tmp_path):
+    frames = [pcm(1, 5440), pcm(2), pcm(3)]
+    path = tape(tmp_path, frames, {2: "Where", 3: "Where are my keys?"}, "Where are my keys?")
+    stt = started(cassette=str(path), cassette_request=REQUEST)
+    assert stt.describe().healthy
+    partials, final = through(stt, frames)
+    assert partials[0] is None
+    assert [p.text for p in partials[1:]] == ["Where", "Where are my keys?"]
+    assert all(not p.final and p.confidence == 1.0 for p in partials[1:]), "a cassette keeps no partial's confidence"
+    assert final == Transcript(text="Where are my keys?", final=True, confidence=0.99, error=None)
+
+
+def test_other_bytes_are_a_miss_an_empty_final_with_the_reason_and_no_exception(tmp_path):
+    frames = [pcm(1), pcm(2)]
+    path = tape(tmp_path, frames, {1: "Where"}, "Where are my keys?")
+    stt = started(cassette=str(path))
+    partials, final = through(stt, [frames[0], pcm(9)])
+    assert partials[0].text == "Where", "the prefix matched, so its partial was due"
+    assert final.final and final.text == "" and final.error == cassette.MISS == "cassette miss"
+
+
+def test_a_turn_recorded_for_another_request_is_a_miss(tmp_path):
+    frames = [pcm(1)]
+    path = tape(tmp_path, frames, {}, "What's 22", request={**REQUEST, "query": {"smart_format": "true"}})
+    _, final = through(started(cassette=str(path), cassette_request=REQUEST), frames)
+    assert final.error == "cassette miss"
+    _, final = through(started(cassette=str(path)), frames)
+    assert final.text == "What's 22", "without cassette_request every turn is a candidate"
+
+
+def test_a_directory_of_cassettes_is_one_cassette(tmp_path):
+    tape(tmp_path, [pcm(1)], {}, "one", name="a.json")
+    tape(tmp_path, [pcm(2)], {}, "two", name="b.json")
+    stt = started(cassette=str(tmp_path))
+    assert through(stt, [pcm(2)])[1].text == "two"
+    assert through(stt, [pcm(1)])[1].text == "one"
+
+
+@pytest.mark.parametrize(
+    "content, words",
+    [
+        (None, "no such file"),
+        ("{oops", "not JSON"),
+        (json.dumps({"format": "emet-bank/1"}), "format"),
+    ],
+)
+def test_a_cassette_that_cannot_be_read_leaves_start_unhealthy_with_the_reason(tmp_path, content, words):
+    path = tmp_path / "c.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    stt = started(cassette=str(path))
+    assert not stt.describe().healthy
+    health = stt.health()
+    assert not health.ok and health.faults == ("start_failed",)
+    assert words in (health.detail or "") and "cassette" in (health.detail or "")
+    assert run(stt.feed(pcm(1))) is None
+
+
+@pytest.mark.parametrize(
+    "params, words",
+    [
+        ({"transcript": "hello"}, "exclude each other"),
+        ({"cassette_request": {**REQUEST, "sample_rate": 8000}}, "8000 Hz"),
+        ({"cassette_request": "deepgram"}, "mapping"),
+        ({"cassette_request": {**REQUEST, "query": {"api_key": "x"}}}, "credential"),
+    ],
+)
+def test_a_cassette_set_up_wrong_is_refused_at_start(tmp_path, params, words):
+    path = tape(tmp_path, [pcm(1)], {}, "x")
+    stt = started(cassette=str(path), **params)
+    assert not stt.describe().healthy
+    assert words in (stt.health().detail or "")
+
+
+def test_a_cassette_request_without_a_cassette_is_refused():
+    stt = started(cassette_request=REQUEST)
+    assert not stt.describe().healthy
+    assert "no cassette" in (stt.health().detail or "")
+
+
+def test_record_turns_keeps_each_turns_bytes_exactly_as_fed(tmp_path):
+    out = tmp_path / "turns"
+    stt = started(record_turns=str(out))
+    first = [frame(b"where"), frame(b"are my keys")[:2000], frame()]
+    second = [frame(b"stop")]
+    through(stt, first)
+    through(stt, second)
+    assert (out / "turn-0001.raw").read_bytes() == b"".join(first)
+    assert (out / "turn-0002.raw").read_bytes() == b"".join(second)
+    lines = [json.loads(line) for line in (out / "turns.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert lines[0] == {
+        "turn": 1,
+        "bytes": 2560 + 2000 + 2560,
+        "feed_sizes": [2560, 2000, 2560],
+        "fed_sha256": hashlib.sha256(b"".join(first)).hexdigest(),
+        "cassette": None,
+        "final": "where are my keys",
+        "partials": 2,
+    }
+    assert lines[1]["turn"] == 2 and lines[1]["final"] == "stop" and lines[1]["partials"] == 1
+
+
+def test_record_turns_says_hit_or_miss_with_a_cassette(tmp_path):
+    frames = [pcm(1), pcm(2)]
+    path = tape(tmp_path, frames, {2: "Where are my keys?"}, "Where are my keys?")
+    out = tmp_path / "turns"
+    stt = started(cassette=str(path), record_turns=str(out))
+    through(stt, frames)
+    through(stt, [pcm(5)])
+    lines = [json.loads(line) for line in (out / "turns.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(l["cassette"], l["final"], l["partials"]) for l in lines] == [("hit", "Where are my keys?", 1), ("miss", "", 0)]
+    assert lines[1]["fed_sha256"] == hashlib.sha256(pcm(5)).hexdigest()
+    assert (out / "turn-0002.raw").read_bytes() == pcm(5), "a miss keeps its bytes for the paid list"
+
+
+def test_a_record_turns_write_that_fails_is_noted_and_the_turn_still_ends(tmp_path):
+    """Losing a record is not the person's problem: the final comes back as
+    it would have, and `record_error` says what was lost."""
+    import shutil
+
+    out = tmp_path / "turns"
+    stt = started(record_turns=str(out))
+    shutil.rmtree(out)
+    out.write_text("a file where the directory was", encoding="utf-8")
+    _, final = through(stt, [frame(b"hello")])
+    assert final == Transcript(text="hello", final=True, confidence=1.0)
+    assert (stt.record_error or "").startswith("record_turns: turn 1:")
+
+
+def test_record_turns_refuses_a_directory_another_run_wrote(tmp_path):
+    out = tmp_path / "turns"
+    through(started(record_turns=str(out)), [frame(b"once")])
+    again = started(record_turns=str(out))
+    assert not again.describe().healthy
+    assert "own" in (again.health().detail or "")
+
+
+def test_without_the_new_params_nothing_is_written_and_nothing_is_hashed(tmp_path, monkeypatch):
+    stt = started()
+    monkeypatch.chdir(tmp_path)
+    through(stt, [frame(b"hello")])
+    assert list(tmp_path.iterdir()) == []
+    assert stt._player is None and stt._turns_dir is None
+
+
 # ----------------------------------------------------------------- version
 
 

@@ -1,0 +1,150 @@
+{
+  "format": "emet-golden/1",
+  "recording": "thank-you-0.5.4",
+  "sha256": "91a8746300d2d9f5f8f8d835298376807f528eec0807018d50d8428c6683bde7",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 875,
+    "wakes": 9,
+    "turns": 9,
+    "name_cut": "3 of 9"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "thank-you-0.5.4/01",
+      "wake_end_sample": 111360,
+      "lag_ms": 200.0,
+      "name_ms": 100.0,
+      "level_ms": 100.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "5d49ee7f5dc51185ee816cc29bf461bcc14cd1b298092bace0f45906faa1fc18",
+      "fed_sha256": "4c4570d233d65b8294e72a290e05df4ae1fd18cebe65da0e190fc7327962d7e8",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "thank-you-0.5.4/02",
+      "wake_end_sample": 200960,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "30b51793d991773f12b97a6f6dec35f03e9bdcf0fb72b49f40a578936abc3d11",
+      "fed_sha256": "b5ac24d7082c47d8793aa75c9c96d28508d1e8df6429bbb57a3a97af544f2b89",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "thank-you-0.5.4/03",
+      "wake_end_sample": 290560,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "3f7266e7e5507cc4a66167489bab42a798333e2d030a4785525cc5b3532cc529",
+      "fed_sha256": "e13613a4ddee7385813842c331d19d67aa25337db50b23675c4c9d722a9067d0",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "thank-you-0.5.4/04",
+      "wake_end_sample": 385280,
+      "lag_ms": 210.0,
+      "name_ms": 120.0,
+      "level_ms": 120.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "1463e5a95ee05222c414bc2aacef1d48263a08a828a4bc96415be40954f7cb37",
+      "fed_sha256": "6abf9d7848ef7e428c1584c914f19a51eccba94e932621260934529cb8aa9c66",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "thank-you-0.5.4/05",
+      "wake_end_sample": 488960,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "a9f19f44817def3991dbc54363af0fb8ca5e5416a7db3968584201c1328140fc",
+      "fed_sha256": "7e5b0232bbf22c3f235af3c8af8985fa7cd0dc933371989cd7e5c8330c6e4b6f",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "thank-you-0.5.4/07",
+      "wake_end_sample": 692480,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "0292da31373e0f20a5cebfb0cb6391414de512de3986dd0b455e29f216acf9f4",
+      "fed_sha256": "7b3c4e9ed7799f30b3c7848da46ac827b77bb8187f2a313ee492d9d014787d2a",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "thank-you-0.5.4/08",
+      "wake_end_sample": 783360,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "acfd5555a1fe13df9c2bb2ea13abcc2aba74aa40d602e6b030173338b5a7c20e",
+      "fed_sha256": "82ed52c8483d512d0ea8185953aaf798e209f8f651cbb618df261d591b4fc423",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "thank-you-0.5.4/09",
+      "wake_end_sample": 864000,
+      "lag_ms": 180.0,
+      "name_ms": 140.0,
+      "level_ms": 140.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "a696fd8ed4514ce1f4d04a07dc9428e0c61e85d73851416c29ce0c28dd1e3c5b",
+      "fed_sha256": "cd59b941534ed2fc139ea11f16947a773ec8700a214bf373590ee2281b1707af",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 9,
+      "take": "thank-you-0.5.4/10",
+      "wake_end_sample": 961280,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "037bb15e3c856ccb9873eeadf17c983e79ab116845b6fef45c89e8731cd05341",
+      "fed_sha256": "3b76ed3b003f9298fb2852e70ca33dafaaa12620dc69e90b0411742a5ef655db",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 __all__ = ["Handover", "SessionStats", "Stopwatch"]
@@ -272,13 +273,20 @@ class SessionStats:
 
     # -------------------------------------------------------------- report
 
-    def report(self, *, live: bool) -> str:
+    def report(self, *, live: bool, board: Sequence[str] = ()) -> str:
         """A human-readable summary.
 
         `live` says whether the audio came from hardware, because it changes
         what can honestly be claimed: clock drift is only meaningful against a
         real sound card, and printing a wall-clock comparison for a file would
         be inventing a measurement.
+
+        `board` is the board's lines from `emet_engine.board.footer_lines`,
+        printed above the verdict: a throttled board or a busy one is the
+        first explanation for a run that did not keep up, and the verdict
+        stays the report's last line, where `body_log_check.py` ends its
+        reading of a footer. What the state file kept and the notes print
+        after the report.
         """
         lines = [
             f"  frames        {self.frames}  ({self.audio_ms / 1000:.1f}s of audio)",
@@ -368,5 +376,6 @@ class SessionStats:
                 "  clock         not measured: a file has no sound card, so "
                 "wall time says nothing about drift"
             )
+        lines.extend(board)
         lines.append(f"  verdict       {'kept up' if self.kept_up else 'DID NOT KEEP UP'}")
         return "\n".join(lines)

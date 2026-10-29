@@ -111,6 +111,22 @@ sound at the speaker, and to the last.
 
 ## The body
 
+Before anything boots, both commands print which tree is running, as one
+line in a fixed shape for a script to read:
+
+```
+emet-listen: emet-sdk 0.5.5, emet-hal 0.5.5, emet-providers 0.5.5, emet-engine 0.5.5; revision eb5574854148, working tree differs
+```
+
+Each version is what that package's installed metadata says, so a package
+installed editable and not reinstalled since its version changed shows the
+old number, and a package that is missing shows `not-installed`. The
+revision is the commit of the checkout the engine's source is in, from one
+`git status` given two seconds, and whether the working tree differs from
+it, untracked files included. A copy installed from a wheel, a directory
+that is not a checkout, or a machine without git prints `revision unknown: `
+and the reason. The machine's name is never printed.
+
 Since 0.5 both commands boot the body before they open the microphone. Every
 part the manifest declares is started through discovery and asked what it can
 actually do, except a reserved type, which has no plugin yet; every fallback
@@ -200,3 +216,23 @@ A file replay exercises everything except the sound card. A live run adds a
 `clock` line, the wall clock against the audio clock, and an `overflows`
 line, the callbacks PortAudio flagged as an input overflow. The reference body's live figures are in the 0.3
 release notes.
+
+`--stats` also reads the board as the run starts and again at the footer,
+and prints both above the verdict. On a Raspberry Pi:
+
+```
+  board         at start: temp 49.9'C, throttled 0x0, load 0.07 0.06 0.05
+  board         at end:   temp 51.2'C, throttled 0x0, load 0.35 0.12 0.08
+  board         during the run: no throttle flag set
+```
+
+The temperature and the flags are `vcgencmd measure_temp` and `vcgencmd
+get_throttled`, and the load is the 1, 5 and 15 minute load average. A flag
+that is set is named, from the Raspberry Pi documentation's table:
+under-voltage, frequency capped, throttled and the soft temperature limit,
+each `now` or `has occurred`. A `has occurred` flag stays set after its
+condition clears, so the last line compares the two readings and names
+what the run itself saw. Without `vcgencmd` only the load is printed, and without a load
+average either (Windows) there is no board line; a reader that exists and
+fails prints `unknown`. Nothing is read per frame. The method is the Reachy
+LiteRT sample's, cited in `CITATIONS.md`.

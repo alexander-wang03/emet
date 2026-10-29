@@ -234,6 +234,25 @@ def test_the_verdict_appears_in_the_report():
     assert "DID NOT KEEP UP" in s.report(live=False)
 
 
+def test_the_boards_lines_go_just_above_the_verdict():
+    """The board is the first explanation for a run that did not keep up,
+    and the verdict stays the last line, where the readers of a console
+    stop."""
+    s = stats()
+    s.record_frame(1.0)
+    board = ["  board         at start: load 0.07 0.06 0.05", "  board         at end:   load 0.35 0.12 0.08"]
+    rows = s.report(live=False, board=board).splitlines()
+    assert rows[-3:-1] == board
+    assert rows[-1] == "  verdict       kept up", "the verdict stays in the label column"
+    assert s.report(live=False).splitlines() == [row for row in rows if row not in board]
+
+
+def test_without_the_board_the_report_has_no_board_line():
+    s = stats()
+    s.record_frame(1.0)
+    assert "board" not in s.report(live=False) and "board" not in s.report(live=True)
+
+
 # ---------------------------------------------------------------- stopwatch
 
 

@@ -20,7 +20,9 @@ the body's state file is and what it carried over, the speaker's own
 output latency once its stream is open, and, with a language model running,
 how many sentences the robot was told about its body. `--explain` prints
 those sentences, and the whole system prompt when a language model is
-running.
+running. Since 0.5.5 the first line of a run, before anything boots, is its
+identity: the four packages' versions and the revision of the tree they ran
+from (`identity_line`).
 """
 
 from __future__ import annotations
@@ -28,8 +30,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import os
+import re
 import shutil
+import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -43,13 +49,132 @@ from emet_sdk.validate import (
     validate_soul,
 )
 
+from emet_engine import board
 from emet_engine.body import format_bindings
 from emet_engine.keys import load_keys
 from emet_engine.metrics import Handover
 from emet_engine.session import EngineError, ListenSession
 from emet_engine.turn import EndReason
 
-__all__ = ["main", "print_run_footer", "boot_lines", "Caption"]
+__all__ = ["main", "print_run_footer", "boot_lines", "identity_line", "revision", "Caption"]
+
+#: The four distributions a run is made of, in the order the identity line
+#: names them.
+DISTRIBUTIONS = ("emet-sdk", "emet-hal", "emet-providers", "emet-engine")
+
+#: How long git may take to say which commit the source is at. `revision()`
+#: took a median 31.28 ms on the maintainer's laptop (Windows 11, Python
+#: 3.13.2) and 9.31 ms on the reference body (Raspberry Pi 5, Python 3.13.5,
+#: a copy of the tree with its .git, load 0.05), 20 calls each on
+#: 2026-10-28, in `releases/v0.5.5/timings/` outside the repository. Past
+#: this the revision is printed as unknown and the run goes on.
+GIT_TIMEOUT_S = 2.0
+
+#: The engine's own source directory, where git is asked.
+_SOURCE = Path(__file__).resolve().parent
+
+
+def _version(distribution: str) -> str:
+    """A distribution's installed version, or `not-installed`, one token
+    either way, as the Reachy LiteRT sample's environment record writes a
+    missing package (`emulator/env.py` line 41, Apache-2.0)."""
+    try:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        return "not-installed"
+
+
+def _run_git(args: list[str], directory: Path) -> subprocess.CompletedProcess[str]:
+    """Run git in `directory`, the one place the identity line starts a
+    process.
+
+    `GIT_OPTIONAL_LOCKS=0` keeps `git status` from writing the index, so a
+    boot never holds the lock while the maintainer stages a change in the
+    same tree. `LC_ALL=C` keeps git's messages in English, so a directory
+    that is not a checkout is told apart from git failing. The output is
+    read as UTF-8 with anything else replaced. Read strictly with the
+    locale's codec, a byte that codec rejects raised on the reference body
+    and stopped emet-listen before boot, and on Windows a branch named with
+    an "Á" gave a false "no commit yet" (review, 2026-10-28).
+    """
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"}
+    return subprocess.run(
+        ["git", "-C", str(directory), *args],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=GIT_TIMEOUT_S,
+        stdin=subprocess.DEVNULL,
+        env=env,
+    )
+
+
+def revision(source: Path | None = None) -> str:
+    """The commit the engine's source is at and whether the working tree
+    differs from it, as `eb5574854148, working tree matches`; or
+    `unknown: <why>`.
+
+    One `git status`: its porcelain v2 header names the commit, and any
+    other line is a change, untracked files included, since a new file in
+    the tree is part of what ran. A distribution installed from a wheel
+    lives under `site-packages`, inside whatever checkout its venv sits in,
+    and git there would name a commit the installed copy was never built
+    from; that path is never asked. Git missing, slow or refusing says so,
+    and the run goes on.
+    """
+    here = _SOURCE if source is None else source
+    if any(part in ("site-packages", "dist-packages") for part in here.parts):
+        return "unknown: installed, not a checkout"
+    try:
+        done = _run_git(
+            ["status", "--porcelain=v2", "--branch", "--no-ahead-behind", "--untracked-files=normal"],
+            here,
+        )
+    except subprocess.TimeoutExpired:
+        return f"unknown: git took longer than {GIT_TIMEOUT_S:g} s"
+    except FileNotFoundError:
+        return "unknown: git not found"
+    except (OSError, subprocess.SubprocessError) as exc:
+        # A git that will not start, or fails some other way, costs the
+        # line its revision and never the run.
+        return f"unknown: git could not run ({type(exc).__name__})"
+    if done.returncode != 0:
+        if "not a git repository" in (done.stderr or ""):
+            return "unknown: not a git checkout"
+        return f"unknown: git exited {done.returncode}"
+    commit, changed = None, False
+    for line in (done.stdout or "").splitlines():
+        if line.startswith("# branch.oid "):
+            commit = line.split(" ", 2)[2].strip()
+        elif line and not line.startswith("#"):
+            changed = True
+    if commit is None or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit):
+        # "(initial)": a repository with no commit yet.
+        return "unknown: no commit yet"
+    return f"{commit[:12]}, working tree {'differs' if changed else 'matches'}"
+
+
+def identity_line(program: str) -> str:
+    """The first line a run prints: which tree ran.
+
+    `emet-listen: emet-sdk 0.5.5, emet-hal 0.5.5, emet-providers 0.5.5,
+    emet-engine 0.5.5; revision eb5574854148, working tree differs`. The
+    four versions always in that order, each a single token; after
+    `revision `, either twelve hex digits of the commit and `working tree
+    matches` or `working tree differs`, or `unknown: ` and the reason. It
+    is printed before discovery, so a boot that fails still names its tree,
+    and it never names the machine. The idea is microduck's, whose every
+    daemon writes its identity as its first line and says `rev unknown`
+    honestly when it has none (pollen-robotics/microduck at 942e58e,
+    `docs/design/architecture.md` lines 531 to 536 and 591 to 592; an
+    idea only, Apache-2.0). microduck compiles the revision in. Emet asks
+    git at boot, which names the commit of a checkout such as the
+    maintainer's; the body runner's tree is unpacked from an archive, so
+    its runs print `revision unknown: not a git checkout`, and the runner's
+    `source.json` records what it synced.
+    """
+    versions = ", ".join(f"{name} {_version(name)}" for name in DISTRIBUTIONS)
+    return f"{program}: {versions}; revision {revision()}"
 
 
 def _load(path: Path, kind: str, registry: PluginRegistry) -> dict[str, Any]:
@@ -246,6 +371,10 @@ def state_warnings(session: ListenSession) -> None:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    print(identity_line("emet-listen"), flush=True)
+    # The board as the run found it, before the models load. The footer
+    # reads it again; nothing reads it in between.
+    board_start = board.read_board() if args.stats else None
     install_stop_signals()
     registry = PluginRegistry.discover()
     if not registry:
@@ -381,7 +510,7 @@ async def _run(args: argparse.Namespace) -> int:
             print(f"\nstopped. heard it {heard} time(s).")
         else:
             print(f"\nsource ended. heard it {heard} time(s).")
-        _finish(session, args)
+        print_run_footer(session, stats=args.stats, board_start=board_start)
     return 0
 
 
@@ -410,11 +539,9 @@ async def _print_reply(session: ListenSession, text: str, *, speak: bool = False
             print(f"    the voice could not say {lost.text!r}: {lost.error}")
 
 
-def _finish(session: ListenSession, args: argparse.Namespace) -> None:
-    print_run_footer(session, stats=args.stats)
-
-
-def print_run_footer(session: ListenSession, *, stats: bool) -> None:
+def print_run_footer(
+    session: ListenSession, *, stats: bool, board_start: board.BoardReading | None = None
+) -> None:
     """Report what the run cost, if asked, and always report what it lost.
 
     Frames dropped while the loop was deliberately not reading (playback, a
@@ -424,12 +551,16 @@ def print_run_footer(session: ListenSession, *, stats: bool) -> None:
     Which flags the run had said nothing reliable about it: `--transcribe`
     alone waits for every final and was never counted busy. Shared by
     `emet-listen` and `emet-talk`.
+
+    `board_start` is the board as the run found it; with `stats`, the board
+    is read a second time here and both readings go above the verdict.
     """
     if stats:
+        lines = board.footer_lines(board_start, board.read_board()) if board_start is not None else []
         # `live` from the source that actually ran, not from the flag: only a
         # real sound card can drift, and claiming otherwise for a file would
         # be inventing a measurement.
-        print("\n" + session.stats.report(live=session.source_name != "wav"))
+        print("\n" + session.stats.report(live=session.source_name != "wav", board=lines))
     # What this run learned about this body goes into its state file; only
     # when there is none to keep it in is the person asked to carry it.
     state = getattr(session, "body_state", None)
@@ -576,7 +707,9 @@ def main(argv: list[str] | None = None) -> int:
         "the 0.3 acceptance criteria is actually checked. With a transcriber, "
         "also a line under each wake that handed audio over: its lag, the end "
         "of the name written as silence, and what the level stop alone would "
-        "have written",
+        "have written. Above the verdict, the board's temperature, throttle "
+        "flags and load average at the start and at the end, as far as the "
+        "machine reports them",
     )
     add_body_flags(parser)
     args = parser.parse_args(argv)
