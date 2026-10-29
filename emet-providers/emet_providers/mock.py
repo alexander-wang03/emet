@@ -33,6 +33,29 @@ Params, all optional:
     sample_rate     int. Report this rate instead of the one given, so a test
                     can watch the engine refuse a transcriber that would hear
                     speech at the wrong speed.
+    cassette        path to a cassette file, or a directory of them
+                    (`emet_providers.cassette`; the format is
+                    `tools/bank/FORMAT.md`, "Cassettes"). Answer with what a
+                    real transcriber said for exactly these bytes: a recorded
+                    partial on the `feed()` call whose bytes so far match it,
+                    and on `finish()` the recorded final when every byte of
+                    the utterance matches a turn. Anything else is a miss: an
+                    empty final whose `error` reads "cassette miss", never an
+                    exception. A cassette that cannot be read leaves `start()`
+                    unhealthy with the reason, as `fail_on_start` does. It
+                    replaces reading the audio, so it excludes `transcript`.
+    cassette_request
+                    mapping, the request the run stands for (`provider`,
+                    `model`, `sample_rate`, `query`, as a cassette's turns
+                    record it). Only turns recorded for this request are
+                    candidates; without it, every turn is.
+    record_turns    path to a directory. Write each utterance's bytes,
+                    exactly as fed, to `turn-0001.raw` and on, and one line a
+                    turn to `turns.jsonl` when it finishes: its number, bytes,
+                    the size of every feed, the sha256, "hit", "miss" or null
+                    without a cassette, the final and the number of partials.
+                    A directory that already holds a `turns.jsonl` is
+                    refused, so two runs never share one.
 
 `MockLanguageModel` answers without a model. Given nothing, it repeats the
 last thing the person said; given `params.reply`, it says that line. Either
@@ -76,9 +99,12 @@ Params, all optional:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any, AsyncIterator, Mapping
 
 from emet_sdk.plugin import LanguageModelPlugin, PluginError, TranscriberPlugin, VoicePlugin
@@ -95,6 +121,8 @@ from emet_sdk.types import (
     TranscriberDescriptor,
     VoiceDescriptor,
 )
+
+from emet_providers import cassette as _cassette
 
 __all__ = ["MockTranscriber", "MockLanguageModel", "MockVoice", "spelled", "read_back", "MIN_CHARS"]
 
@@ -148,9 +176,19 @@ class MockTranscriber(TranscriberPlugin):
         self.frames = 0
         #: Utterances closed with `finish()`.
         self.finished = 0
+        #: The last failure writing `record_turns`, for diagnostics. The turn
+        #: itself still ends normally: losing a record is not the person's
+        #: problem.
+        self.record_error: str | None = None
         self._words: list[str] = []
         self._started = False
         self._fault: str | None = None
+        self._player: _cassette.Player | None = None
+        self._turns_dir: Path | None = None
+        self._turn = 0
+        self._fed = bytearray()
+        self._feed_sizes: list[int] = []
+        self._partials = 0
 
     # ------------------------------------------------------------ lifecycle
 
@@ -165,7 +203,54 @@ class MockTranscriber(TranscriberPlugin):
             if not os.environ.get(self.key_env):
                 self._fail(f"no key: the environment variable {self.key_env} is not set")
                 return
+        reason = self._open_cassette() or self._open_turns_dir()
+        if reason:
+            self._fail(reason)
+            return
         self._started = True
+
+    def _open_cassette(self) -> str | None:
+        """Load `params.cassette`. Returns the reason it cannot be used."""
+        path = self.params.get("cassette")
+        request = self.params.get("cassette_request")
+        if not path:
+            if request is not None:
+                return "cassette_request names the request a cassette was recorded for, and no cassette is given"
+            return None
+        if self.params.get("transcript") is not None:
+            return "cassette and transcript exclude each other: one answers from recorded bytes, the other from a script"
+        if request is not None:
+            if not isinstance(request, Mapping):
+                return f"cassette_request is a mapping, not {type(request).__name__}"
+            rate = request.get("sample_rate")
+            if rate is not None and str(rate) != str(self.format.sample_rate):
+                return (
+                    f"cassette_request is for {rate} Hz and the audio is {self.format.sample_rate} Hz, "
+                    f"so no turn could match"
+                )
+        try:
+            player = _cassette.Player(_cassette.load(path), request)
+        except _cassette.CassetteError as exc:
+            return f"cassette: {exc}"
+        if not player.turns:
+            log.warning("mock stt: no turn in %s was recorded for this request; every turn will miss", path)
+        self._player = player
+        return None
+
+    def _open_turns_dir(self) -> str | None:
+        """Make `params.record_turns`. Returns the reason it cannot be used."""
+        path = self.params.get("record_turns")
+        if not path:
+            return None
+        directory = Path(str(path)).expanduser()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return f"record_turns: cannot make {directory}: {exc.strerror or exc}"
+        if (directory / "turns.jsonl").exists():
+            return f"record_turns: {directory} already holds a run's turns.jsonl; give each run a directory of its own"
+        self._turns_dir = directory
+        return None
 
     def _fail(self, reason: str) -> None:
         self._fault = reason
@@ -174,6 +259,14 @@ class MockTranscriber(TranscriberPlugin):
     async def shutdown(self) -> None:
         self._started = False
         self._words = []
+        self._forget_turn()
+
+    def _forget_turn(self) -> None:
+        self._fed = bytearray()
+        self._feed_sizes = []
+        self._partials = 0
+        if self._player is not None:
+            self._player.begin()
 
     # ------------------------------------------------------------ reporting
 
@@ -202,6 +295,22 @@ class MockTranscriber(TranscriberPlugin):
         self.frames += 1
         if not self._started:
             return None
+        if self._turns_dir is not None:
+            self._fed += frame
+            self._feed_sizes.append(len(frame))
+        partial = self._partial(frame)
+        if partial is not None:
+            self._partials += 1
+        return partial
+
+    def _partial(self, frame: bytes) -> Transcript | None:
+        if self._player is not None:
+            recorded = self._player.feed(frame)
+            if recorded is None:
+                return None
+            # A cassette keeps no partial's confidence, and 1.0 is what a
+            # provider says when it has no number.
+            return Transcript(text=recorded["text"], final=False, confidence=1.0)
         script = self._script
         if script:
             # One word a frame, so the partials grow the way a vendor's do.
@@ -217,10 +326,49 @@ class MockTranscriber(TranscriberPlugin):
 
     async def finish(self) -> Transcript:
         self.finished += 1
-        script = self._script
-        text = " ".join(script) if script else " ".join(self._words)
+        outcome: str | None = None
+        if self._started and self._player is not None:
+            played = self._player.finish()
+            if played.turn is None:
+                outcome = "miss"
+                final = Transcript(text="", final=True, confidence=1.0, error=_cassette.MISS)
+            else:
+                outcome = "hit"
+                said = played.turn["final"]
+                confidence = 1.0 if said["confidence"] is None else said["confidence"]
+                final = Transcript(text=said["text"], final=True, confidence=confidence, error=said["error"])
+        else:
+            script = self._script
+            text = " ".join(script) if script else " ".join(self._words)
+            final = Transcript(text=text, final=True, confidence=1.0)
+        if self._started and self._turns_dir is not None:
+            self._write_turn(final, outcome)
         self._words = []
-        return Transcript(text=text, final=True, confidence=1.0)
+        self._forget_turn()
+        return final
+
+    def _write_turn(self, final: Transcript, outcome: str | None) -> None:
+        """One turn's bytes and its line in `turns.jsonl`. The raw file is
+        written first, so a line always has its bytes beside it."""
+        assert self._turns_dir is not None
+        self._turn += 1
+        data = bytes(self._fed)
+        line = {
+            "turn": self._turn,
+            "bytes": len(data),
+            "feed_sizes": list(self._feed_sizes),
+            "fed_sha256": hashlib.sha256(data).hexdigest(),
+            "cassette": outcome,
+            "final": final.text,
+            "partials": self._partials,
+        }
+        try:
+            (self._turns_dir / f"turn-{self._turn:04d}.raw").write_bytes(data)
+            with open(self._turns_dir / "turns.jsonl", "a", encoding="utf-8") as out:
+                out.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            self.record_error = f"record_turns: turn {self._turn}: {exc.strerror or exc}"
+            log.error("mock stt: %s", self.record_error)
 
 
 def _words(text: str) -> list[str]:

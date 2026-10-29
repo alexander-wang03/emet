@@ -1,0 +1,802 @@
+{
+ "format": "emet-bank-plan/1",
+ "id": "v1-sitting-2",
+ "title": "Bank v1, sitting 2 of 2: numbers, short answers, pauses and long turns in room A; a TV, facing away, about 5 m; room B near and about 3 m",
+ "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). The table's room responses are left out too: the microphone's automatic gain control is on (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep; nothing reads a response before the generated bank of stage 2, which records them with that control off, if the maintainer decides so.",
+ "made_from": "research/references-2026-10-26/verification-design.md 5.1, the bank v1 table",
+ "speaker": "s01",
+ "device": "plughw:3,0",
+ "lead_s": 5,
+ "retake_slots": 1,
+ "positions": {
+  "a-near": {
+   "room": "room-a",
+   "distance": "near",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": null
+  },
+  "a-near-tv": {
+   "room": "room-a",
+   "distance": "near",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": "tv"
+  },
+  "a-3m": {
+   "room": "room-a",
+   "distance": "about 3 m",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": null
+  },
+  "a-3m-away": {
+   "room": "room-a",
+   "distance": "about 3 m",
+   "distance_m": null,
+   "facing": "away from the robot",
+   "noise": null
+  },
+  "a-5m": {
+   "room": "room-a",
+   "distance": "about 5 m, or the doorway",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": null
+  },
+  "b-near": {
+   "room": "room-b",
+   "distance": "near",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": null
+  },
+  "b-3m": {
+   "room": "room-b",
+   "distance": "about 3 m",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": null
+  }
+ },
+ "phrases": {
+  "wp01": {
+   "kind": "wake_pause",
+   "text": "hey emet ... what time is it",
+   "question": "what time is it",
+   "first_sound": "w"
+  },
+  "wp02": {
+   "kind": "wake_pause",
+   "text": "hey emet ... remind me to call my sister tomorrow morning",
+   "question": "remind me to call my sister tomorrow morning",
+   "first_sound": "r"
+  },
+  "wp03": {
+   "kind": "wake_pause",
+   "text": "hey emet ... how far away is the moon",
+   "question": "how far away is the moon",
+   "first_sound": "hh"
+  },
+  "wp04": {
+   "kind": "wake_pause",
+   "text": "hey emet ... I think the kitchen tap is dripping again",
+   "question": "I think the kitchen tap is dripping again",
+   "first_sound": "ay"
+  },
+  "wp05": {
+   "kind": "wake_pause",
+   "text": "hey emet ... play something quiet",
+   "question": "play something quiet",
+   "first_sound": "p"
+  },
+  "wp06": {
+   "kind": "wake_pause",
+   "text": "hey emet ... did anyone come to the door while I was out",
+   "question": "did anyone come to the door while I was out",
+   "first_sound": "d"
+  },
+  "wp07": {
+   "kind": "wake_pause",
+   "text": "hey emet ... what is the capital of Mongolia",
+   "question": "what is the capital of Mongolia",
+   "first_sound": "w"
+  },
+  "wp08": {
+   "kind": "wake_pause",
+   "text": "hey emet ... I am going to bed early tonight",
+   "question": "I am going to bed early tonight",
+   "first_sound": "ay"
+  },
+  "wp09": {
+   "kind": "wake_pause",
+   "text": "hey emet ... tell me a fact about octopuses",
+   "question": "tell me a fact about octopuses",
+   "first_sound": "t"
+  },
+  "wp10": {
+   "kind": "wake_pause",
+   "text": "hey emet ... the meeting moved to three o'clock on Thursday",
+   "question": "the meeting moved to three o'clock on Thursday",
+   "first_sound": "dh"
+  },
+  "wp11": {
+   "kind": "wake_pause",
+   "text": "hey emet ... turn the lights down a bit",
+   "question": "turn the lights down a bit",
+   "first_sound": "t"
+  },
+  "wp12": {
+   "kind": "wake_pause",
+   "text": "hey emet ... how do you spell necessary",
+   "question": "how do you spell necessary",
+   "first_sound": "hh"
+  },
+  "wp13": {
+   "kind": "wake_pause",
+   "text": "hey emet ... never mind",
+   "question": "never mind",
+   "first_sound": "n"
+  },
+  "wp14": {
+   "kind": "wake_pause",
+   "text": "hey emet ... can you hear me",
+   "question": "can you hear me",
+   "first_sound": "k"
+  },
+  "wp15": {
+   "kind": "wake_pause",
+   "text": "hey emet ... what's the weather like",
+   "question": "what's the weather like",
+   "first_sound": "w"
+  },
+  "wp16": {
+   "kind": "wake_pause",
+   "text": "hey emet ... set a reminder for lunch",
+   "question": "set a reminder for lunch",
+   "first_sound": "s"
+  },
+  "wp17": {
+   "kind": "wake_pause",
+   "text": "hey emet ... who wrote this song",
+   "question": "who wrote this song",
+   "first_sound": "hh"
+  },
+  "wp18": {
+   "kind": "wake_pause",
+   "text": "hey emet ... is the oven still on",
+   "question": "is the oven still on",
+   "first_sound": "ih"
+  },
+  "wp19": {
+   "kind": "wake_pause",
+   "text": "hey emet ... where did I put my glasses",
+   "question": "where did I put my glasses",
+   "first_sound": "w"
+  },
+  "wp20": {
+   "kind": "wake_pause",
+   "text": "hey emet ... tell me something funny",
+   "question": "tell me something funny",
+   "first_sound": "t"
+  },
+  "ob01": {
+   "kind": "one_breath",
+   "text": "hey emet, is it going to rain today",
+   "question": "is it going to rain today",
+   "first_sound": "ih"
+  },
+  "ob06": {
+   "kind": "one_breath",
+   "text": "hey emet, how far away is the moon",
+   "question": "how far away is the moon",
+   "first_sound": "hh"
+  },
+  "ob07": {
+   "kind": "one_breath",
+   "text": "hey emet, who are you",
+   "question": "who are you",
+   "first_sound": "hh"
+  },
+  "ob08": {
+   "kind": "one_breath",
+   "text": "hey emet, help me find my keys",
+   "question": "help me find my keys",
+   "first_sound": "hh"
+  },
+  "ob10": {
+   "kind": "one_breath",
+   "text": "hey emet, find my phone",
+   "question": "find my phone",
+   "first_sound": "f"
+  },
+  "ob13": {
+   "kind": "one_breath",
+   "text": "hey emet, thank you",
+   "question": "thank you",
+   "first_sound": "th"
+  },
+  "ob19": {
+   "kind": "one_breath",
+   "text": "hey emet, stop the music",
+   "question": "stop the music",
+   "first_sound": "s"
+  },
+  "ob21": {
+   "kind": "one_breath",
+   "text": "hey emet, should I bring an umbrella",
+   "question": "should I bring an umbrella",
+   "first_sound": "sh"
+  },
+  "ob28": {
+   "kind": "one_breath",
+   "text": "hey emet, can you hear me",
+   "question": "can you hear me",
+   "first_sound": "k"
+  },
+  "ob38": {
+   "kind": "one_breath",
+   "text": "hey emet, what's two plus two",
+   "question": "what's two plus two",
+   "first_sound": "w"
+  },
+  "nu01": {
+   "kind": "number",
+   "text": "hey emet, what's seven times eight",
+   "question": "what's seven times eight",
+   "first_sound": "w"
+  },
+  "nu02": {
+   "kind": "number",
+   "text": "hey emet, set a timer for fifteen minutes",
+   "question": "set a timer for fifteen minutes",
+   "first_sound": "s"
+  },
+  "nu03": {
+   "kind": "number",
+   "text": "hey emet, wake me at six thirty",
+   "question": "wake me at six thirty",
+   "first_sound": "w"
+  },
+  "nu04": {
+   "kind": "number",
+   "text": "hey emet, is it twenty two degrees",
+   "question": "is it twenty two degrees",
+   "first_sound": "ih"
+  },
+  "nu05": {
+   "kind": "number",
+   "text": "hey emet, count to five",
+   "question": "count to five",
+   "first_sound": "k"
+  },
+  "nu06": {
+   "kind": "number",
+   "text": "hey emet, what's a hundred minus one",
+   "question": "what's a hundred minus one",
+   "first_sound": "w"
+  },
+  "nu07": {
+   "kind": "number",
+   "text": "hey emet, remind me in ten minutes",
+   "question": "remind me in ten minutes",
+   "first_sound": "r"
+  },
+  "nu08": {
+   "kind": "number",
+   "text": "hey emet, how many days until the twenty first",
+   "question": "how many days until the twenty first",
+   "first_sound": "hh"
+  },
+  "nu09": {
+   "kind": "number",
+   "text": "hey emet, add three and four",
+   "question": "add three and four",
+   "first_sound": "ae"
+  },
+  "nu10": {
+   "kind": "number",
+   "text": "hey emet, call me at nine fifteen",
+   "question": "call me at nine fifteen",
+   "first_sound": "k"
+  },
+  "nu11": {
+   "kind": "number",
+   "text": "hey emet, is eleven a prime number",
+   "question": "is eleven a prime number",
+   "first_sound": "ih"
+  },
+  "nu12": {
+   "kind": "number",
+   "text": "hey emet, what's two plus two",
+   "question": "what's two plus two",
+   "first_sound": "w"
+  },
+  "sh01": {
+   "kind": "short",
+   "text": "hey emet, yes",
+   "question": "yes",
+   "first_sound": "y"
+  },
+  "sh02": {
+   "kind": "short",
+   "text": "hey emet, no",
+   "question": "no",
+   "first_sound": "n"
+  },
+  "sh03": {
+   "kind": "short",
+   "text": "hey emet, stop",
+   "question": "stop",
+   "first_sound": "s"
+  },
+  "sh04": {
+   "kind": "short",
+   "text": "hey emet, okay",
+   "question": "okay",
+   "first_sound": "ow"
+  },
+  "sh05": {
+   "kind": "short",
+   "text": "hey emet, thanks",
+   "question": "thanks",
+   "first_sound": "th"
+  },
+  "sh06": {
+   "kind": "short",
+   "text": "hey emet, wait",
+   "question": "wait",
+   "first_sound": "w"
+  },
+  "sh07": {
+   "kind": "short",
+   "text": "hey emet, again",
+   "question": "again",
+   "first_sound": "ah"
+  },
+  "sh08": {
+   "kind": "short",
+   "text": "hey emet, louder",
+   "question": "louder",
+   "first_sound": "l"
+  },
+  "pa05": {
+   "kind": "pause",
+   "text": "hey emet, I want to ... go to the shops",
+   "question": "I want to go to the shops",
+   "first_sound": "ay",
+   "pause_s": 0.5
+  },
+  "pa10": {
+   "kind": "pause",
+   "text": "hey emet, I want to ... go to the shops",
+   "question": "I want to go to the shops",
+   "first_sound": "ay",
+   "pause_s": 1.0
+  },
+  "pa15": {
+   "kind": "pause",
+   "text": "hey emet, I want to ... go to the shops",
+   "question": "I want to go to the shops",
+   "first_sound": "ay",
+   "pause_s": 1.5
+  },
+  "pa20": {
+   "kind": "pause",
+   "text": "hey emet, I want to ... go to the shops",
+   "question": "I want to go to the shops",
+   "first_sound": "ay",
+   "pause_s": 2.0
+  },
+  "pa25": {
+   "kind": "pause",
+   "text": "hey emet, I want to ... go to the shops",
+   "question": "I want to go to the shops",
+   "first_sound": "ay",
+   "pause_s": 2.5
+  },
+  "lo01": {
+   "kind": "long",
+   "text": "hey emet, I want to tell you about my day. I woke up early, made coffee, and walked to the station in the rain. The train was late again, so I read for a while and watched the people on the platform. At work we planned the new garden by the car park, and after lunch I fixed the printer twice. What do you think I should cook tonight?",
+   "question": "I want to tell you about my day. I woke up early, made coffee, and walked to the station in the rain. The train was late again, so I read for a while and watched the people on the platform. At work we planned the new garden by the car park, and after lunch I fixed the printer twice. What do you think I should cook tonight?",
+   "first_sound": "ay"
+  },
+  "lo02": {
+   "kind": "long",
+   "text": "hey emet, here is a story my grandmother used to tell. A fox lived at the edge of a village, and every winter it came down to the farms looking for food. One year a little girl left bread on the wall for it, every evening, until the snow melted. In the spring the fox came back with three cubs and sat on the wall to watch her. Do you like that story?",
+   "question": "here is a story my grandmother used to tell. A fox lived at the edge of a village, and every winter it came down to the farms looking for food. One year a little girl left bread on the wall for it, every evening, until the snow melted. In the spring the fox came back with three cubs and sat on the wall to watch her. Do you like that story?",
+   "first_sound": "hh"
+  },
+  "ta-read": {
+   "kind": "talk",
+   "text": "read aloud from a book or the printed sheet",
+   "question": null,
+   "first_sound": null
+  },
+  "ta-phone": {
+   "kind": "talk",
+   "text": "one side of a phone call",
+   "question": null,
+   "first_sound": null
+  },
+  "ta-noise": {
+   "kind": "talk",
+   "text": "nobody speaks: the TV or radio alone",
+   "question": null,
+   "first_sound": null
+  },
+  "rt": {
+   "kind": "room_tone",
+   "text": "nobody speaks",
+   "question": null,
+   "first_sound": null
+  }
+ },
+ "files": [
+  {
+   "id": "v1s2-01-a-near-room-tone",
+   "at": "a-near",
+   "kind": "room_tone",
+   "takes": [
+    "rt"
+   ],
+   "every_s": 60,
+   "say": "the room as it is, nobody speaking, nothing switched on or off for it"
+  },
+  {
+   "id": "v1s2-02-a-near-numbers-1",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "nu01",
+    "nu02",
+    "nu03",
+    "nu04",
+    "nu05",
+    "nu06",
+    "nu07",
+    "nu08",
+    "nu09",
+    "nu10",
+    "nu11",
+    "nu12"
+   ]
+  },
+  {
+   "id": "v1s2-03-a-near-numbers-2",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "nu12",
+    "nu11",
+    "nu10",
+    "nu09",
+    "nu08",
+    "nu07",
+    "nu06",
+    "nu05",
+    "nu04",
+    "nu03",
+    "nu02",
+    "nu01"
+   ]
+  },
+  {
+   "id": "v1s2-04-a-near-short-1",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "sh01",
+    "sh02",
+    "sh03",
+    "sh04",
+    "sh05",
+    "sh06",
+    "sh07",
+    "sh08",
+    "sh08",
+    "sh07",
+    "sh06",
+    "sh05"
+   ]
+  },
+  {
+   "id": "v1s2-05-a-near-short-2",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "sh04",
+    "sh03",
+    "sh02",
+    "sh01",
+    "sh01",
+    "sh02",
+    "sh03",
+    "sh04",
+    "sh05",
+    "sh06",
+    "sh07",
+    "sh08"
+   ]
+  },
+  {
+   "id": "v1s2-06-a-near-pauses-1",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "pa05",
+    "pa10",
+    "pa15",
+    "pa20",
+    "pa25"
+   ]
+  },
+  {
+   "id": "v1s2-07-a-near-pauses-2",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "pa25",
+    "pa20",
+    "pa15",
+    "pa10",
+    "pa05"
+   ]
+  },
+  {
+   "id": "v1s2-08-a-near-long",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "lo01",
+    "lo02"
+   ],
+   "every_s": 35
+  },
+  {
+   "id": "v1s2-09-a-near-tv-wake",
+   "at": "a-near-tv",
+   "kind": "takes",
+   "takes": [
+    "wp01",
+    "wp02",
+    "wp03",
+    "wp04",
+    "wp05",
+    "wp06",
+    "wp07",
+    "wp08",
+    "wp09",
+    "wp10"
+   ],
+   "say": "a TV or radio on, with speech, at its usual level"
+  },
+  {
+   "id": "v1s2-10-a-near-tv-one-breath",
+   "at": "a-near-tv",
+   "kind": "takes",
+   "takes": [
+    "ob06",
+    "ob07",
+    "ob08",
+    "ob10",
+    "ob13",
+    "ob19",
+    "ob01",
+    "ob38",
+    "ob28",
+    "ob21"
+   ]
+  },
+  {
+   "id": "v1s2-11-a-near-tv-tv-alone",
+   "at": "a-near-tv",
+   "kind": "talk",
+   "takes": [
+    "ta-noise"
+   ],
+   "every_s": 54
+  },
+  {
+   "id": "v1s2-12-a-near-tv-tv-alone",
+   "at": "a-near-tv",
+   "kind": "talk",
+   "takes": [
+    "ta-noise"
+   ],
+   "every_s": 54
+  },
+  {
+   "id": "v1s2-13-a-3m-numbers",
+   "at": "a-3m",
+   "kind": "takes",
+   "takes": [
+    "nu01",
+    "nu02",
+    "nu03",
+    "nu04",
+    "nu05",
+    "nu06"
+   ]
+  },
+  {
+   "id": "v1s2-14-a-3m-short",
+   "at": "a-3m",
+   "kind": "takes",
+   "takes": [
+    "sh01",
+    "sh02",
+    "sh03",
+    "sh04",
+    "sh05",
+    "sh06",
+    "sh07",
+    "sh08"
+   ]
+  },
+  {
+   "id": "v1s2-15-a-3m-away-wake",
+   "at": "a-3m-away",
+   "kind": "takes",
+   "takes": [
+    "wp06",
+    "wp07",
+    "wp08",
+    "wp09",
+    "wp10",
+    "wp11",
+    "wp12",
+    "wp13",
+    "wp14",
+    "wp15"
+   ]
+  },
+  {
+   "id": "v1s2-16-a-3m-away-one-breath",
+   "at": "a-3m-away",
+   "kind": "takes",
+   "takes": [
+    "ob06",
+    "ob07",
+    "ob08",
+    "ob10",
+    "ob13",
+    "ob19",
+    "ob01",
+    "ob38",
+    "ob28",
+    "ob21"
+   ]
+  },
+  {
+   "id": "v1s2-17-a-5m-wake",
+   "at": "a-5m",
+   "kind": "takes",
+   "takes": [
+    "wp11",
+    "wp12",
+    "wp13",
+    "wp14",
+    "wp15",
+    "wp16",
+    "wp17",
+    "wp18",
+    "wp19",
+    "wp20"
+   ]
+  },
+  {
+   "id": "v1s2-18-a-5m-one-breath",
+   "at": "a-5m",
+   "kind": "takes",
+   "takes": [
+    "ob06",
+    "ob07",
+    "ob08",
+    "ob10",
+    "ob13",
+    "ob19",
+    "ob01",
+    "ob38",
+    "ob28",
+    "ob21"
+   ]
+  },
+  {
+   "id": "v1s2-19-b-near-room-tone",
+   "at": "b-near",
+   "kind": "room_tone",
+   "takes": [
+    "rt"
+   ],
+   "every_s": 60,
+   "say": "the room as it is, nobody speaking, nothing switched on or off for it"
+  },
+  {
+   "id": "v1s2-20-b-near-wake",
+   "at": "b-near",
+   "kind": "takes",
+   "takes": [
+    "wp04",
+    "wp05",
+    "wp06",
+    "wp07",
+    "wp08",
+    "wp09",
+    "wp10",
+    "wp11",
+    "wp12",
+    "wp13"
+   ]
+  },
+  {
+   "id": "v1s2-21-b-near-one-breath",
+   "at": "b-near",
+   "kind": "takes",
+   "takes": [
+    "ob06",
+    "ob07",
+    "ob08",
+    "ob10",
+    "ob13",
+    "ob19",
+    "ob01",
+    "ob38",
+    "ob28",
+    "ob21"
+   ]
+  },
+  {
+   "id": "v1s2-22-b-near-talk-read",
+   "at": "b-near",
+   "kind": "talk",
+   "takes": [
+    "ta-read"
+   ],
+   "every_s": 54
+  },
+  {
+   "id": "v1s2-23-b-near-talk-phone",
+   "at": "b-near",
+   "kind": "talk",
+   "takes": [
+    "ta-phone"
+   ],
+   "every_s": 54
+  },
+  {
+   "id": "v1s2-24-b-3m-wake",
+   "at": "b-3m",
+   "kind": "takes",
+   "takes": [
+    "wp14",
+    "wp15",
+    "wp16",
+    "wp17",
+    "wp18",
+    "wp19",
+    "wp20",
+    "wp01",
+    "wp02",
+    "wp03"
+   ]
+  },
+  {
+   "id": "v1s2-25-b-3m-one-breath",
+   "at": "b-3m",
+   "kind": "takes",
+   "takes": [
+    "ob06",
+    "ob07",
+    "ob08",
+    "ob10",
+    "ob13",
+    "ob19",
+    "ob01",
+    "ob38",
+    "ob28",
+    "ob21"
+   ]
+  }
+ ]
+}

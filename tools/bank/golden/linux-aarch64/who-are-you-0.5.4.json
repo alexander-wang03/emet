@@ -1,0 +1,150 @@
+{
+  "format": "emet-golden/1",
+  "recording": "who-are-you-0.5.4",
+  "sha256": "d3b4c03812c38e8f409431b120bc6648f2f88eb0af384f030bb8dd6ac09fa069",
+  "platform": "linux-aarch64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 875,
+    "wakes": 9,
+    "turns": 9,
+    "name_cut": "1 of 9"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "who-are-you-0.5.4/01",
+      "wake_end_sample": 115200,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "f47516faedde352a74b98269bcb08e5d7e113c8926f83bab4100fc6b0afa82f6",
+      "fed_sha256": "00f146a1eb36051140385158e1c8e54c103f50e4592dee2b1fa53f0d9b03c6ed",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "who-are-you-0.5.4/02",
+      "wake_end_sample": 206080,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "f8dd649773d4e8ee633bf19b528d811e9000c5a6b3274cbc9d2b59543a09745e",
+      "fed_sha256": "b63e8b7eb58e2531f536936e8e9547f4fd8e7d38a2b7d919b0e7f7923dbe21ce",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "who-are-you-0.5.4/04",
+      "wake_end_sample": 408320,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "91ee4ab237b56703d529b926d6859f01d779e9f17b2239f6c20d7c0fa8ed3b06",
+      "fed_sha256": "d4b46e727d67036c72bc076cb3b02aa268db763e744a5cbc641069e3ef1049f3",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "who-are-you-0.5.4/05",
+      "wake_end_sample": 488960,
+      "lag_ms": 180.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "6e55e212bd1f0d3090d86315b0831d0605f2555bb389713dae88474968ab621f",
+      "fed_sha256": "7aa7a49a33d038ed45c2b1257bd27670c399d557f015e299be6288b0ab24d9c6",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "who-are-you-0.5.4/06",
+      "wake_end_sample": 581120,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "694e31559e034a993eada53be8758ddcae64a535ba5c5cd23ddad87e77df3804",
+      "fed_sha256": "e0a9e8a148740cd23dd23c794415272c9a82bfb37d18bdfcaddcf6edf5d7722d",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "who-are-you-0.5.4/07",
+      "wake_end_sample": 675840,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "af1e3980aa3e59c957399447ce3821f5d278afc6d8da3b0b636d7e0b89871f61",
+      "fed_sha256": "2c51df9321f9caae3e5a8acfd3b66fc866b27ebc89c5739148328cc4c1b6ac08",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "who-are-you-0.5.4/08",
+      "wake_end_sample": 778240,
+      "lag_ms": 180.0,
+      "name_ms": 100.0,
+      "level_ms": 100.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "63e0b1519166efaca3f630649a7b8f451486072309addd3e1f97f61b423dc0b5",
+      "fed_sha256": "6a628afe9ada8a4e9f96229ceec8dd55caa1cc7eb936aa57469ac80775cb198c",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "who-are-you-0.5.4/09",
+      "wake_end_sample": 867840,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "686937ee0c8dd374de8819aa2faa17a50a922fb0319a7e5d367bb110df24283e",
+      "fed_sha256": "a5610b6b8231370cb6a120e2291592e87db9438307bd5d72a17c005a3c7beb3c",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 9,
+      "take": "who-are-you-0.5.4/10",
+      "wake_end_sample": 963840,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "b3b1492783ef9e959bb56c2f260c67b2276e3eb902a813e8a1552c19fc7e9aa2",
+      "fed_sha256": "c3cff718058a51ceb1ec44f2442ee0e82dec1cc5f59df6b1fe71b42f378ac389",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

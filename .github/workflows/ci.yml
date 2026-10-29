@@ -243,6 +243,15 @@ jobs:
         working-directory: emet-engine
         run: python -m pytest -q
 
+      # The tools' own tests: the voice bank's tools and the body runner.
+      # They import no package beyond the four, so one Python is enough, and
+      # 3.13 is the one the laptop and the reference body run. Tests that need
+      # the bank's audio skip without it, since the bank never leaves the
+      # maintainer's machines.
+      - name: Test tools
+        if: matrix.python-version == '3.13'
+        run: python -m pytest -q tools/tests
+
       # Exercises the CLI against the editable install. This does NOT prove the
       # packaged layout works; see the `wheel` job for that.
       - name: CLI accepts the valid examples
@@ -314,3 +323,130 @@ jobs:
       - name: Test emet-engine
         working-directory: emet-engine
         run: python -m pytest -q
+
+  # The four suites on the reference body's architecture, on GitHub's arm64
+  # runner, which is free on public repositories (verified 2026-10-27, GitHub
+  # Docs, GitHub-hosted runners reference). The Pi runs them too, over SSH
+  # (tools/body/run.py); this job runs them on every pull request. Running
+  # arm64 work on `ubuntu-24.04-arm` is microduck's CI (Pollen Robotics,
+  # Apache-2.0, .github/workflows/ci.yml): the idea taken, no code.
+  #
+  # Advisory, by the maintainer's decision of 2026-10-27: never a required
+  # check. Advisory has to mean green as well as unrequired, because
+  # `release_audit.py --merge` holds a merge until every check passes, so
+  # each step below may fail without failing the job. A suite that failed
+  # is a warning on the run, raised by the last step.
+  arm64:
+    name: test (arm64, advisory)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install packages
+        id: install
+        continue-on-error: true
+        run: |
+          python -m pip install -e "emet-sdk[dev]"
+          python -m pip install -e "emet-hal[dev,wake]"
+          python -m pip install -e "emet-providers[dev,deepgram,anthropic,openai]"
+          python -m pip install -e "emet-engine[dev]"
+      - name: Test emet-sdk
+        id: sdk
+        continue-on-error: true
+        working-directory: emet-sdk
+        run: python -m pytest -q
+      - name: Test emet-hal
+        id: hal
+        continue-on-error: true
+        working-directory: emet-hal
+        run: python -m pytest -q
+      - name: Test emet-providers
+        id: providers
+        continue-on-error: true
+        working-directory: emet-providers
+        run: python -m pytest -q
+      - name: Test emet-engine
+        id: engine
+        continue-on-error: true
+        working-directory: emet-engine
+        run: python -m pytest -q
+      # `outcome` is a step's result before continue-on-error turns a failure
+      # into a pass (verified 2026-10-27, GitHub Docs, contexts reference).
+      - name: Say which steps failed on arm64
+        if: always()
+        env:
+          RESULTS: >-
+            install=${{ steps.install.outcome }}
+            emet-sdk=${{ steps.sdk.outcome }}
+            emet-hal=${{ steps.hal.outcome }}
+            emet-providers=${{ steps.providers.outcome }}
+            emet-engine=${{ steps.engine.outcome }}
+        run: |
+          failed=""
+          for pair in $RESULTS; do
+            [ "${pair#*=}" = "success" ] || failed="$failed ${pair%%=*}"
+          done
+          if [ -n "$failed" ]; then
+            echo "::warning title=arm64 (advisory)::failed on ubuntu-24.04-arm:$failed"
+            echo "Failed on ubuntu-24.04-arm (advisory):$failed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The four suites passed on ubuntu-24.04-arm." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # The real PortAudio path, which every other job leaves out: the suites
+  # stand a wav file in for the microphone and the null sink in for the
+  # speaker, so no test opens the hardware of the machine running it. Here a
+  # PulseAudio null sink is the speaker and its monitor the microphone, named
+  # to ALSA in ~/.asoundrc, and emet-hal/tests/test_audio_virtual.py plays a
+  # tone through `Speaker` and hears it through `MicrophoneSource`. A hosted
+  # runner has no sound card to reach. EMET_VIRTUAL_AUDIO is set in this job
+  # alone, and that file skips without it (the maintainer's decision of
+  # 2026-10-27). test_audio.py runs here too, so its tests that need
+  # sounddevice run against a real PortAudio once.
+  #
+  # The setup lines below, the pulseaudio command line, the ~/.asoundrc and
+  # the PULSE_SERVER line, are adapted from reachy_mini's
+  # .github/actions/virtual-sound-card/action.yml (Pollen Robotics,
+  # Apache-2.0, at commit 9fb2bfcbdf4c9800b0649acb8f0c18027673943f), with
+  # the sink's and the two devices' names changed; the apt line takes three
+  # of the packages its install-system-deps action lists. The runner is
+  # pinned to 24.04 because the apt package names are that release's.
+  sound:
+    name: virtual sound card
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install PulseAudio, ALSA's pulse plugin and PortAudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils libasound2-plugins libportaudio2
+      - name: Install packages
+        run: |
+          python -m pip install -e "emet-sdk[dev]"
+          python -m pip install -e "emet-hal[dev,audio]"
+      - name: Start PulseAudio with a null sink, and name both ends to ALSA
+        run: |
+          pulseaudio -D --exit-idle-time=-1 --disable-shm \
+            --load="module-native-protocol-unix socket=/tmp/pulse.sock" \
+            --load="module-null-sink sink_name=emet_null"
+          export PULSE_SERVER=unix:/tmp/pulse.sock
+          pactl info
+          pactl list short sinks
+          cat > ~/.asoundrc <<'EOF'
+          pcm.emet_virtual_sink { type pulse device "emet_null" }
+          pcm.emet_virtual_source { type pulse device "emet_null.monitor" }
+          EOF
+          echo "PULSE_SERVER=unix:/tmp/pulse.sock" >> "$GITHUB_ENV"
+          python -m sounddevice
+      - name: Test the PortAudio path through the virtual card
+        working-directory: emet-hal
+        env:
+          EMET_VIRTUAL_AUDIO: "1"
+        run: python -m pytest -q tests/test_audio_virtual.py tests/test_audio.py

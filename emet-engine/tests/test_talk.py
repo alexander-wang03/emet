@@ -11,6 +11,7 @@ robot uses.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import wave
 from pathlib import Path
 
@@ -18,11 +19,24 @@ import pytest
 
 from emet_sdk.types import Transcript
 
-from emet_engine import talk
+from emet_engine import board, cli, talk
 from emet_engine.session import ListenSession
 
 PHRASE = "hey emet"
 FRAME = 1280
+
+
+@pytest.fixture(autouse=True)
+def no_real_board_or_git(monkeypatch):
+    """No test reads this machine's board or asks its git: a tree that
+    matches its commit, and a board with neither reader, unless the test
+    says otherwise."""
+    status = "# branch.oid eb55748541483e9769610526bbaa21bfbe439f0b\n# branch.head master\n"
+    monkeypatch.setattr(
+        cli, "_run_git", lambda args, directory: subprocess.CompletedProcess(["git", *args], 0, status, "")
+    )
+    monkeypatch.setattr(board, "find_vcgencmd", lambda: None)
+    monkeypatch.setattr(board, "load_average", lambda: None)
 
 
 def write_wav(path: Path, pcm: bytes) -> str:
@@ -398,3 +412,83 @@ def test_words_that_arrived_cut_short_are_answered_with_a_caveat(tmp_path, monke
     assert "  you:  what time is" in text
     assert "  emet: You said: what time is" in text
     assert "(those words may be cut short: no final within 5 s)" in text
+
+
+def test_the_first_line_names_the_tree_that_ran(tmp_path, monkeypatch, capsys):
+    """emet-talk is what runs on the body, so its log starts with which tree
+    ran, in the same shape as emet-listen's."""
+    wav = write_wav(tmp_path / "id.wav", false_wake())
+    stub_loaders(monkeypatch, body(wav), soul())
+    monkeypatch.setattr(cli, "_version", lambda name: "0.5.5")
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    assert capsys.readouterr().out.splitlines()[0] == (
+        "emet-talk: emet-sdk 0.5.5, emet-hal 0.5.5, emet-providers 0.5.5, emet-engine 0.5.5; "
+        "revision eb5574854148, working tree matches"
+    )
+
+
+def test_stats_prints_the_board_at_the_start_and_the_end(tmp_path, monkeypatch, capsys):
+    """Read once at boot, before the session starts, and once at the
+    footer: the readers give two readings and fail on a third, and each
+    reading records the phase of the run it was taken in."""
+    wav = write_wav(tmp_path / "b.wav", spoken(b"what", b"time"))
+    stub_loaders(monkeypatch, body(wav), soul())
+    printed = iter(["temp=49.9'C\n", "throttled=0x0\n", "temp=50.4'C\n", "throttled=0x0\n"])
+    loads = iter([(0.07, 0.06, 0.05), (0.2, 0.08, 0.06)])
+    phase, phases = {"now": "boot"}, []
+    real_start, real_footer = ListenSession.start, talk.print_run_footer
+
+    async def start(self):
+        phase["now"] = "running"
+        await real_start(self)
+
+    def footer(*a, **kw):
+        phase["now"] = "footer"
+        return real_footer(*a, **kw)
+
+    def load_average():
+        phases.append(phase["now"])
+        return next(loads)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+    monkeypatch.setattr(talk, "print_run_footer", footer)
+    monkeypatch.setattr(board, "find_vcgencmd", lambda: lambda command: next(printed))
+    monkeypatch.setattr(board, "load_average", load_average)
+
+    assert talk.main(["body.yaml", "soul.yaml", "--stats"]) == 0
+
+    rows = capsys.readouterr().out.splitlines()
+    verdict = next(i for i, row in enumerate(rows) if row.startswith("  verdict "))
+    assert rows[verdict - 3:verdict] == [
+        "  board         at start: temp 49.9'C, throttled 0x0, load 0.07 0.06 0.05",
+        "  board         at end:   temp 50.4'C, throttled 0x0, load 0.20 0.08 0.06",
+        "  board         during the run: no throttle flag set",
+    ]
+    assert phases == ["boot", "footer"]
+
+
+def test_the_identity_line_is_printed_before_discovery(monkeypatch, capsys):
+    class NothingInstalled:
+        @staticmethod
+        def discover():
+            print("discovering")
+            return {}
+
+    monkeypatch.setattr(talk, "PluginRegistry", NothingInstalled)
+
+    assert talk.main(["body.yaml", "soul.yaml"]) == 2
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("emet-talk: emet-sdk ") and lines[1] == "discovering"
+
+
+def test_without_stats_the_board_is_not_read(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "n.wav", false_wake())
+    stub_loaders(monkeypatch, body(wav), soul())
+    read: list[bool] = []
+    monkeypatch.setattr(board, "load_average", lambda: read.append(True))
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    assert read == [] and "  board " not in capsys.readouterr().out

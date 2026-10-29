@@ -135,6 +135,17 @@ release notes say so.
 > card, so genuine clock drift cannot appear. And an x86 real-time factor says
 > nothing about ARM except by comparison.
 
+Since 0.5.5 most of the body's evidence is gathered with nobody at the
+robot. `tools/bank/replay.py` replays the voice bank on the laptop and on the
+reference body and holds every wake to the golden files in
+`tools/bank/golden/`, exactly, per platform. `tools/body/run.py` puts the
+tree on the reference body over SSH and runs the suites, the checks, the
+replays and the flags, and prints when each flag last ran there. A person is
+needed once, last, for the release sitting in `tools/body/sitting.md`. A
+replay keeps its name in the pull request: its platform, its commit, the
+bank's version and the start mean go beside every number, and a golden that
+changed is a diff with a reason for each changed wake.
+
 ## 7. Refresh the documents that state a version
 
 `tools/release_check.py` catches the obvious ones. It cannot catch a paragraph

@@ -1,0 +1,23 @@
+{
+  "format": "emet-golden/1",
+  "recording": "stop-3m-0.5.4",
+  "sha256": "97cd91139ee67c4a312d17d59bd01a3cf69fa7b200bb7b4a0d34c30a15308165",
+  "platform": "linux-aarch64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1250,
+    "wakes": 0,
+    "turns": 0,
+    "name_cut": null
+  },
+  "wakes": []
+}

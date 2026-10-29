@@ -1,0 +1,136 @@
+{
+  "format": "emet-golden/1",
+  "recording": "how-far-0.5.3",
+  "sha256": "46a732cb70746ddf64038f60434a7f6ae61d7309894cc4dea326c0599bef3041",
+  "platform": "linux-aarch64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 875,
+    "wakes": 8,
+    "turns": 8,
+    "name_cut": "1 of 8"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "how-far-0.5.3/01",
+      "wake_end_sample": 115200,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "65c9507fa8bec1ae5cfd6486dfc387491da627609780d48e8f6f6c0e8d8c23a4",
+      "fed_sha256": "c2420bf33e6a664dcb074dd32bd775d654d6b62a1cf8ded6a10778c96f32f551",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "how-far-0.5.3/02",
+      "wake_end_sample": 200960,
+      "lag_ms": 190.0,
+      "name_ms": 140.0,
+      "level_ms": 140.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "76ed692554b81731097cb295668d34016a2a06a803cf408fd7729ef23f36f8cc",
+      "fed_sha256": "8283e74481703cdb0dc7e96cf585dc01a0cc9708c3eabd9f62c9c996b3e7113b",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "how-far-0.5.3/03",
+      "wake_end_sample": 290560,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "d4ae4967cc5ed3b1ab85cfb4bf27a154ccf26b3dd642fecefe52ea1a01877ea4",
+      "fed_sha256": "d0c4e75f018c83a21b9d6aa2ee304d074ab5bd563915dc7fdf67a97474b075c3",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "how-far-0.5.3/06",
+      "wake_end_sample": 579840,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "075de6d00316132b79e50fdee4e7dc8fcb23b9708deae22bddb4b5657a2f57e5",
+      "fed_sha256": "ca0b2f0708899418f8f252dd4c702165c2c5c163818b06e538dfb4b2387e8b12",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "how-far-0.5.3/07",
+      "wake_end_sample": 672000,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "a41c275fdf3ea0c6a148884cdc1a10cd3ed19efbe3989a871b780643bfb83581",
+      "fed_sha256": "19ae4fc92b943d6619f0003f72f8f0286f7bb1573945bd1af99c6c6580d86f55",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "how-far-0.5.3/08",
+      "wake_end_sample": 769280,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "cb6d9b24c9ccf2f26539e7585941e6a4b9a51d95e34cecc7a0686e2825e64418",
+      "fed_sha256": "ffe757c77c750341def052aa9b3f50b27df70a2ca77ca127fbc1ff32b386d844",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "how-far-0.5.3/09",
+      "wake_end_sample": 867840,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "5c1fa4155934577ae9dec06b1c37cc13a1d87dae26ea58838a7bfb0f9910dfa9",
+      "fed_sha256": "c518543c4190fdb538eb9553894d38366ddc3bbfead3b5d77282c66ee91795aa",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "how-far-0.5.3/10",
+      "wake_end_sample": 961280,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "3a97f5067abd7b04b9d194737e3b8e4d14fd2c5f0985f4ea78a56452a418b329",
+      "fed_sha256": "ab2b51f311242b11c4c7ec34ff7f5089e455fa7032290fe5ee41e58565693a45",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

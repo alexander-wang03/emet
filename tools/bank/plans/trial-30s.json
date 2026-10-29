@@ -1,0 +1,51 @@
+{
+ "format": "emet-bank-plan/1",
+ "id": "trial-30s",
+ "title": "The prompter's 30 s trial, before the first sitting (D5)",
+ "note": "Three takes and one slot for a retake: press r once to see a take said again at the end.",
+ "speaker": "s01",
+ "device": "plughw:3,0",
+ "lead_s": 5,
+ "retake_slots": 1,
+ "positions": {
+  "a-near": {
+   "room": "room-a",
+   "distance": "near",
+   "distance_m": null,
+   "facing": "the robot",
+   "noise": null
+  }
+ },
+ "phrases": {
+  "ob34": {
+   "kind": "one_breath",
+   "text": "hey emet, what time is it",
+   "question": "what time is it",
+   "first_sound": "w"
+  },
+  "wp03": {
+   "kind": "wake_pause",
+   "text": "hey emet ... how far away is the moon",
+   "question": "how far away is the moon",
+   "first_sound": "hh"
+  },
+  "de01": {
+   "kind": "decoy",
+   "text": "hey emma, are you still there",
+   "question": null,
+   "first_sound": null
+  }
+ },
+ "files": [
+  {
+   "id": "trial-30s-01-a-near",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "ob34",
+    "wp03",
+    "de01"
+   ]
+  }
+ ]
+}
