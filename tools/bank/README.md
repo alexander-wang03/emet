@@ -48,7 +48,14 @@ python3 tools/bank/record.py tools/bank/plans/v1-sitting-1.json
 
 `record.py` starts `arecord` itself with a fixed `-d`, shows each prompt when
 the recording reaches it, writes each take's slot into the file's manifest
-as it goes, plays no cue, and hashes each file when it closes. A plan is a
+as it goes, plays nothing on the Pi, and hashes each file when it closes.
+Before each prompt it counts in a large 3, 2, 1, a second apart, then marks
+the prompt NOW and shows the take after it as "next:"; on the trial of
+2026-11-24 the speech began about 3.4 s into each 6 s slot. With `--bell`
+the SSH terminal rings on the laptop at each NOW: use earbuds or headphones
+there, since through the laptop's speakers the bell is in the recording.
+`--check` prints the plan as a sheet with each take numbered through the
+sitting, and each screen shows its take's number. A plan is a
 sitting: `plans/v1-sitting-1.json` (room A, near and about 3 m) and
 `plans/v1-sitting-2.json` (numbers, short answers, pauses and long turns;
 a TV, facing away, about 5 m; room B), each about 29 minutes of audio, and
@@ -57,7 +64,10 @@ Before each file it says where to stand: Enter starts it, `s` skips it, `q`
 ends the sitting. While a file records, `r` asks the take on screen again
 at the end of the file and `p` the one before. Ctrl-C stops the prompts,
 and the recording runs to its fixed length. Running a plan again resumes
-it: a file already recorded is never recorded again. It refuses to start
+it: a file already recorded is never recorded again; `--again FILE_ID`
+records it once more as `FILE_ID-2` (then `-3`), and once that file closes
+it excludes the takes of the one it replaces, whose audio and manifest
+stay. It refuses to start
 without a terminal, without `arecord`, without `bank.json` listing the
 plan's speaker with a consent file, or while the body runner holds
 `~/emet-ci/lock`, and it holds that lock for the sitting.
@@ -66,6 +76,8 @@ plan's speaker with a consent file, or while the body runner holds
 python3 tools/bank/record.py PLAN --check          # the plan as a sheet to print, for 3 m
 python3 tools/bank/record.py PLAN --dry-run        # the schedule and manifests against a stub; opens no device
 python3 tools/bank/record.py PLAN --close FILE_ID  # close a manifest a killed prompter left open
+python3 tools/bank/record.py PLAN --again FILE_ID --bell          # record a file again, the bell on the laptop
+python3 tools/bank/record.py PLAN --again FILE_ID --dry-run       # what --again would do; changes nothing
 ```
 
 `label.py` writes `<bank>/labels/<id>.json` and never a manifest, and prints
@@ -112,7 +124,7 @@ names its platform, commit, bank version and start mean.
 "$PY" tools/bank/paid_replay.py ../voicebank/misses/2026-10-28/misses.json --ledger ../voicebank/ledger.json \
     --cassette ../voicebank/cassettes/paid-2026-10-28.json --dry-run
 
-# Spending one entry of the month's allowance:
+# Spending the miss list's minutes of the month's allowance:
 "$PY" tools/bank/paid_replay.py ../voicebank/misses/2026-10-28/misses.json --ledger ../voicebank/ledger.json \
     --cassette ../voicebank/cassettes/paid-2026-10-28.json --keys ~/.config/emet/keys.env --expect-spent 10
 ```
@@ -127,12 +139,22 @@ list. `paid_replay.py` sends those bytes through the real plugin and writes
 what came back as a new cassette. It refuses before spending: a request URL
 other than `wss://api.deepgram.com/v1/listen` with the expected query
 (checked offline, nothing started), a query key the plugin fixes or one
-named like a credential, more than 130 s of audio in one entry, a ledger
-that does not read, `--expect-spent` that is not the ledger's count, and a
-month whose 20 replay entries are spent (D6, decided 2026-10-27; anything
-more asks the maintainer first), a keys file with no Deepgram key, and no
-`websockets`. The entry is written and read back before
-anything connects, and only Deepgram's host is reachable after it.
+named like a credential, a ledger that does not read, `--expect-spent`
+that is not the ledger's count, more audio than the month's replay minutes
+have left, a keys file with no Deepgram key, and no `websockets`. The entry
+is written and read back before anything connects, and only Deepgram's
+host is reachable after it.
+
+**The allowance** (the maintainer, 2026-11-24, replacing D6's 20 replay
+entries of at most 130 s, decided 2026-10-27): 1,000 minutes of replay
+audio a month, counted from each replay entry's `audio_s`, with no cap on
+the number of entries and an entry as long as its recording; one canary a
+month; 200 live vendor turns a release. 1,000 minutes is about $4.80 at
+Deepgram's promotional $0.0048 a minute for nova-3 streaming, $7.70 at
+the $0.0077 it replaces (deepgram.com/pricing, verified 2026-11-24). The
+ledger's own `"monthly": {"replay_minutes": N, "canaries": N}` wins, so
+the numbers change in one line of `ledger.json`. The refusal past it says
+how many minutes are left; anything more asks the maintainer first.
 
 `seed_cassettes.py` made the bank's first nine cassettes, 75 turns, from
 nine of the ten replays the 0.5.3 ledger paid for

@@ -73,11 +73,23 @@ class FakeProc:
 class ListScreen:
     def __init__(self, on_show=None):
         self.shows: list[tuple[str, int, object, int, int]] = []
+        self.nexts: list[tuple[int, int, object]] = []      # (slot, part, the take shown as next)
+        self.counts: list[tuple[str, int, int, int]] = []   # (file, slot, n, pos)
+        self.events: list[tuple[int, str]] = []             # (pos, what) in the order shown
         self.notes: list[str] = []
         self.on_show = on_show
 
-    def show(self, f, slot, entry, part, pos):
+    def waiting(self, f, upcoming, pos):
+        self.events.append((pos, "waiting"))
+
+    def countdown(self, f, slot, n, upcoming, pos):
+        self.counts.append((f.id, slot, n, pos))
+        self.events.append((pos, f"count {n} for {slot}"))
+
+    def show(self, f, slot, entry, part, pos, upcoming=None):
         self.shows.append((f.id, slot, entry, part, pos))
+        self.nexts.append((slot, part, upcoming))
+        self.events.append((pos, f"show {slot}.{part}"))
         if self.on_show:
             self.on_show(f, slot, entry, part, pos)
 
@@ -376,8 +388,9 @@ def test_a_pause_take_shows_hold_and_the_rest_at_its_planned_samples(tmp_path):
 
 
 def test_no_cue_is_played_or_rung(tmp_path, capsys):
-    """A cue would be in the recording: the screen writes no bell, and the
-    only process the prompter starts is the recorder, once a file."""
+    """A cue would be in the recording: by default the screen writes no
+    bell, and the only process the prompter starts is the recorder, once a
+    file, so nothing ever plays on the Pi."""
     bank = make_bank(tmp_path)
     plan = record.load_plan(TRIAL)
     rec_screen = record.Screen()
@@ -390,6 +403,175 @@ def test_no_cue_is_played_or_rung(tmp_path, capsys):
     source = (BANK_TOOLS / "record.py").read_text(encoding="utf-8")
     for player in ("aplay", "paplay", "pw-play", "speaker-test", "sounddevice", "\\a", "\\x07", "\\007"):
         assert player not in source, player
+
+
+def test_the_bell_rings_in_the_terminal_at_each_now_and_nowhere_else(tmp_path, capsys):
+    """--bell writes BEL once at each NOW, just before that prompt's screen,
+    to the SSH terminal; the recorder stays the one process started."""
+    bank = make_bank(tmp_path)
+    record.run_sitting(record.load_plan(TRIAL), bank, clock=record.VirtualClock(), screen=record.Screen(bell=True),
+                       keys=record.ScriptedKeys({("trial-30s-01-a-near", 1): "r"}), popen=FakeProc,
+                       level=lambda d: None, today="2026-11-24")
+    out = capsys.readouterr().out
+    rings = out.split("\a")[1:]
+    assert len(rings) == 4  # three takes and the retake, none for a count-in
+    for r in rings:  # each bell comes just before a NOW screen
+        head, instruction = r.split("\n\n", 2)[:2]
+        assert head.startswith(record.Screen.CLEAR + "trial-30s-01-a-near   prompt") and instruction.startswith("NOW: ")
+    assert [p.cmd[0] for p in FakeProc.launched] == ["arecord"]
+
+
+def test_the_bell_and_its_warning_come_only_with_the_flag(tmp_path, capsys):
+    code = record.main([str(TRIAL), "--dry-run", "--bank", str(tmp_path / "dry")])
+    plain = capsys.readouterr().out
+    code_bell = record.main([str(TRIAL), "--dry-run", "--bank", str(tmp_path / "dry2"), "--bell"])
+    rung = capsys.readouterr().out
+    assert code == code_bell == 0
+    assert "(bell)" not in plain and "earbuds or headphones" not in plain
+    assert rung.count("(bell)") == 3 and "earbuds or headphones on the laptop" in rung
+
+
+def test_each_prompt_is_counted_in_and_shows_the_next_take(tmp_path):
+    """3, 2, 1 a second apart before each prompt, the prompt at its own
+    sample, and the take after it read ahead; a retake marked in slot 2 is
+    counted in for the kept slot and read ahead from slot 3."""
+    bank = make_bank(tmp_path)
+    screen = ListScreen()
+    run(record.load_plan(TRIAL), bank, screen=screen, keys=record.ScriptedKeys({("trial-30s-01-a-near", 1): "r"}))
+    s = 16000
+    assert screen.counts == [("trial-30s-01-a-near", k, n, (5 + 6 * k - n) * s) for k in range(4) for n in (3, 2, 1)]
+    assert [pos for _f, _k, _e, part, pos in screen.shows if part == 1] == [5 * s, 11 * s, 17 * s, 23 * s]
+    assert screen.events == sorted(screen.events, key=lambda e: e[0])
+    texts = [None if e is None else e.take.text for _k, _p, e in screen.nexts]
+    assert texts == ["hey emet ... how far away is the moon", "hey emma, are you still there",
+                     "hey emet ... how far away is the moon", None]
+    nums = [e.number for _f, _k, e, _p, _pos in screen.shows]
+    assert nums == [1, 2, 3, 2]
+
+
+def test_the_screen_counts_in_large_and_marks_the_prompt_now(capsys, tmp_path):
+    bank = make_bank(tmp_path)
+    record.run_sitting(record.load_plan(TRIAL), bank, clock=record.VirtualClock(), screen=record.Screen(width=100),
+                       keys=record.NoKeys(), popen=FakeProc, level=lambda d: None, today="2026-11-24")
+    screens = capsys.readouterr().out.split(record.Screen.CLEAR)[1:]
+    three = "\n".join(record.big("3", 100))
+    first = next(i for i, sc in enumerate(screens) if "NOW: " in sc)
+    assert [three in sc for sc in screens[first - 3:first]] == [True, False, False]
+    assert "\n".join(record.big("1", 100)) in screens[first - 1]
+    assert "next (sheet 1): hey emet, what time is it" in screens[first - 1]
+    assert "prompt 1 of 4 (sheet 1)" in screens[first] and "NOW: in one breath" in screens[first]
+    assert "next (sheet 2): hey emet ... how far away is the moon" in screens[first]
+
+
+def test_the_sheet_numbers_the_takes_through_the_sitting(capsys):
+    plan = record.load_plan(SITTINGS[0])
+    assert record.main([str(SITTINGS[0]), "--check"]) == 0
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln[:6].strip().isdigit()]
+    assert [int(ln.split()[0]) for ln in lines] == list(range(1, 181))
+    second = plan.files[1]
+    assert second.first_number == len(plan.files[0].takes) + 1
+    assert lines[second.first_number - 1].split(None, 1)[1] == record.manifest_text(second.takes[0])
+
+
+# ------------------------------------------------------------------ --again
+
+def recorded_trial(tmp_path) -> tuple[Path, object]:
+    bank = make_bank(tmp_path)
+    plan = record.load_plan(TRIAL)
+    run(plan, bank)
+    return bank, plan
+
+
+def test_again_records_the_file_under_the_next_id_and_excludes_the_old_takes(tmp_path):
+    bank, plan = recorded_trial(tmp_path)
+    old_wav = (bank / "audio" / "trial-30s-01-a-near.wav").read_bytes()
+    res = record.run_again(plan, bank, "trial-30s-01-a-near", clock=record.VirtualClock(), screen=ListScreen(),
+                           keys=record.NoKeys(), popen=FakeProc, level=lambda d: None, today="2026-11-24")
+    assert [r.id for r in res.files] == ["trial-30s-01-a-near-2"] and not res.problems
+    new = manifest(bank, "trial-30s-01-a-near-2")
+    assert new["made_with"] == "tools/bank/record.py, plan trial-30s; again for trial-30s-01-a-near"
+    assert [t["text"] for t in new["takes"]] == [t.text for t in plan.files[0].takes]
+    old = manifest(bank, "trial-30s-01-a-near")
+    assert all(t["exclude"] == {"reason": "the maintainer asked for this file again; recorded again as "
+                                          "trial-30s-01-a-near-2 (record.py --again)", "date": "2026-11-24"}
+               for t in old["takes"])
+    assert (bank / "audio" / "trial-30s-01-a-near.wav").read_bytes() == old_wav
+    index = json.loads((bank / "bank.json").read_text(encoding="utf-8"))
+    assert index["files"] == ["manifests/trial-30s-01-a-near.json", "manifests/trial-30s-01-a-near-2.json"]
+    lines, good, bad = check.check(bank, [], False)
+    assert (good, bad) == (2, 0), lines
+
+
+def test_again_twice_replaces_the_latest_and_keeps_earlier_reasons(tmp_path):
+    bank, plan = recorded_trial(tmp_path)
+    kw = dict(clock=record.VirtualClock(), screen=ListScreen(), keys=record.NoKeys(), popen=FakeProc,
+              level=lambda d: None)
+    record.run_again(plan, bank, "trial-30s-01-a-near", today="2026-11-24", **kw)
+    record.run_again(plan, bank, "trial-30s-01-a-near", today="2026-11-25", **kw)
+    assert manifest(bank, "trial-30s-01-a-near-3")["made_with"].endswith("again for trial-30s-01-a-near-2")
+    assert {t["exclude"]["date"] for t in manifest(bank, "trial-30s-01-a-near")["takes"]} == {"2026-11-24"}
+    assert {t["exclude"]["date"] for t in manifest(bank, "trial-30s-01-a-near-2")["takes"]} == {"2026-11-25"}
+    assert all(t["exclude"] is None for t in manifest(bank, "trial-30s-01-a-near-3")["takes"])
+
+
+def test_again_keeps_the_reason_of_a_take_excluded_already(tmp_path):
+    """A take marked for a retake keeps that reason; only the takes still
+    open are excluded for the new recording."""
+    bank = make_bank(tmp_path)
+    plan = record.load_plan(TRIAL)
+    run(plan, bank, keys=record.ScriptedKeys({("trial-30s-01-a-near", 1): "r"}))
+    record.run_again(plan, bank, "trial-30s-01-a-near", clock=record.VirtualClock(), screen=ListScreen(),
+                     keys=record.NoKeys(), popen=FakeProc, level=lambda d: None, today="2026-11-24")
+    reasons = [t["exclude"]["reason"] for t in manifest(bank, "trial-30s-01-a-near")["takes"]]
+    assert reasons[1] == "marked a retake at the prompter"
+    assert [r.startswith("the maintainer asked for this file again") for r in reasons] == [True, False, True, True]
+
+
+def test_again_leaves_the_old_takes_when_the_new_file_does_not_close(tmp_path):
+    bank, plan = recorded_trial(tmp_path)
+
+    class Hung(FakeProc):
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("arecord", timeout)
+
+    screen = ListScreen()
+    record.run_again(plan, bank, "trial-30s-01-a-near", clock=record.VirtualClock(), screen=screen,
+                     keys=record.NoKeys(), popen=Hung, level=lambda d: None, today="2026-11-24")
+    assert all(t["exclude"] is None for t in manifest(bank, "trial-30s-01-a-near")["takes"])
+    assert "trial-30s-01-a-near is left as it was: trial-30s-01-a-near-2 did not close" in screen.notes
+
+
+def test_again_refuses_a_file_the_plan_lacks_or_never_recorded(tmp_path, capsys):
+    bank = make_bank(tmp_path)
+    plan = record.load_plan(TRIAL)
+    with pytest.raises(record.AgainError, match="is not a file of plan trial-30s"):
+        record.plan_again(plan, bank, "no-such-file")
+    with pytest.raises(record.AgainError, match="was never recorded"):
+        record.plan_again(plan, bank, "trial-30s-01-a-near")
+    assert record.main([str(TRIAL), "--dry-run", "--again", "trial-30s-01-a-near", "--bank", str(bank)]) == 2
+    assert "was never recorded" in capsys.readouterr().err
+
+
+def test_a_real_again_is_refused_before_anything_records(fake_home, tmp_path, monkeypatch, capsys):
+    bank = make_bank(tmp_path / "bank")
+    seen: list[str] = []
+    sitting_ready(monkeypatch, bank, seen)
+    assert record.main([str(TRIAL), "--bank", str(bank), "--again", "trial-30s-01-a-near"]) == 2
+    assert seen == [] and "was never recorded" in capsys.readouterr().err
+    assert not record.lock_path().exists()
+
+
+def test_a_dry_run_of_again_says_what_it_would_do_and_changes_nothing(tmp_path, capsys):
+    bank, _plan = recorded_trial(tmp_path)
+    before = {p: p.read_bytes() for p in bank.rglob("*") if p.is_file()}
+    capsys.readouterr()
+    assert record.main([str(TRIAL), "--dry-run", "--again", "trial-30s-01-a-near", "--bank", str(bank)]) == 0
+    out = capsys.readouterr().out
+    assert "would record the plan's trial-30s-01-a-near again as trial-30s-01-a-near-2" in out
+    assert "would exclude 3 take(s) of trial-30s-01-a-near" in out
+    assert "     5.0 s     80000  01.1  one_breath    hey emet, what time is it" in out
+    after = {p: p.read_bytes() for p in bank.rglob("*") if p.is_file()}
+    assert after == before
 
 
 def test_the_bank_is_append_only(tmp_path):

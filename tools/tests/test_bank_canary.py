@@ -208,9 +208,62 @@ def test_entries_before_the_standing_allowance_do_not_count(bank):
 def test_the_ledgers_own_monthly_allowance_wins(bank):
     data = json.loads(bank.ledger.read_text(encoding="utf-8"))
     data["spent"].append(old_entry("2026-10-01 09:00:00 PDT", kind="canary"))
-    data["monthly"] = {"replays": 20, "canaries": 2}
+    data["monthly"] = {"replay_minutes": 1000, "canaries": 2}
     bank.ledger.write_text(json.dumps(data), encoding="utf-8")
     assert run(bank, "--spend")[0] == 0
+    assert canary.allowance({"monthly": {"replay_minutes": 5, "canaries": 3}}) == (5.0, 3)
+    assert canary.allowance({}) == (1000.0, 1)
+
+
+def minutes_ledger() -> dict:
+    """The bank's ledger shape: kinds, `standing.since`, replays by `audio_s`."""
+    return {"format": "emet-ledger/1", "monthly": {"replay_minutes": 1000, "canaries": 1},
+            "standing": {"since": "2026-10-27"}, "spent": [
+                old_entry("2026-10-05 22:00:01 PDT", kind="replay"),
+                old_entry("2026-11-02 10:00:00 PST", kind="replay", audio_s=600.0),
+                old_entry("2026-11-03 10:00:00 PST", kind="replay", audio_s=150.0),
+                old_entry("2026-11-04 10:00:00 PST", kind="canary"),
+                old_entry("2026-12-01 10:00:00 PST", kind="replay", audio_s=30.0)]}
+
+
+def test_the_canary_counts_replay_minutes_as_the_paid_replay_does():
+    import paid_replay  # tools/bank is on the path (conftest.py)
+
+    data = minutes_ledger()
+    assert canary.month_counts(data, "2026-11") == (12.5, 1)
+    assert canary.month_counts(data, "2026-10") == (0.0, 0)
+    for month, day in (("2026-11", datetime.date(2026, 11, 24)), ("2026-12", datetime.date(2026, 12, 2))):
+        assert canary.month_counts(data, month)[0] == paid_replay.allowance(data, day)["spent_min"]
+    assert canary.canary_allowed({**data, "spent": data["spent"][:3]}, "2026-11") == (
+        "2026-11: 12.5 of 1000 replay minutes and 0 of 1 canaries spent")
+
+
+def test_spent_replay_minutes_leave_the_canary_its_own(bank):
+    """The canary is one a month whatever the replays spent."""
+    data = json.loads(bank.ledger.read_text(encoding="utf-8"))
+    data.update(monthly={"replay_minutes": 1, "canaries": 1}, standing={"since": "2026-10-27"})
+    data["spent"].append(old_entry("2026-10-28 09:00:00 PDT", kind="replay", audio_s=600.0))
+    bank.ledger.write_text(json.dumps(data), encoding="utf-8")
+    assert run(bank, "--spend")[0] == 0
+
+
+@pytest.mark.parametrize("monthly, words", [
+    ({"replays": 20, "canaries": 1}, "was an entry count"),
+    ({"replay_minutes": "1000", "canaries": 1}, "monthly.replay_minutes"),
+    ({"replay_minutes": -1, "canaries": 1}, "monthly.replay_minutes"),
+])
+def test_a_monthly_that_is_not_minutes_is_refused(monthly, words):
+    with pytest.raises(canary.Refusal, match=words):
+        canary.allowance({"monthly": monthly})
+
+
+def test_a_replay_with_no_seconds_under_the_allowance_is_refused(tmp_path):
+    data = minutes_ledger()
+    data["spent"].append(old_entry("2026-11-05 10:00:00 PST", kind="replay"))
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(canary.Refusal, match="entry 6, a replay under the allowance, has no audio_s"):
+        canary.ledger_read(path)
 
 
 @pytest.mark.parametrize(

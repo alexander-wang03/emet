@@ -189,7 +189,7 @@ pull request, one line per changed wake with its reason.
 
 | Format | Written by | What it holds |
 |---|---|---|
-| `emet-ledger/1` | `paid_replay.py`, `canary.py` | Every paid call, with its recording, query, tree and result; the monthly allowance (20 replay entries and one canary, D6, decided 2026-10-27) counted from `standing.since`. At `<bank>/ledger.json` |
+| `emet-ledger/1` | `paid_replay.py`, `canary.py` | Every paid call, with its recording, query, tree and result; the allowance in its own `"monthly": {"replay_minutes": N, "canaries": N}` (1,000 minutes of replay audio a month counted from each replay entry's `audio_s`, and one canary, the maintainer, 2026-11-24, replacing D6's 20 entries of at most 130 s), counted from `standing.since`, with `standing.vendor_turns_a_release` (200). At `<bank>/ledger.json` |
 | `emet-misses/1` | `replay.py --misses` | The turns no cassette held, with their bytes' hashes and lengths: the paid list |
 | `emet-live-record/1` | the live-vendor tests, with `EMET_LIVE_RECORD=<dir>` | What a vendor sent, as it came, with the model it reported and the date; never a key or a header that carries one |
 | `emet-labels/1` | `label.py` | Per take of one recording: the forced alignment, the onsets by level, the faster-whisper words with their times, and why a take was flagged; each label names the tool and model that made it. At `<bank>/labels/<id>.json` |

@@ -24,11 +24,13 @@ month whose canary is spent.
 
 **The ledger** is `{"spent": [...]}` with the entries of
 `releases/v0.5.3/harness/deepgram-ledger.json`. The allowance is a month's:
-20 replay entries and one canary (decided 2026-10-27, D6), unless the
-ledger's own `"monthly": {"replays": N, "canaries": N}` says otherwise. An
-entry's month is the first seven characters of its `time`; an entry whose
-`kind` is `canary` is a canary, and every other entry a replay. The 0.5.3
-lifetime cap `allowed` is not read. The canary's entry is written and read
+1,000 minutes of replay audio (the maintainer, 2026-11-24, replacing D6's
+20 replay entries) and one canary (D6, 2026-10-27), unless the ledger's own
+`"monthly": {"replay_minutes": N, "canaries": N}` says otherwise. An entry's
+month is the first seven characters of its `time`; an entry whose `kind` is
+`canary` is a canary, and one whose `kind` is `replay` a replay counted by
+its `audio_s`, as `paid_replay.py` counts them. The 0.5.3 lifetime cap
+`allowed` is not read. The canary's entry is written and read
 back before any test runs or any connection opens, and it is spent whatever
 happens after it.
 
@@ -80,8 +82,11 @@ from emet_providers.deepgram import DEFAULT_KEY_ENV, FORMAT_KEYS, DeepgramTransc
 REPO = Path(__file__).resolve().parents[2]
 TOP = REPO.parent
 
-#: The allowance a month, decided 2026-10-27 (D6).
-REPLAYS_A_MONTH = 20
+#: The allowance a month: one canary since D6 (2026-10-27), and replay
+#: minutes since the maintainer's 2026-11-24 decision, which replaced D6's
+#: 20 replay entries of at most 130 s (`paid_replay.py`, STANDING). The
+#: ledger's own `monthly` wins over both.
+REPLAY_MINUTES_A_MONTH = 1000
 CANARIES_A_MONTH = 1
 
 #: The four live-vendor tests, from `emet-providers/`.
@@ -137,54 +142,70 @@ def ledger_read(path: Path) -> dict[str, Any]:
         raise Refusal(f"{path.name} is not JSON: {exc}") from None
     if not isinstance(data, dict) or not isinstance(data.get("spent"), list):
         raise Refusal(f'{path.name} does not hold {{"spent": [...]}}')
+    since = _since(data)
     for n, entry in enumerate(data["spent"], 1):
         if not isinstance(entry, dict) or not isinstance(entry.get("time"), str) or not _MONTH.match(entry["time"]):
             raise Refusal(f"{path.name}: entry {n} has no time its month can be read from")
+        seconds = entry.get("audio_s")
+        if (entry.get("kind") == "replay" and entry["time"][:10] >= since
+                and (isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0)):
+            raise Refusal(f"{path.name}: entry {n}, a replay under the allowance, has no audio_s to count")
     allowance(data)
     return data
 
 
-def allowance(data: dict[str, Any]) -> tuple[int, int]:
-    """(replays, canaries) a month."""
+def _since(data: dict[str, Any]) -> str:
+    return str((data.get("standing") or {}).get("since") or "")[:10]
+
+
+def allowance(data: dict[str, Any]) -> tuple[float, int]:
+    """(replay minutes, canaries) a month: the ledger's own `monthly`, or
+    the standing allowance's when it has none."""
     monthly = data.get("monthly")
     if monthly is None:
-        return REPLAYS_A_MONTH, CANARIES_A_MONTH
+        return float(REPLAY_MINUTES_A_MONTH), CANARIES_A_MONTH
     if not isinstance(monthly, dict):
-        raise Refusal('the ledger\'s "monthly" is {"replays": N, "canaries": N}')
-    out = []
-    for name, default in (("replays", REPLAYS_A_MONTH), ("canaries", CANARIES_A_MONTH)):
-        value = monthly.get(name, default)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise Refusal(f'the ledger\'s "monthly.{name}" is a whole number, not {value!r}')
-        out.append(value)
-    return out[0], out[1]
+        raise Refusal('the ledger\'s "monthly" is {"replay_minutes": N, "canaries": N}')
+    if "replays" in monthly:
+        raise Refusal('the ledger\'s "monthly.replays" was an entry count; the allowance has been '
+                      '"monthly.replay_minutes" since 2026-11-24')
+    minutes = monthly.get("replay_minutes", REPLAY_MINUTES_A_MONTH)
+    if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or minutes < 0:
+        raise Refusal(f'the ledger\'s "monthly.replay_minutes" is a number of minutes, not {minutes!r}')
+    canaries = monthly.get("canaries", CANARIES_A_MONTH)
+    if isinstance(canaries, bool) or not isinstance(canaries, int) or canaries < 0:
+        raise Refusal(f'the ledger\'s "monthly.canaries" is a whole number, not {canaries!r}')
+    return float(minutes), canaries
 
 
-def month_counts(data: dict[str, Any], month: str) -> tuple[int, int]:
-    """(replays, canaries) spent in `month`, YYYY-MM.
+def month_counts(data: dict[str, Any], month: str) -> tuple[float, int]:
+    """(replay minutes, canaries) spent in `month`, YYYY-MM.
 
-    Only entries from the ledger's `standing.since` on count, the same rule
-    `paid_replay.allowance` keeps: the ten replays of September and October
-    2026 were spent under the old ledger's ten, before the monthly allowance
-    began on 2026-10-27, and count against nothing now.
+    The rule `paid_replay.allowance` keeps: a replay is an entry whose
+    `kind` is `replay`, counted by its `audio_s`, and a canary one whose
+    `kind` is `canary`. Only entries from the ledger's `standing.since` on
+    count: the ten replays of September and October 2026 were spent under
+    the old ledger's ten, before the monthly allowance began on 2026-10-27,
+    and count against nothing now.
     """
-    since = str((data.get("standing") or {}).get("since") or "")[:10]
-    replays = canaries = 0
+    since = _since(data)
+    seconds, canaries = 0.0, 0
     for entry in data["spent"]:
         if _MONTH.match(entry["time"]).group(1) != month or entry["time"][:10] < since:
             continue
         if entry.get("kind") == "canary":
             canaries += 1
-        else:
-            replays += 1
-    return replays, canaries
+        elif entry.get("kind") == "replay":
+            seconds += float(entry["audio_s"])
+    return seconds / 60.0, canaries
 
 
 def canary_allowed(data: dict[str, Any], month: str) -> str:
     """One line on the month's spending, or a `Refusal` when the canary's is spent."""
-    replays_allowed, canaries_allowed = allowance(data)
-    replays, canaries = month_counts(data, month)
-    line = f"{month}: {replays} of {replays_allowed} replays and {canaries} of {canaries_allowed} canaries spent"
+    minutes_allowed, canaries_allowed = allowance(data)
+    minutes, canaries = month_counts(data, month)
+    line = (f"{month}: {minutes:.1f} of {minutes_allowed:g} replay minutes and "
+            f"{canaries} of {canaries_allowed} canaries spent")
     if canaries >= canaries_allowed:
         raise Refusal(f"the ledger's canary for {month} is spent ({line})")
     return line

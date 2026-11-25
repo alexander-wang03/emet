@@ -22,20 +22,23 @@ fixes (`encoding`, `sample_rate`, `channels`, `model`), one that sends the
 transcript elsewhere (`callback`, `callback_method`), or one named like a
 credential; a request URL, built offline by a plugin that is never
 started, that is not `wss://api.deepgram.com/v1/listen` with exactly the
-query expected; more than `MAX_ENTRY_S` of audio, since an entry is one
-replay of at most that much; a ledger that is missing or malformed;
-`--expect-spent` that is not what the ledger holds; a month whose
-replays are spent; and a keys file with no Deepgram key, or no
+query expected; a ledger that is missing or malformed; `--expect-spent`
+that is not what the ledger holds; more audio than the month's replay
+minutes have left; and a keys file with no Deepgram key, or no
 `websockets`, either of which would stop the plugin after the entry was
 spent.
 
-**The allowance** (D6, decided 2026-10-27): 20 replay entries a month, a
-monthly canary, and up to 20 real-vendor turns a release, each logged in
-the ledger; anything more asks the maintainer first. Only entries made
-under it count, from its first day, `standing.since`: the ten spent in
+**The allowance** (the maintainer, 2026-11-24, replacing D6's 20 entries of
+at most 130 s): 1,000 minutes of replay audio a month, counted from each
+replay entry's `audio_s`, with no cap on the number of entries and an entry
+as long as its recording; one canary a month; and 200 live vendor turns a
+release. Each is logged in the ledger, and anything more asks the
+maintainer first. The ledger's own `monthly` field wins, so the numbers
+change in one line of it. Only entries made under the standing allowance
+count, from its first day, `standing.since` (2026-10-27): the ten spent in
 2026-09 and 2026-10 were the 0.5.3 ledger's own allowance of ten. The
 canary is `canary.py`'s, and the turns a release spends outside a replay
-are the release's own; this tool spends replay entries only.
+are the release's own; this tool spends replay minutes only.
 
 **The network.** Nothing at all until the entry is written and read back.
 Then Deepgram's host by name, and on its port the addresses that name
@@ -77,19 +80,23 @@ sys.path.insert(0, str(HERE))
 
 import manifest as bank_files  # noqa: E402  the standard library only
 
-#: The most audio one ledger entry sends: the longest of the ten replays the
-#: 0.5.3 ledger spent, the 130 s one-breath recording. D6 reckons 20 entries
-#: at about 40 minutes, so an entry is about two minutes.
-MAX_ENTRY_S = 130.0
-
-#: D6, decided 2026-10-27.
+#: The standing allowance. D6 (decided 2026-10-27) began it at 20 replay
+#: entries a month, each at most 130 s of audio. The maintainer, 2026-11-24,
+#: made it minutes of audio, with no cap on entries and an entry as long as
+#: its recording, to use the maintainer's pay-as-you-go credit: "let's not
+#: be wasteful. Let's use it to its full potential while being heavy in
+#: usage." 1,000 minutes is about $4.80 at Deepgram's promotional $0.0048 a
+#: minute for nova-3 streaming, $7.70 at the $0.0077 it replaces
+#: (deepgram.com/pricing, verified 2026-11-24).
 STANDING = {
     "since": "2026-10-27",
-    "vendor_turns_a_release": 20,
-    "decided": "D6, research/references-2026-10-26/decisions.md, 2026-10-27",
+    "vendor_turns_a_release": 200,
+    "decided": ("the maintainer, 2026-11-24: 1,000 minutes of replay audio a month, one canary a month, "
+                "200 live vendor turns a release; it replaced D6's 20 replay entries of at most 130 s "
+                "(research/references-2026-10-26/decisions.md, 2026-10-27)"),
     "beyond": "anything more asks the maintainer first",
 }
-MONTHLY = {"replays": 20, "canaries": 1}
+MONTHLY = {"replay_minutes": 1000, "canaries": 1}
 
 #: Query keys a run may not send: the plugin fixes the first four, and the
 #: callbacks would have Deepgram send the transcript to another host.
@@ -136,37 +143,63 @@ def ledger_read(path: Path) -> dict[str, Any]:
         raise Refusal(f"{Path(path).name} is not JSON: {exc}") from None
     if not isinstance(data, dict) or data.get("format") != "emet-ledger/1" or not isinstance(data.get("spent"), list):
         raise Refusal(f'{Path(path).name} is not an emet-ledger/1 file with a "spent" list')
-    monthly, standing = data.get("monthly"), data.get("standing")
-    if (not isinstance(monthly, dict) or not all(isinstance(monthly.get(k), int) and not isinstance(monthly.get(k), bool)
-                                                 and monthly.get(k) >= 0 for k in ("replays", "canaries"))):
-        raise Refusal('the ledger\'s "monthly" is {"replays": N, "canaries": N}')
+    monthly_problem(data.get("monthly"))
+    standing = data.get("standing")
     if not isinstance(standing, dict) or not _DATE.match(str(standing.get("since") or "")):
         raise Refusal('the ledger\'s "standing.since" is the date the allowance began')
+    since = standing["since"][:10]
     for n, entry in enumerate(data["spent"], 1):
         if not isinstance(entry, dict) or not _DATE.match(str(entry.get("time") or "")) or not entry.get("kind"):
             raise Refusal(f"{Path(path).name}: entry {n} has no time or no kind")
+        if entry["kind"] == "replay" and entry["time"][:10] >= since and not _seconds(entry.get("audio_s")):
+            raise Refusal(f"{Path(path).name}: entry {n}, a replay under the allowance, has no audio_s to count")
     return data
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _seconds(value: Any) -> bool:
+    return _is_number(value) and value >= 0
+
+
+def monthly_problem(monthly: Any) -> None:
+    """Refuse a `monthly` that is not minutes of replay audio and a count of
+    canaries. The field is the ledger's own, so the maintainer changes the
+    allowance in one line of it."""
+    if (not isinstance(monthly, dict) or set(monthly) != {"replay_minutes", "canaries"}
+            or not _is_number(monthly["replay_minutes"]) or monthly["replay_minutes"] < 0
+            or not isinstance(monthly["canaries"], int) or isinstance(monthly["canaries"], bool)
+            or monthly["canaries"] < 0):
+        hint = (" (replays was an entry count; the allowance has been minutes of audio since 2026-11-24)"
+                if isinstance(monthly, dict) and "replays" in monthly else "")
+        raise Refusal('the ledger\'s "monthly" is {"replay_minutes": N, "canaries": N}' + hint)
+
+
 def allowance(data: dict[str, Any], today: datetime.date) -> dict[str, Any]:
-    """This month's replay entries: allowed, spent under the standing
-    allowance, and left. An entry counts in the month of its time, from
-    `standing.since` on; a canary is not a replay."""
+    """This month's replay minutes: allowed, spent under the standing
+    allowance, and left, from each replay entry's `audio_s`. An entry counts
+    in the month of its time, from `standing.since` on; a canary is not a
+    replay, and the number of entries is not counted."""
     month = today.strftime("%Y-%m")
     since = data["standing"]["since"][:10]
-    spent = sum(1 for e in data["spent"]
-                if e["kind"] == "replay" and e["time"][:7] == month and e["time"][:10] >= since)
-    allowed = data["monthly"]["replays"] if today.isoformat() >= since else 0
-    return {"month": month, "allowed": allowed, "spent": spent, "left": max(0, allowed - spent)}
+    seconds = sum(float(e["audio_s"]) for e in data["spent"]
+                  if e["kind"] == "replay" and e["time"][:7] == month and e["time"][:10] >= since)
+    allowed = float(data["monthly"]["replay_minutes"]) if today.isoformat() >= since else 0.0
+    spent = seconds / 60.0
+    return {"month": month, "allowed_min": allowed, "spent_min": spent, "left_min": max(0.0, allowed - spent)}
 
 
-def check_spend(data: dict[str, Any], today: datetime.date, expect_spent: int | None) -> dict[str, Any]:
-    """Refuse unless one more replay entry fits this month."""
+def check_spend(data: dict[str, Any], today: datetime.date, expect_spent: int | None,
+                audio_s: float) -> dict[str, Any]:
+    """Refuse unless `audio_s` more seconds of replay fit this month."""
     left = allowance(data, today)
     if expect_spent is not None and len(data["spent"]) != expect_spent:
         raise Refusal(f"--expect-spent {expect_spent}, and the ledger holds {len(data['spent'])} entries")
-    if left["left"] < 1:
-        raise Refusal(f"{left['month']}: {left['spent']} of {left['allowed']} replay entries spent; "
+    if audio_s / 60.0 > left["left_min"]:
+        raise Refusal(f"{left['month']}: {left['spent_min']:.1f} of {left['allowed_min']:g} replay minutes spent, "
+                      f"{left['left_min']:.1f} left, and this replay is {audio_s / 60.0:.1f}; "
                       f"{STANDING['beyond']}")
     return left
 
@@ -180,7 +213,7 @@ def _write_ledger(path: Path, data: dict[str, Any]) -> None:
 def ledger_spend(path: Path, entry: dict[str, Any], today: datetime.date, expect_spent: int | None) -> int:
     """Append one entry and read it back, or refuse. Returns its number."""
     data = ledger_read(path)
-    check_spend(data, today, expect_spent)
+    check_spend(data, today, expect_spent, float(entry["audio_s"]))
     data["spent"].append(entry)
     _write_ledger(path, data)
     back = ledger_read(path)
@@ -495,15 +528,13 @@ def plan(args: argparse.Namespace, today: datetime.date) -> dict[str, Any]:
     query = parse_query(args.query)
     turns = read_misses(args.misses)
     rate = int(args.rate)
-    seconds = audio_seconds(turns, rate)
-    if seconds > MAX_ENTRY_S:
-        raise Refusal(f"{seconds:.1f} s of audio, past one entry's {MAX_ENTRY_S:g} s; split the miss list")
+    seconds = round(audio_seconds(turns, rate), 3)
     chosen = selection(query, args.model)
     offline = offline_request(chosen, rate)
     if offline["problems"]:
         raise Refusal("; ".join(offline["problems"]))
     data = ledger_read(args.ledger)
-    left = check_spend(data, today, None if args.dry_run else args.expect_spent)
+    left = check_spend(data, today, None if args.dry_run else args.expect_spent, seconds)
     if Path(args.cassette).exists():
         raise Refusal(f"{args.cassette} exists; a paid replay writes a cassette of its own")
     entry = {
@@ -549,7 +580,8 @@ def main(argv: list[str] | None = None, *, today: datetime.date | None = None) -
         return 2
     left = p["left"]
     print(f"paid_replay: {len(p['turns'])} turn(s), {p['entry']['audio_s']:g} s of audio; "
-          f"{left['month']}: {left['spent']} of {left['allowed']} replay entries spent")
+          f"{left['month']}: {left['spent_min']:.1f} of {left['allowed_min']:g} replay minutes spent, "
+          f"{left['left_min']:.1f} left")
     print(f"  request {p['offline']['url']}")
     if args.dry_run:
         print("  dry run: nothing spent, written or connected. A real run writes this entry:")

@@ -39,8 +39,9 @@ def a_ledger(tmp_path: Path) -> Path:
     return path
 
 
-def entry(time: str, kind: str = "replay") -> dict:
-    return {"time": time, "kind": kind}
+def entry(time: str, kind: str = "replay", audio_s: float = 60.0) -> dict:
+    """A ledger entry; a replay counts by its seconds of audio."""
+    return {"time": time, "kind": kind, **({"audio_s": audio_s} if kind == "replay" else {})}
 
 
 # ------------------------------------------------------------- the ledger
@@ -51,8 +52,9 @@ def test_the_seeded_ledger_keeps_the_ten_and_spends_none_of_the_standing_allowan
     data = paid.ledger_read(path)
     assert len(data["spent"]) == 10 and all(e["kind"] == "replay" for e in data["spent"])
     assert data["spent"][0]["recording"] == "r" and data["before"]["allowed"] == 10
-    assert data["monthly"] == {"replays": 20, "canaries": 1} and data["standing"]["since"] == "2026-10-27"
-    assert paid.allowance(data, OCT28) == {"month": "2026-10", "allowed": 20, "spent": 0, "left": 20}
+    assert data["monthly"] == {"replay_minutes": 1000, "canaries": 1} and data["standing"]["since"] == "2026-10-27"
+    assert data["standing"]["vendor_turns_a_release"] == 200 and "the maintainer, 2026-11-24" in data["standing"]["decided"]
+    assert paid.allowance(data, OCT28) == {"month": "2026-10", "allowed_min": 1000.0, "spent_min": 0.0, "left_min": 1000.0}
 
 
 def test_seeding_refuses_an_existing_ledger_and_a_ledger_not_spent_out(tmp_path):
@@ -65,46 +67,72 @@ def test_seeding_refuses_an_existing_ledger_and_a_ledger_not_spent_out(tmp_path)
         paid.seed_ledger(half, tmp_path / "other.json")
 
 
-def test_the_allowance_counts_replays_in_the_month_from_the_day_it_began(tmp_path):
+def test_the_allowance_counts_replay_minutes_in_the_month_from_the_day_it_began(tmp_path):
+    """Seconds of audio, summed and given in minutes; a canary is no
+    replay, and the number of entries does not count."""
     data = paid.ledger_read(a_ledger(tmp_path))
-    data["spent"] += [entry("2026-10-27 09:00:00 PDT"), entry("2026-10-28 09:00:00 PDT"),
-                      entry("2026-10-28 10:00:00 PDT", "canary"), entry("2026-11-01 08:00:00 PST")]
-    assert paid.allowance(data, OCT28)["spent"] == 2
-    assert paid.allowance(data, datetime.date(2026, 11, 2)) == {"month": "2026-11", "allowed": 20, "spent": 1, "left": 19}
-    assert paid.allowance(data, datetime.date(2026, 10, 26))["allowed"] == 0
+    data["spent"] += [entry("2026-10-27 09:00:00 PDT", audio_s=90.0), entry("2026-10-28 09:00:00 PDT", audio_s=30.0),
+                      entry("2026-10-28 10:00:00 PDT", "canary"), entry("2026-11-01 08:00:00 PST", audio_s=600.0)]
+    assert paid.allowance(data, OCT28)["spent_min"] == 2.0
+    assert paid.allowance(data, datetime.date(2026, 11, 2)) == {"month": "2026-11", "allowed_min": 1000.0,
+                                                                 "spent_min": 10.0, "left_min": 990.0}
+    assert paid.allowance(data, datetime.date(2026, 10, 26))["allowed_min"] == 0.0
 
 
-def test_a_spent_month_is_refused_and_the_next_month_is_not(tmp_path):
+def test_a_months_minutes_spent_refuse_and_say_how_many_are_left(tmp_path):
     data = paid.ledger_read(a_ledger(tmp_path))
-    data["spent"] += [entry(f"2026-10-28 10:{m:02d}:00 PDT") for m in range(19)]
-    assert paid.check_spend(data, OCT28, None)["left"] == 1
-    data["spent"].append(entry("2026-10-28 11:00:00 PDT"))
-    with pytest.raises(paid.Refusal, match="20 of 20 replay entries spent; anything more asks the maintainer"):
-        paid.check_spend(data, OCT28, None)
-    assert paid.check_spend(data, datetime.date(2026, 11, 1), None)["left"] == 20
+    data["spent"] += [entry(f"2026-10-28 10:{m:02d}:00 PDT", audio_s=6000.0) for m in range(9)]
+    assert paid.check_spend(data, OCT28, None, 6000.0)["left_min"] == 100.0
+    with pytest.raises(paid.Refusal, match=r"900\.0 of 1000 replay minutes spent, 100\.0 left, and this replay is "
+                                           r"100\.1; anything more asks the maintainer first"):
+        paid.check_spend(data, OCT28, None, 6006.0)
+    assert paid.check_spend(data, datetime.date(2026, 11, 1), None, 6006.0)["left_min"] == 1000.0
+
+
+def test_many_entries_and_one_longer_than_130_s_are_accepted(tmp_path):
+    """No cap on the count, and an entry as long as its recording: the soak
+    recording's ten minutes in one entry, after 50 short ones."""
+    data = paid.ledger_read(a_ledger(tmp_path))
+    data["spent"] += [entry(f"2026-10-28 0{m // 10}:{m % 10:02d}:00 PDT", audio_s=2.0) for m in range(50)]
+    assert paid.check_spend(data, OCT28, None, 600.0)["left_min"] > 900
+
+
+def test_the_ledgers_own_monthly_minutes_win(tmp_path):
+    data = paid.ledger_read(a_ledger(tmp_path))
+    data["monthly"] = {"replay_minutes": 5, "canaries": 1}
+    data["spent"].append(entry("2026-10-28 10:00:00 PDT", audio_s=240.0))
+    assert paid.allowance(data, OCT28)["left_min"] == 1.0
+    with pytest.raises(paid.Refusal, match=r"4\.0 of 5 replay minutes spent, 1\.0 left"):
+        paid.check_spend(data, OCT28, None, 61.0)
 
 
 def test_expect_spent_must_be_what_the_ledger_holds(tmp_path):
     data = paid.ledger_read(a_ledger(tmp_path))
     with pytest.raises(paid.Refusal, match="--expect-spent 9, and the ledger holds 10"):
-        paid.check_spend(data, OCT28, 9)
-    assert paid.check_spend(data, OCT28, 10)["left"] == 20
+        paid.check_spend(data, OCT28, 9, 1.0)
+    assert paid.check_spend(data, OCT28, 10, 1.0)["left_min"] == 1000.0
 
 
 def test_an_entry_is_written_and_read_back(tmp_path):
     path = a_ledger(tmp_path)
-    assert paid.ledger_spend(path, entry("2026-10-28 12:00:00 PDT"), OCT28, 10) == 11
-    assert paid.allowance(paid.ledger_read(path), OCT28)["spent"] == 1
+    assert paid.ledger_spend(path, entry("2026-10-28 12:00:00 PDT", audio_s=150.0), OCT28, 10) == 11
+    assert paid.allowance(paid.ledger_read(path), OCT28)["spent_min"] == 2.5
+
+
+def ledger_text(monthly: dict, spent: list | None = None) -> str:
+    return json.dumps({"format": "emet-ledger/1", "spent": spent or [], "monthly": monthly,
+                       "standing": {"since": "2026-10-27"}})
 
 
 @pytest.mark.parametrize("text, expect", [
     (None, "no ledger"),
     ("{", "not JSON"),
     (json.dumps({"spent": []}), "not an emet-ledger/1 file"),
-    (json.dumps({"format": "emet-ledger/1", "spent": [], "monthly": {"replays": "20", "canaries": 1},
-                 "standing": {"since": "2026-10-27"}}), '"monthly"'),
-    (json.dumps({"format": "emet-ledger/1", "spent": [{"time": "2026-10-28"}], "monthly": {"replays": 20, "canaries": 1},
-                 "standing": {"since": "2026-10-27"}}), "no time or no kind"),
+    (ledger_text({"replay_minutes": "1000", "canaries": 1}), '"monthly"'),
+    (ledger_text({"replays": 20, "canaries": 1}), "replays was an entry count"),
+    (ledger_text({"replay_minutes": 1000, "canaries": 1}, [{"time": "2026-10-28"}]), "no time or no kind"),
+    (ledger_text({"replay_minutes": 1000, "canaries": 1}, [{"time": "2026-10-28", "kind": "replay"}]),
+     "has no audio_s to count"),
 ])
 def test_a_ledger_that_cannot_be_trusted_is_refused(tmp_path, text, expect):
     path = tmp_path / "ledger.json"
@@ -205,20 +233,23 @@ def test_a_dry_run_spends_nothing_writes_nothing_and_connects_nowhere(tmp_path, 
     assert (tmp_path / "ledger.json").read_bytes() == before and not (tmp_path / "out.json").exists()
 
 
-def test_too_much_audio_for_one_entry_is_refused_before_the_ledger(tmp_path, capsys):
+def test_a_miss_list_longer_than_130_s_plans_as_one_entry(tmp_path, capsys):
+    """The 130 s cap of D6's reading is gone (the maintainer, 2026-11-24)."""
     misses = a_miss_list(tmp_path, seconds=131.0)
-    assert paid.main(plan_args(tmp_path, misses, dry_run=True), today=OCT28) == 2
-    assert "past one entry's 130 s" in capsys.readouterr().err
+    assert paid.main(plan_args(tmp_path, misses, dry_run=True), today=OCT28) == 0
+    out = capsys.readouterr().out
+    assert "130.96 s of audio; 2026-10: 0.0 of 1000 replay minutes spent, 1000.0 left" in out
+    assert '"audio_s": 130.96' in out
 
 
 def test_a_spent_month_refuses_the_dry_run_too(tmp_path, capsys):
     misses = a_miss_list(tmp_path)
     args = plan_args(tmp_path, misses, dry_run=True)
     data = paid.ledger_read(tmp_path / "ledger.json")
-    data["spent"] += [entry("2026-10-28 10:00:00 PDT") for _ in range(20)]
+    data["spent"] += [entry("2026-10-28 10:00:00 PDT", audio_s=60000.0)]
     (tmp_path / "ledger.json").write_text(json.dumps(data), encoding="utf-8")
     assert paid.main(args, today=OCT28) == 2
-    assert "20 of 20 replay entries spent" in capsys.readouterr().err
+    assert "1000.0 of 1000 replay minutes spent, 0.0 left" in capsys.readouterr().err
     assert paid.main(args, today=datetime.date(2026, 11, 1)) == 0
 
 

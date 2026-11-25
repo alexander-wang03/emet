@@ -29,8 +29,23 @@ Why each rule holds:
     sample          sample, estimated from the file as the recorder writes
                     it, so a slot in the manifest is where the prompt
                     appeared in the audio, whatever the SSH link's delay.
-    no cue          a sound would be in the recording. The prompter writes
-                    no bell character and starts no player.
+    read ahead      each prompt screen shows the take after it as "next:",
+    and count in    and a large 3, 2, 1, a second apart, comes before each
+                    prompt, which then shows marked NOW. A prompt's sample and
+                    its slot stay where they were; only the screen tells the
+                    speaker earlier. On the 30 s trial of 2026-11-24 the
+                    speech began about 3.4 s after each prompt appeared, over
+                    half of a 6 s slot, and the one-breath take came out with
+                    a pause after the name.
+    no sound on     a sound would be in the recording, so the prompter starts
+    the Pi          no player. By default it writes no bell either. With
+                    `--bell` it writes the terminal's bell at each NOW, which
+                    the laptop's terminal sounds; through the laptop's
+                    speakers that bell is in the recording too, so `--bell`
+                    is for earbuds or headphones on the laptop.
+    the sheet       `--check` prints the plan with each take numbered through
+                    the sitting, and each screen shows that number, so the
+                    speaker can read along from paper.
     retakes         `r` marks the take on screen as fluffed and `p` the one
                     before it. The take keeps its slot and gains an
                     exclusion with its reason, and its prompt goes again at
@@ -48,6 +63,13 @@ Why each rule holds:
     append-only     a file whose recording or manifest exists is never
                     recorded again, so running a plan a second time resumes
                     it where it stopped.
+    --again ID      a file the maintainer wants again is recorded under the
+                    next free id (`ID-2`, `ID-3`), its `made_with` naming the
+                    recording it replaces. That recording keeps its audio and
+                    its manifest, and once the new file has closed, each of
+                    its takes not yet excluded is excluded with the reason
+                    and the date, so a failed new recording leaves the old one
+                    as it was.
 
 How the first sample is estimated: the recorder writes the file a block at a
 time, so `now - samples_on_disk / 16000` is never earlier than the true
@@ -61,8 +83,13 @@ onsets.
 of the requested length, a virtual clock runs the schedule at once, and the
 schedule is printed while the manifests are written as in a real run.
 
+With `--again`, a dry run reads the bank it is given, prints what it would
+change there, changes nothing in it, and runs the schedule against a new
+temporary directory.
+
 Usage:
-    python3 tools/bank/record.py PLAN [--bank ~/voicebank] [--only ID,...] [--from ID]
+    python3 tools/bank/record.py PLAN [--bank ~/voicebank] [--only ID,...] [--from ID] [--bell]
+    python3 tools/bank/record.py PLAN --again FILE_ID [--bank ~/voicebank] [--bell]
     python3 tools/bank/record.py PLAN --dry-run [--bank DIR] [--dry-keys FILE:SLOT:KEY,...]
     python3 tools/bank/record.py PLAN --check
     python3 tools/bank/record.py PLAN --close FILE_ID [--bank ~/voicebank]
@@ -88,7 +115,7 @@ import time
 import uuid
 import wave
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -154,6 +181,15 @@ INSTRUCTIONS = {
 
 KEYS_LINE = "r: say this one again at the end    p: the one before    Ctrl-C: stop (the recording runs to its end)"
 EXCLUDE_REASON = "marked a retake at the prompter"
+#: Why --again excludes the takes of the recording it replaces.
+AGAIN_REASON = "the maintainer asked for this file again; recorded again as {new} (record.py --again)"
+#: The seconds counted in before each prompt, a second apart.
+COUNT_IN = (3, 2, 1)
+#: The terminal's bell, which the laptop's terminal sounds over SSH. Never
+#: written unless --bell asks for it.
+BEL = chr(7)
+BELL_NOTE = ("--bell: the bell rings in this SSH terminal, on the laptop, at each NOW. Use earbuds or "
+             "headphones on the laptop: through its speakers the bell is in the recording. Nothing plays on the Pi.")
 
 
 class PlanError(Exception):
@@ -185,6 +221,10 @@ class PlanFile:
     say: str | None = None
     #: A retake file's takes, each with the id of the take it says again.
     entries: list["Entry"] | None = None
+    #: The sheet's number of this file's first take, counted through the plan.
+    first_number: int = 1
+    #: The recording a file made with --again replaces.
+    replaces: str | None = None
 
     @property
     def slots(self) -> int:
@@ -313,6 +353,10 @@ def parse_plan(doc: dict, path: Path | None = None) -> Plan:
         files.append(pf)
     if not files and not problems:
         problems.append("the plan has no files")
+    number = 1
+    for pf in files:
+        pf.first_number = number
+        number += len(pf.takes)
     if problems:
         raise PlanError("\n".join(problems))
     return Plan(id=pid, title=doc.get("title", pid), speaker=speaker, device=device,
@@ -509,15 +553,27 @@ class TerminalKeys:
                 return {"s": "skip", "q": "quit"}[ch]
 
 
+def next_line(entry: "Entry | None") -> str:
+    """The read-ahead under a prompt: the take the next slot asks for."""
+    if entry is None:
+        return "next: nothing more in this file"
+    return f"next{sheet_mark(entry)}: {prompt_words(entry.take, 1) if entry.take.kind == 'pause' else entry.take.text}"
+
+
+def sheet_mark(entry: "Entry | None") -> str:
+    return "" if entry is None or entry.number is None else f" (sheet {entry.number})"
+
+
 class Screen:
     """The SSH terminal: one prompt at a time, cleared between prompts."""
 
     CLEAR = "\x1b[2J\x1b[H"
 
-    def __init__(self, out=None, plain: bool = False, width: int | None = None) -> None:
+    def __init__(self, out=None, plain: bool = False, width: int | None = None, bell: bool = False) -> None:
         self.out = out or sys.stdout
         self.plain = plain
         self.width = width
+        self.bell = bell
 
     def _write(self, text: str) -> None:
         try:
@@ -529,28 +585,61 @@ class Screen:
     def _cols(self) -> int:
         return self.width or shutil.get_terminal_size((100, 30)).columns
 
-    def show(self, f: PlanFile, slot: int, entry: "Entry | None", part: int, pos: int) -> None:
-        head = f"{f.id}   prompt {slot + 1} of {f.slots}   {where_line(f)}   {pos / RATE:5.1f} s"
+    def _big(self, words: str) -> str:
+        return words if self.plain else "\n".join(big(words, self._cols()))
+
+    def _head(self, f: PlanFile, slot: int, entry: "Entry | None", pos: int) -> str:
+        return (f"{f.id}   prompt {slot + 1} of {f.slots}{sheet_mark(entry)}   {where_line(f)}"
+                f"   {pos / RATE:5.1f} s")
+
+    def waiting(self, f: PlanFile, upcoming: "Entry | None", pos: int) -> None:
+        """The screen while the lead runs, before the first count-in."""
+        self._write(f"{self.CLEAR}{f.id}   recording   {where_line(f)}\n\n"
+                    f"the room first: the first prompt comes at {f.lead_s:g} s\n\n"
+                    f"{next_line(upcoming)}\n\n{KEYS_LINE}\n")
+
+    def countdown(self, f: PlanFile, slot: int, n: int, upcoming: "Entry | None", pos: int) -> None:
+        """A large n before slot's prompt, with that prompt to read ahead."""
+        get_ready = INSTRUCTIONS[upcoming.take.kind] if upcoming is not None else ""
+        self._write(f"{self.CLEAR}{self._head(f, slot, upcoming, pos)}\n\nget ready: {get_ready}\n\n"
+                    f"{self._big(str(n))}\n\n{next_line(upcoming)}\n\n{KEYS_LINE}\n")
+
+    def show(self, f: PlanFile, slot: int, entry: "Entry | None", part: int, pos: int,
+             upcoming: "Entry | None" = None) -> None:
         if entry is None:
             words, instruction = "nothing", "keep still: this slot was kept for a retake"
         else:
             t = entry.take
             words = prompt_words(t, part)
             instruction = INSTRUCTIONS[t.kind] + ("   (again)" if entry.retake_of else "")
-        body = words if self.plain else "\n".join(big(words, self._cols()))
-        self._write(f"{self.CLEAR}{head}\n\n{instruction}\n\n{body}\n\n{KEYS_LINE}\n")
+            if part == 1:
+                instruction = "NOW: " + instruction
+        ring = BEL if self.bell and entry is not None and part == 1 else ""
+        self._write(f"{ring}{self.CLEAR}{self._head(f, slot, entry, pos)}\n\n{instruction}\n\n"
+                    f"{self._big(words)}\n\n{next_line(upcoming)}\n\n{KEYS_LINE}\n")
 
     def note(self, text: str) -> None:
         self._write(text + "\n")
 
 
 class DryScreen:
-    """The dry run's screen: one line a prompt, which is the schedule."""
+    """The dry run's screen: one line a prompt and one a count-in, which is
+    the schedule. With --bell it marks each NOW the bell would ring at."""
 
-    def __init__(self, out=None) -> None:
+    def __init__(self, out=None, bell: bool = False) -> None:
         self.out = out or sys.stdout
+        self.bell = bell
 
-    def show(self, f: PlanFile, slot: int, entry: "Entry | None", part: int, pos: int) -> None:
+    def waiting(self, f: PlanFile, upcoming: "Entry | None", pos: int) -> None:
+        pass
+
+    def countdown(self, f: PlanFile, slot: int, n: int, upcoming: "Entry | None", pos: int) -> None:
+        if n == COUNT_IN[0]:
+            print(f"  {pos / RATE:6.1f} s  {pos:>8}  {slot + 1:02d}.0  count in "
+                  + ", ".join(str(c) for c in COUNT_IN), file=self.out)
+
+    def show(self, f: PlanFile, slot: int, entry: "Entry | None", part: int, pos: int,
+             upcoming: "Entry | None" = None) -> None:
         if entry is None:
             line = "(kept for a retake, unused)"
         else:
@@ -558,6 +647,8 @@ class DryScreen:
             line = f"{t.kind:<13} {prompt_words(t, part)}"
             if entry.retake_of:
                 line += f"   (again: {entry.retake_of})"
+            if self.bell and part == 1:
+                line += "   (bell)"
         print(f"  {pos / RATE:6.1f} s  {pos:>8}  {slot + 1:02d}.{part}  {line}", file=self.out)
 
     def note(self, text: str) -> None:
@@ -588,6 +679,8 @@ def where_line(f: PlanFile) -> str:
 class Entry:
     take: PlanTake
     retake_of: str | None = None
+    #: The take's number on the printed sheet.
+    number: int | None = None
 
 
 @dataclass
@@ -694,7 +787,8 @@ def manifest_head(f: PlanFile, plan: Plan, device: str, level: str | None,
         "kind": f.kind,
         "lead_s": _num(f.lead_s), "prompt_every_s": _num(f.every_s),
         "made_with": f"tools/bank/record.py, plan {plan.id}" + (
-            "; says again " + ", ".join(sorted({str(e.retake_of) for e in f.entries})) if f.entries else ""),
+            "; says again " + ", ".join(sorted({str(e.retake_of) for e in f.entries})) if f.entries else "") + (
+            f"; again for {f.replaces}" if f.replaces else ""),
         "takes": [],
     }
 
@@ -773,7 +867,8 @@ def record_file(f: PlanFile, plan: Plan, bank: Path, *, clock, screen, keys, rec
     launched = clock.now()
     proc = popen(cmd, **kwargs)
     est = StartEstimate(wav, launched)
-    queue = list(f.entries) if f.entries else [Entry(t) for t in f.takes]
+    queue = (list(f.entries) if f.entries else
+             [Entry(t, number=f.first_number + i) for i, t in enumerate(f.takes)])
     shown: dict[int, dict] = {}
     marked: set[str] = set()
     write_json(man, doc)
@@ -784,7 +879,7 @@ def record_file(f: PlanFile, plan: Plan, bank: Path, *, clock, screen, keys, rec
             return
         marked.add(rec["id"])
         rec["exclude"] = {"reason": EXCLUDE_REASON, "date": today}
-        queue.append(Entry(rec["_entry"].take, retake_of=rec["id"]))
+        queue.append(Entry(rec["_entry"].take, retake_of=rec["id"], number=rec["_entry"].number))
         res.marked += 1
         write_json(man, public(doc))
         screen.note(f"marked {rec['id']}: it is asked again at the end")
@@ -808,11 +903,33 @@ def record_file(f: PlanFile, plan: Plan, bank: Path, *, clock, screen, keys, rec
     def public(d: dict) -> dict:
         return dict(d, takes=[{k: v for k, v in t.items() if k != "_entry"} for t in d["takes"]])
 
+    def start_of(k: int) -> int:
+        return int(round((f.lead_s + f.every_s * k) * RATE))
+
+    def upcoming(k: int) -> Entry | None:
+        """The take slot k will ask for, as the queue stands now."""
+        return queue[k] if k < min(len(queue), f.slots) else None
+
+    def count_in(k: int, after: int) -> None:
+        """3, 2, 1 before slot k's prompt, a second apart, never before what
+        is on screen now was shown. The prompt's own sample is unchanged."""
+        for n_left in COUNT_IN:
+            at = start_of(k) - n_left * RATE
+            if at < after:
+                continue
+            pos = wait_until(at, k - 1)
+            coming = upcoming(k)
+            if coming is not None:
+                screen.countdown(f, k, n_left, coming, pos)
+
     last: dict | None = None
     n = 0
     try:
+        screen.waiting(f, upcoming(0), 0)
+        shown_at = 0
         for k in range(f.slots):
-            start = int(round((f.lead_s + f.every_s * k) * RATE))
+            count_in(k, shown_at)
+            start = start_of(k)
             pos = wait_until(start, k - 1)
             if last is not None:
                 last["slot"]["end"] = pos
@@ -826,13 +943,16 @@ def record_file(f: PlanFile, plan: Plan, bank: Path, *, clock, screen, keys, rec
                 shown[k] = rec
                 last = rec
             write_json(man, public(doc))
-            screen.show(f, k, entry, 1, pos)
+            screen.show(f, k, entry, 1, pos, upcoming=upcoming(k + 1))
+            shown_at = start
             if entry is not None and entry.take.kind == "pause":
                 say = entry.take.say_s if entry.take.say_s is not None else PAUSE_SAY_S
-                wait_until(start + int(round(say * RATE)), k)
-                screen.show(f, k, entry, 2, est.position(clock.now()))
-                wait_until(start + int(round((say + entry.take.pause_s) * RATE)), k)
-                screen.show(f, k, entry, 3, est.position(clock.now()))
+                shown_at = start + int(round(say * RATE))
+                wait_until(shown_at, k)
+                screen.show(f, k, entry, 2, est.position(clock.now()), upcoming=upcoming(k + 1))
+                shown_at = start + int(round((say + entry.take.pause_s) * RATE))
+                wait_until(shown_at, k)
+                screen.show(f, k, entry, 3, est.position(clock.now()), upcoming=upcoming(k + 1))
         end = int(round((f.lead_s + f.every_s * f.slots) * RATE))
         pos = wait_until(end, f.slots - 1)
         if last is not None:
@@ -917,6 +1037,77 @@ def close_open(bank: Path, file_id: str, today: str) -> list[str]:
     except bank_files.BankError as exc:
         return [f"{file_id}: {p}" for p in exc.problems]
     return add_to_index(bank, f"manifests/{file_id}.json", today)
+
+
+class AgainError(Exception):
+    """A file --again cannot record again, and why."""
+
+
+def taken(bank: Path, file_id: str) -> bool:
+    """Whether an id is in use: its manifest or its audio exists."""
+    return (bank / "manifests" / f"{file_id}.json").exists() or (bank / "audio" / f"{file_id}.wav").exists()
+
+
+def plan_again(plan: Plan, bank: Path, file_id: str) -> tuple[PlanFile, str]:
+    """(the plan's file under its next free id, the recording it replaces).
+    The replaced one is the latest of `ID`, `ID-2`, `ID-3` with a manifest.
+    The bank is only read."""
+    f = next((pf for pf in plan.files if pf.id == file_id), None)
+    if f is None:
+        raise AgainError(f"{file_id} is not a file of plan {plan.id}")
+    if not (bank / "manifests" / f"{file_id}.json").exists():
+        raise AgainError(f"{file_id} was never recorded in {bank}: record it with the plan instead")
+    plan_ids = {pf.id for pf in plan.files}
+    replaced, n = file_id, 2
+    while True:
+        cand = f"{file_id}-{n}"
+        if cand not in plan_ids and not taken(bank, cand):
+            break
+        if (bank / "manifests" / f"{cand}.json").exists():
+            replaced = cand
+        n += 1
+    old = json.loads((bank / "manifests" / f"{replaced}.json").read_text(encoding="utf-8"))
+    if not old.get("sha256"):
+        raise AgainError(f"{replaced} is still open: close it first with --close {replaced}")
+    return replace(f, id=cand, replaces=replaced), replaced
+
+
+def exclude_replaced(bank: Path, replaced: str, new_id: str, today: str) -> tuple[int, list[str]]:
+    """Exclude each take of the replaced recording not yet excluded, with the
+    reason and the date; its audio is never touched. (takes excluded, problems)"""
+    path = bank / "manifests" / f"{replaced}.json"
+    try:
+        doc = bank_files.read(path, "manifest")
+    except bank_files.BankError as exc:
+        return 0, [f"{replaced}: {p}" for p in exc.problems]
+    count = 0
+    for t in doc["takes"]:
+        if t["exclude"] is None:
+            t["exclude"] = {"reason": AGAIN_REASON.format(new=new_id), "date": today}
+            count += 1
+    try:
+        bank_files.write(path, doc, "manifest")
+    except bank_files.BankError as exc:
+        return 0, [f"{replaced}: {p}" for p in exc.problems]
+    return count, []
+
+
+def run_again(plan: Plan, bank: Path, file_id: str, **kw) -> SittingResult:
+    """Record one plan file again under its next free id, then exclude the
+    takes of the recording it replaces, only once the new file has closed."""
+    new, replaced = plan_again(plan, bank, file_id)
+    today = kw.get("today") or datetime.date.today().isoformat()
+    res = run_sitting(replace(plan, files=[new]), bank, **kw)
+    done = next((r for r in res.files if r.id == new.id), None)
+    screen = kw["screen"]
+    if done is not None and done.sha256:
+        count, problems = exclude_replaced(bank, replaced, new.id, today)
+        done.problems.extend(problems)
+        if not problems:
+            screen.note(f"{replaced}: {count} take(s) excluded; {new.id} replaces it")
+    else:
+        screen.note(f"{replaced} is left as it was: {new.id} did not close")
+    return res
 
 
 def retake_files(f: PlanFile, entries: list[Entry], round_no: int) -> list[PlanFile]:
@@ -1129,6 +1320,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-keys", default="", help="for --dry-run: FILE:PROMPT:KEY,... keys pressed at those prompts")
     ap.add_argument("--recorder", help="the recorder command as a JSON list with {device}, {seconds} and {path}")
     ap.add_argument("--close", metavar="ID", help="close a manifest the prompter left open: hash the file, end the last slot")
+    ap.add_argument("--again", metavar="ID", help="record this file of the plan again under its next free id, and "
+                    "exclude the takes of the recording it replaces once the new file closes")
+    ap.add_argument("--bell", action="store_true", help="ring this SSH terminal's bell, on the laptop, at each NOW. "
+                    "Use earbuds or headphones on the laptop: through its speakers the bell is in the recording. "
+                    "Nothing plays on the Pi")
     args = ap.parse_args(argv)
     try:
         plan = load_plan(args.plan)
@@ -1137,11 +1333,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(summary(plan))
     if args.check:
+        print("The numbers run through the sitting; each prompt's screen shows its take's.")
         for f in plan.files:
             print(f"\n{f.id}  ({f.seconds} s, {where_line(f)})" + (f"\n      {f.say}" if f.say else ""))
-            for n, t in enumerate(f.takes, 1):
-                print(f"  {n:2d}  {manifest_text(t)}")
+            for n, t in enumerate(f.takes, f.first_number):
+                print(f"  {n:3d}  {manifest_text(t)}")
         return 0
+    if args.again and (args.only or args.start_from):
+        print("record: --again records one file; it takes no --only or --from", file=sys.stderr)
+        return 2
+    if args.bell:
+        print(BELL_NOTE)
     if args.close:
         bank = (args.bank or Path("~/voicebank")).expanduser()
         found = close_open(bank, args.close, datetime.date.today().isoformat())
@@ -1151,14 +1353,35 @@ def main(argv: list[str] | None = None) -> int:
     only = set(args.only.split(",")) if args.only else None
     recorder = json.loads(args.recorder) if args.recorder else list(RECORDER)
     if args.dry_run:
-        bank = args.bank or Path(tempfile.mkdtemp(prefix="emet-bank-dry-"))
-        bank.mkdir(parents=True, exist_ok=True)
-        print(f"dry run: nothing is recorded; manifests go to {bank}; consent is not checked")
         if not args.recorder:
             recorder = [sys.executable, str(Path(__file__).resolve()), "--write-silence", "{seconds}", "{path}"]
-        res = run_sitting(plan, bank, clock=VirtualClock(), screen=DryScreen(),
-                          keys=ScriptedKeys(parse_dry_keys(args.dry_keys)), recorder=recorder,
-                          device=args.device, level=lambda d: None, only=only, start_from=args.start_from)
+        dry = dict(clock=VirtualClock(), screen=DryScreen(bell=args.bell),
+                   keys=ScriptedKeys(parse_dry_keys(args.dry_keys)), recorder=recorder,
+                   device=args.device, level=lambda d: None)
+        if args.again:
+            bank = (args.bank or Path("~/voicebank")).expanduser()
+            try:
+                new, replaced = plan_again(plan, bank, args.again)
+            except AgainError as exc:
+                print(f"record: {exc}", file=sys.stderr)
+                return 2
+            old = json.loads((bank / "manifests" / f"{replaced}.json").read_text(encoding="utf-8"))
+            open_takes = [t["id"] for t in old["takes"] if t["exclude"] is None]
+            today = datetime.date.today().isoformat()
+            scratch = Path(tempfile.mkdtemp(prefix="emet-bank-dry-"))
+            print(f"dry run of --again {args.again}, reading {bank} and changing nothing in it:\n"
+                  f"  would record the plan's {args.again} again as {new.id}, listed in bank.json, "
+                  f"made_with ending \"again for {replaced}\"\n"
+                  f"  once {new.id} closes, would exclude {len(open_takes)} take(s) of {replaced} "
+                  f"({', '.join(open_takes) or 'none'}), reason \"{AGAIN_REASON.format(new=new.id)}\", "
+                  f"date {today}; its audio and manifest stay\n"
+                  f"  the schedule, against {scratch}:")
+            res = run_sitting(replace(plan, files=[new]), scratch, **dry)
+        else:
+            bank = args.bank or Path(tempfile.mkdtemp(prefix="emet-bank-dry-"))
+            bank.mkdir(parents=True, exist_ok=True)
+            print(f"dry run: nothing is recorded; manifests go to {bank}; consent is not checked")
+            res = run_sitting(plan, bank, only=only, start_from=args.start_from, **dry)
     else:
         bank = (args.bank or Path("~/voicebank")).expanduser()
         refusals = check_consent(plan, bank)
@@ -1174,6 +1397,11 @@ def main(argv: list[str] | None = None) -> int:
         holder = lock_holder(lock)
         if holder is not None:
             refusals.append(f"{lock} is held: " + " / ".join(holder))
+        if args.again:
+            try:
+                plan_again(plan, bank, args.again)
+            except AgainError as exc:
+                refusals.append(str(exc))
         if refusals:
             for r in refusals:
                 print(f"record: {r}", file=sys.stderr)
@@ -1192,8 +1420,12 @@ def main(argv: list[str] | None = None) -> int:
             signal.signal(signal.SIGHUP, _hup)
         try:
             with TerminalKeys() as keys:
-                res = run_sitting(plan, bank, clock=RealClock(), screen=Screen(plain=args.plain), keys=keys,
-                                  recorder=recorder, device=args.device, only=only, start_from=args.start_from)
+                real = dict(clock=RealClock(), screen=Screen(plain=args.plain, bell=args.bell), keys=keys,
+                            recorder=recorder, device=args.device)
+                if args.again:
+                    res = run_again(plan, bank, args.again, **real)
+                else:
+                    res = run_sitting(plan, bank, only=only, start_from=args.start_from, **real)
         finally:
             release_lock(lock, token)
     print(f"\n{len(res.files)} file(s) written, {len(res.skipped)} skipped, "
