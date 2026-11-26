@@ -2,7 +2,7 @@
  "format": "emet-bank-plan/1",
  "id": "v1-sitting-2",
  "title": "Bank v1, sitting 2 of 2: numbers, short answers, pauses and long turns in room A; a TV, facing away, about 5 m; room B near and about 3 m",
- "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). The table's room responses are left out too: the microphone's automatic gain control is on (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep; nothing reads a response before the generated bank of stage 2, which records them with that control off, if the maintainer decides so.",
+ "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). The table's room responses are left out too: the microphone's automatic gain control is on (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep; nothing reads a response before the generated bank of stage 2, which records them with that control off, if the maintainer decides so. Takes with a pause, wake_pause among them, are prompted every 8 s (verification-design.md 5.1); the first sitting, 2026-11-25, prompted wake_pause every 6 s.",
  "made_from": "research/references-2026-10-26/verification-design.md 5.1, the bank v1 table",
  "speaker": "s01",
  "device": "plughw:3,0",
@@ -529,7 +529,8 @@
     "pa15",
     "pa20",
     "pa25"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s2-07-a-near-pauses-2",
@@ -541,7 +542,8 @@
     "pa15",
     "pa10",
     "pa05"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s2-08-a-near-long",
@@ -569,7 +571,8 @@
     "wp09",
     "wp10"
    ],
-   "say": "a TV or radio on, with speech, at its usual level"
+   "say": "a TV or radio on, with speech, at its usual level",
+   "every_s": 8
   },
   {
    "id": "v1s2-10-a-near-tv-one-breath",
@@ -649,7 +652,8 @@
     "wp13",
     "wp14",
     "wp15"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s2-16-a-3m-away-one-breath",
@@ -683,7 +687,8 @@
     "wp18",
     "wp19",
     "wp20"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s2-18-a-5m-one-breath",
@@ -727,7 +732,8 @@
     "wp11",
     "wp12",
     "wp13"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s2-21-b-near-one-breath",
@@ -779,7 +785,8 @@
     "wp01",
     "wp02",
     "wp03"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s2-25-b-3m-one-breath",

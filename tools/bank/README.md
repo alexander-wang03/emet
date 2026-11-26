@@ -39,45 +39,58 @@ is never used.
 ## Record and label (bank v1)
 
 ```sh
-# On the reference body, over `ssh -t`, from a copy of this tree:
-python3 tools/bank/record.py tools/bank/plans/trial-30s.json --dry-run
-python3 tools/bank/record.py tools/bank/plans/v1-sitting-1.json
+# On the laptop, from emet/, with earbuds or headphones in: the tones once, to set the volume, then the sitting.
+python tools/bank/sit.py --test-tone
+python tools/bank/sit.py tools/bank/plans/v1-sitting-1.json
 # On the laptop, in a tools venv made from requirements.txt:
 <tools-venv>/python tools/bank/label.py --bank ../voicebank
 ```
 
+`sit.py` runs on the laptop. It starts `record.py` on the reference body
+over `ssh -t`, with the terminal passed straight through, and follows the
+prompter's cue file over a second SSH connection, playing a soft tick at
+each 3, 2, 1 and a higher tone at each NOW on the laptop. Wear earbuds or
+headphones: through the laptop's speakers the tones are in the recording.
+A cue that arrives late is dropped, so a stall never sounds as one burst; when the
+cue connection ends, two low tones sound, the terminal says so and it is
+started again; a tone that fails to play is said at once. `sit.py` refuses
+a dry run, whose cues would all come at once: `--test-tone` tries the
+tones. The terminal bell of `record.py --bell` still works for a terminal
+that rings, and went unheard in the first sitting, 2026-11-25. That
+sitting recorded `v1s1-02-a-near-wake-1` at 6 s a take; resuming the plan
+skips it, so record it again first with `--again v1s1-02-a-near-wake-1`.
+
 `record.py` starts `arecord` itself with a fixed `-d`, shows each prompt when
 the recording reaches it, writes each take's slot into the file's manifest
 as it goes, plays nothing on the Pi, and hashes each file when it closes.
-Before each prompt it counts in a large 3, 2, 1, a second apart, then marks
-the prompt NOW and shows the take after it as "next:"; on the trial of
-2026-11-24 the speech began about 3.4 s into each 6 s slot. With `--bell`
-the SSH terminal rings on the laptop at each NOW: use earbuds or headphones
-there, since through the laptop's speakers the bell is in the recording.
-`--check` prints the plan as a sheet with each take numbered through the
-sitting, and each screen shows its take's number. A plan is a
-sitting: `plans/v1-sitting-1.json` (room A, near and about 3 m) and
-`plans/v1-sitting-2.json` (numbers, short answers, pauses and long turns;
-a TV, facing away, about 5 m; room B), each about 29 minutes of audio, and
-`plans/trial-30s.json`, which tries the prompter on one 30 s file first.
-Before each file it says where to stand: Enter starts it, `s` skips it, `q`
-ends the sitting. While a file records, `r` asks the take on screen again
-at the end of the file and `p` the one before. Ctrl-C stops the prompts,
-and the recording runs to its fixed length. Running a plan again resumes
-it: a file already recorded is never recorded again; `--again FILE_ID`
-records it once more as `FILE_ID-2` (then `-3`), and once that file closes
-it excludes the takes of the one it replaces, whose audio and manifest
-stay. It refuses to start
-without a terminal, without `arecord`, without `bank.json` listing the
-plan's speaker with a consent file, or while the body runner holds
-`~/emet-ci/lock`, and it holds that lock for the sitting.
+Before each prompt it counts in 3, 2, 1, a second apart, on a line under
+the take on screen, which stays until the next NOW, and shows the take after
+it as "next:". A take said in one breath gets 6 s; a take with a pause,
+wake_pause among them, 8 s. `--check` prints the plan as a sheet with each
+take numbered through the sitting, and each screen shows its take's number.
+A plan is a sitting: `plans/v1-sitting-1.json` (room A, near and about 3 m;
+31 minutes of audio) and `plans/v1-sitting-2.json` (numbers, short answers,
+pauses and long turns; a TV, facing away, about 5 m; room B; 30.5 minutes),
+and `plans/trial-30s.json`, which tried the prompter on one file first, 38 s
+since its wake_pause take has 8 s. Before each file it says where to stand:
+Enter starts it, `s` skips it, `q` ends the sitting. While a file records,
+`r` asks the take on screen again at the end of the file and `p` the one
+before. Ctrl-C stops the prompts, and the recording runs to its fixed
+length. Running a plan again resumes it: a file already recorded is never
+recorded again; `--again FILE_ID` records it once more as `FILE_ID-2` (then
+`-3`), and once that file closes it excludes the takes of the one it
+replaces, whose audio and manifest stay. It refuses to start without a
+terminal, without `arecord`, without `bank.json` listing the plan's speaker
+with a consent file, or while the body runner holds `~/emet-ci/lock`, and it
+holds that lock for the sitting.
 
 ```sh
 python3 tools/bank/record.py PLAN --check          # the plan as a sheet to print, for 3 m
 python3 tools/bank/record.py PLAN --dry-run        # the schedule and manifests against a stub; opens no device
 python3 tools/bank/record.py PLAN --close FILE_ID  # close a manifest a killed prompter left open
-python3 tools/bank/record.py PLAN --again FILE_ID --bell          # record a file again, the bell on the laptop
 python3 tools/bank/record.py PLAN --again FILE_ID --dry-run       # what --again would do; changes nothing
+python3 tools/bank/record.py PLAN --cues FILE      # a line at each count and NOW, which sit.py sounds
+python tools/bank/sit.py PLAN --again FILE_ID      # on the laptop: record a file again, with the tones
 ```
 
 `label.py` writes `<bank>/labels/<id>.json` and never a manifest, and prints

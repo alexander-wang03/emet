@@ -1,8 +1,8 @@
 {
  "format": "emet-bank-plan/1",
  "id": "trial-30s",
- "title": "The prompter's 30 s trial, before the first sitting (D5)",
- "note": "Three takes and one slot for a retake: press r once to see a take said again at the end.",
+ "title": "The prompter's trial before the first sitting (D5): 38 s since wake_pause takes get 8 s",
+ "note": "Three takes and one slot for a retake: press r once to see a take said again at the end. Takes with a pause, wake_pause among them, are prompted every 8 s (verification-design.md 5.1); the first sitting, 2026-11-25, prompted wake_pause every 6 s.",
  "speaker": "s01",
  "device": "plughw:3,0",
  "lead_s": 5,
@@ -45,7 +45,8 @@
     "ob34",
     "wp03",
     "de01"
-   ]
+   ],
+   "every_s": 8
   }
  ]
 }

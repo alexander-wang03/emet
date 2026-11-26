@@ -20,23 +20,40 @@ Why each rule holds:
                     before its first phrase, because the wake decoder first
                     updates its mean about 3 s in (the 0.5 row of the same
                     ledger).
-    6 s and 8 s     a prompt every 6 s holds the name and a question; a
-                    pause take holds up to 2.5 s more, so it gets 8 s. One
-                    long take (a paragraph, talk, room tone, a room's
-                    response) fills one slot of the length its plan gives.
+    6 s and 8 s     a prompt every 6 s holds the name and a question said in
+                    one breath. A take with a pause gets 8 s: a pause take
+                    holds up to 2.5 s more, and a wake_pause take a pause
+                    after the name and then a whole sentence
+                    (verification-design.md 5.1, "prompts every 6 s (8 s for
+                    pause takes)"); the first sitting, 2026-11-25, gave
+                    wake_pause 6 s and the maintainer found the text gone too
+                    soon. One long take (a paragraph, talk, room tone, a
+                    room's response) fills one slot of the length its plan
+                    gives.
     100 s at most   a spoiled file costs little.
     the first       prompts are placed in samples from the recording's first
     sample          sample, estimated from the file as the recorder writes
                     it, so a slot in the manifest is where the prompt
                     appeared in the audio, whatever the SSH link's delay.
     read ahead      each prompt screen shows the take after it as "next:",
-    and count in    and a large 3, 2, 1, a second apart, comes before each
-                    prompt, which then shows marked NOW. A prompt's sample and
-                    its slot stay where they were; only the screen tells the
+    and count in    and 3, 2, 1, a second apart, comes before each prompt,
+                    which then shows marked NOW. A prompt's sample and its
+                    slot stay where they were; only the screen tells the
                     speaker earlier. On the 30 s trial of 2026-11-24 the
                     speech began about 3.4 s after each prompt appeared, over
                     half of a 6 s slot, and the one-breath take came out with
-                    a pause after the name.
+                    a pause after the name. The count-in is a line under the
+                    take on screen, which stays until the next NOW: in the
+                    first sitting, 2026-11-25, a large count that took the
+                    take's place took the text away too soon.
+    cues            with `--cues FILE` the prompter adds a line to FILE at
+                    each count and each NOW ("count 3 FILE_ID 2 160000
+                    due=1795594772.806", 3 s before "now FILE_ID 2 208000
+                    due=1795594775.806" in an 8 s file), which
+                    tools/bank/sit.py follows over SSH and sounds as quiet
+                    tones on the laptop; `due=` is the Pi's clock as the
+                    line was written. The terminal bell of `--bell` went
+                    unheard in that sitting.
     no sound on     a sound would be in the recording, so the prompter starts
     the Pi          no player. By default it writes no bell either. With
                     `--bell` it writes the terminal's bell at each NOW, which
@@ -137,6 +154,8 @@ MAX_FILE_S = 100
 MIN_LEAD_S = 5
 EVERY_S = 6
 PAUSE_EVERY_S = 8
+#: Takes that hold a pause, and so a slot of PAUSE_EVERY_S.
+PAUSED_KINDS = frozenset({"pause", "wake_pause"})
 #: After the last slot, so `-d` is a whole number of seconds with the last
 #: words inside the file.
 TAIL_S = 1
@@ -179,7 +198,7 @@ INSTRUCTIONS = {
     "room_response": "play the sweep on your phone at mouth height, then keep still",
 }
 
-KEYS_LINE = "r: say this one again at the end    p: the one before    Ctrl-C: stop (the recording runs to its end)"
+KEYS_LINE = "r: say it again at the end   p: the one before   Ctrl-C: stop, the file runs on"
 EXCLUDE_REASON = "marked a retake at the prompter"
 #: Why --again excludes the takes of the recording it replaces.
 AGAIN_REASON = "the maintainer asked for this file again; recorded again as {new} (record.py --again)"
@@ -254,9 +273,9 @@ class Plan:
 
 
 def _every_for(kinds: set[str], every: float | None, problems: list[str], fid: str) -> float:
-    """The slot length a file's takes allow: 6 s, 8 s with a pause take, and
-    a longer one only for a file of one long kind."""
-    want = PAUSE_EVERY_S if "pause" in kinds else EVERY_S
+    """The slot length a file's takes allow: 6 s, 8 s with a take that holds
+    a pause, and a longer one only for a file of one long kind."""
+    want = PAUSE_EVERY_S if kinds & PAUSED_KINDS else EVERY_S
     if every is None:
         if kinds & LONG_KINDS:
             problems.append(f"{fid}: a file of {sorted(kinds & LONG_KINDS)} takes names its every_s")
@@ -565,15 +584,21 @@ def sheet_mark(entry: "Entry | None") -> str:
 
 
 class Screen:
-    """The SSH terminal: one prompt at a time, cleared between prompts."""
+    """The SSH terminal: one prompt at a time, cleared between prompts, and
+    fitted to the terminal's rows as well as its columns."""
 
     CLEAR = "\x1b[2J\x1b[H"
 
-    def __init__(self, out=None, plain: bool = False, width: int | None = None, bell: bool = False) -> None:
+    def __init__(self, out=None, plain: bool = False, width: int | None = None, bell: bool = False,
+                 height: int | None = None) -> None:
         self.out = out or sys.stdout
         self.plain = plain
         self.width = width
+        self.height = height
         self.bell = bell
+        #: The take on screen, (file id, head, instruction, words), kept
+        #: until the next NOW so the count-in can sit under it.
+        self._take: tuple[str, str, str, str | None] | None = None
 
     def _write(self, text: str) -> None:
         try:
@@ -582,27 +607,66 @@ class Screen:
         except OSError:
             pass  # the SSH session has gone; the recorder runs on regardless
 
-    def _cols(self) -> int:
-        return self.width or shutil.get_terminal_size((100, 30)).columns
-
-    def _big(self, words: str) -> str:
-        return words if self.plain else "\n".join(big(words, self._cols()))
+    def _size(self) -> tuple[int, int]:
+        size = shutil.get_terminal_size((100, 30))
+        return self.width or size.columns, self.height or size.lines
 
     def _head(self, f: PlanFile, slot: int, entry: "Entry | None", pos: int) -> str:
         return (f"{f.id}   prompt {slot + 1} of {f.slots}{sheet_mark(entry)}   {where_line(f)}"
                 f"   {pos / RATE:5.1f} s")
 
+    def _render(self, head: str, instruction: str, words: str | None, count: str | None,
+                upcoming: "Entry | None") -> str:
+        """The screen as text the terminal can hold without scrolling: the
+        take, then the count-in on a line of its own (never in the take's
+        place), then "next:". When that is taller than the terminal, the
+        blank lines and the keys line go first, then the large letters give
+        way to plain words, and last the bottom is cut, so the head, the
+        instruction and the first words always show. At 100 by 30, 354 of
+        sitting 1 and 2's 1035 count-in screens were taller than the
+        terminal before this (the review of 2026-11-25)."""
+        cols, rows = self._size()
+        tail = ([count] if count else []) + [next_line(upcoming)]
+        lines: list[str] = []
+        for large, spaced in ((not self.plain, True), (not self.plain, False), (False, False)):
+            body = [] if not words else (big(words, cols) if large else [words])
+            blocks = [[head]] + ([[instruction]] if instruction else []) + ([body] if body else []) + [tail]
+            if spaced:
+                blocks.append([KEYS_LINE])
+                lines = [ln for i, b in enumerate(blocks) for ln in ([""] if i else []) + b]
+            else:
+                lines = [ln for b in blocks for ln in b]
+            if screen_rows(lines, cols) <= rows - 1:
+                return "\n".join(lines) + "\n"
+        kept, used = [], 0
+        for ln in lines:
+            room = rows - 1 - used
+            if room <= 0:
+                break
+            if screen_rows([ln], cols) > room:
+                kept.append(ln[:room * cols])  # a paragraph keeps its first words
+                break
+            kept.append(ln)
+            used += screen_rows([ln], cols)
+        return "\n".join(kept) + "\n"
+
     def waiting(self, f: PlanFile, upcoming: "Entry | None", pos: int) -> None:
-        """The screen while the lead runs, before the first count-in."""
-        self._write(f"{self.CLEAR}{f.id}   recording   {where_line(f)}\n\n"
-                    f"the room first: the first prompt comes at {f.lead_s:g} s\n\n"
-                    f"{next_line(upcoming)}\n\n{KEYS_LINE}\n")
+        """The screen while the lead runs, before the first prompt."""
+        self._take = (f.id, f"{f.id}   recording   {where_line(f)}",
+                      f"the room first: the first prompt comes at {f.lead_s:g} s", None)
+        self._write(self.CLEAR + self._render(*self._take[1:], None, upcoming))
 
     def countdown(self, f: PlanFile, slot: int, n: int, upcoming: "Entry | None", pos: int) -> None:
-        """A large n before slot's prompt, with that prompt to read ahead."""
+        """n seconds to the coming prompt, under the take still on screen,
+        which is no longer marked NOW."""
+        if self._take is None or self._take[0] != f.id:
+            self._take = (f.id, f"{f.id}   {where_line(f)}", "", None)
+        _fid, head, instruction, words = self._take
+        if instruction.startswith("NOW: "):
+            instruction = instruction[len("NOW: "):]
         get_ready = INSTRUCTIONS[upcoming.take.kind] if upcoming is not None else ""
-        self._write(f"{self.CLEAR}{self._head(f, slot, upcoming, pos)}\n\nget ready: {get_ready}\n\n"
-                    f"{self._big(str(n))}\n\n{next_line(upcoming)}\n\n{KEYS_LINE}\n")
+        self._write(self.CLEAR + self._render(head, instruction, words, f"next prompt in {n} s: {get_ready}",
+                                              upcoming))
 
     def show(self, f: PlanFile, slot: int, entry: "Entry | None", part: int, pos: int,
              upcoming: "Entry | None" = None) -> None:
@@ -615,11 +679,16 @@ class Screen:
             if part == 1:
                 instruction = "NOW: " + instruction
         ring = BEL if self.bell and entry is not None and part == 1 else ""
-        self._write(f"{ring}{self.CLEAR}{self._head(f, slot, entry, pos)}\n\n{instruction}\n\n"
-                    f"{self._big(words)}\n\n{next_line(upcoming)}\n\n{KEYS_LINE}\n")
+        self._take = (f.id, self._head(f, slot, entry, pos), instruction, words)
+        self._write(ring + self.CLEAR + self._render(*self._take[1:], None, upcoming))
 
     def note(self, text: str) -> None:
         self._write(text + "\n")
+
+
+def screen_rows(lines: list[str], cols: int) -> int:
+    """The rows these lines take on a terminal this wide, each wrapped."""
+    return sum(max(1, -(-len(ln) // cols)) for ln in lines)
 
 
 class DryScreen:
@@ -653,6 +722,49 @@ class DryScreen:
 
     def note(self, text: str) -> None:
         print(text, file=self.out)
+
+
+class CueScreen:
+    """A line a cue in a file, ahead of the screen it wraps: `count N` at
+    each count-in and `now` at each prompt, with the file, the prompt and
+    the sample, and `due=` the Pi's clock when it was written, so the
+    laptop can drop a cue that reaches it late. tools/bank/sit.py follows the
+    file from the laptop. A cue that cannot be written is lost; the
+    recording never waits for it."""
+
+    def __init__(self, inner, path: Path, wall: Callable[[], float] = time.time) -> None:
+        self.inner = inner
+        self.path = path
+        self.wall = wall
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _cue(self, line: str) -> None:
+        try:
+            with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
+                fh.write(line + "\n")
+        except OSError:
+            pass
+
+    def waiting(self, f: PlanFile, upcoming: "Entry | None", pos: int) -> None:
+        self.inner.waiting(f, upcoming, pos)
+
+    def countdown(self, f: PlanFile, slot: int, n: int, upcoming: "Entry | None", pos: int) -> None:
+        self._cue(f"count {n} {f.id} {slot + 1} {pos} due={self.wall():.3f}")
+        self.inner.countdown(f, slot, n, upcoming, pos)
+
+    def show(self, f: PlanFile, slot: int, entry: "Entry | None", part: int, pos: int,
+             upcoming: "Entry | None" = None) -> None:
+        if entry is not None and part == 1:
+            self._cue(f"now {f.id} {slot + 1} {pos} due={self.wall():.3f}")
+        self.inner.show(f, slot, entry, part, pos, upcoming=upcoming)
+
+    def note(self, text: str) -> None:
+        self.inner.note(text)
+
+
+def with_cues(screen, path: Path | None):
+    """The screen, with its cues written to path when one is named."""
+    return screen if path is None else CueScreen(screen, path.expanduser())
 
 
 def prompt_words(t: PlanTake, part: int) -> str:
@@ -1050,8 +1162,11 @@ def taken(bank: Path, file_id: str) -> bool:
 
 def plan_again(plan: Plan, bank: Path, file_id: str) -> tuple[PlanFile, str]:
     """(the plan's file under its next free id, the recording it replaces).
-    The replaced one is the latest of `ID`, `ID-2`, `ID-3` with a manifest.
-    The bank is only read."""
+    The replaced one is the latest recording of ID: ID itself, or an `ID-N`
+    whose `made_with` says it was recorded again for the one before it in
+    that chain. Another plan file that happens to be named `ID-N`, or a file
+    no --again made, is never taken for a recording of ID. The bank is only
+    read."""
     f = next((pf for pf in plan.files if pf.id == file_id), None)
     if f is None:
         raise AgainError(f"{file_id} is not a file of plan {plan.id}")
@@ -1063,8 +1178,11 @@ def plan_again(plan: Plan, bank: Path, file_id: str) -> tuple[PlanFile, str]:
         cand = f"{file_id}-{n}"
         if cand not in plan_ids and not taken(bank, cand):
             break
-        if (bank / "manifests" / f"{cand}.json").exists():
-            replaced = cand
+        man = bank / "manifests" / f"{cand}.json"
+        if cand not in plan_ids and man.exists():
+            made_with = json.loads(man.read_text(encoding="utf-8")).get("made_with") or ""
+            if made_with.endswith(f"; again for {replaced}"):
+                replaced = cand
         n += 1
     old = json.loads((bank / "manifests" / f"{replaced}.json").read_text(encoding="utf-8"))
     if not old.get("sha256"):
@@ -1325,6 +1443,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bell", action="store_true", help="ring this SSH terminal's bell, on the laptop, at each NOW. "
                     "Use earbuds or headphones on the laptop: through its speakers the bell is in the recording. "
                     "Nothing plays on the Pi")
+    ap.add_argument("--cues", type=Path, help="add a line to this file at each count and each NOW, for "
+                    "tools/bank/sit.py to sound on the laptop")
     args = ap.parse_args(argv)
     try:
         plan = load_plan(args.plan)
@@ -1355,7 +1475,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         if not args.recorder:
             recorder = [sys.executable, str(Path(__file__).resolve()), "--write-silence", "{seconds}", "{path}"]
-        dry = dict(clock=VirtualClock(), screen=DryScreen(bell=args.bell),
+        dry = dict(clock=VirtualClock(), screen=with_cues(DryScreen(bell=args.bell), args.cues),
                    keys=ScriptedKeys(parse_dry_keys(args.dry_keys)), recorder=recorder,
                    device=args.device, level=lambda d: None)
         if args.again:
@@ -1378,7 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"  the schedule, against {scratch}:")
             res = run_sitting(replace(plan, files=[new]), scratch, **dry)
         else:
-            bank = args.bank or Path(tempfile.mkdtemp(prefix="emet-bank-dry-"))
+            bank = (args.bank.expanduser() if args.bank else Path(tempfile.mkdtemp(prefix="emet-bank-dry-")))
             bank.mkdir(parents=True, exist_ok=True)
             print(f"dry run: nothing is recorded; manifests go to {bank}; consent is not checked")
             res = run_sitting(plan, bank, only=only, start_from=args.start_from, **dry)
@@ -1420,7 +1540,7 @@ def main(argv: list[str] | None = None) -> int:
             signal.signal(signal.SIGHUP, _hup)
         try:
             with TerminalKeys() as keys:
-                real = dict(clock=RealClock(), screen=Screen(plain=args.plain, bell=args.bell), keys=keys,
+                real = dict(clock=RealClock(), screen=with_cues(Screen(plain=args.plain, bell=args.bell), args.cues), keys=keys,
                             recorder=recorder, device=args.device)
                 if args.again:
                     res = run_again(plan, bank, args.again, **real)

@@ -248,8 +248,10 @@ def test_check_finds_a_renamed_copy_only_by_hash(tmp_path, make_wav, make_tone, 
 def test_bank_v0_is_the_thirteen_recordings_as_the_records_give_them(real_bank):
     """Bank v0's figures (verification-design.md 5.1): 13 files, 193
     phrase slots plus 5 minutes of talk, 30.3 minutes; and the six of
-    2026-10-06 are the bytes recordings/pi-0.5.4.sha256 hashed on the Pi."""
-    docs = [doc for _, doc in bank_files.manifests(real_bank)]
+    2026-10-06 are the bytes recordings/pi-0.5.4.sha256 hashed on the Pi.
+    Bank v0 is the recordings kept in `recordings/`; files the prompter
+    records for v1 live in the bank's own `audio/` and are not counted."""
+    docs = [doc for _, doc in bank_files.manifests(real_bank) if doc["path"].startswith("../recordings/")]
     assert len(docs) == 13
     takes = [t for d in docs for t in d["takes"]]
     talk = [t for t in takes if t["kind"] == "talk"]

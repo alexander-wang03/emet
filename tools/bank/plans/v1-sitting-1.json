@@ -2,7 +2,7 @@
  "format": "emet-bank-plan/1",
  "id": "v1-sitting-1",
  "title": "Bank v1, sitting 1 of 2: room A, near and about 3 m",
- "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). The table's room responses are left out too: the microphone's automatic gain control is on (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep; nothing reads a response before the generated bank of stage 2, which records them with that control off, if the maintainer decides so.",
+ "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). The table's room responses are left out too: the microphone's automatic gain control is on (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep; nothing reads a response before the generated bank of stage 2, which records them with that control off, if the maintainer decides so. Takes with a pause, wake_pause among them, are prompted every 8 s (verification-design.md 5.1); the first sitting, 2026-11-25, prompted wake_pause every 6 s.",
  "made_from": "research/references-2026-10-26/verification-design.md 5.1, the bank v1 table",
  "speaker": "s01",
  "device": "plughw:3,0",
@@ -544,7 +544,8 @@
     "wp08",
     "wp09",
     "wp10"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s1-03-a-near-wake-2",
@@ -561,7 +562,8 @@
     "wp18",
     "wp19",
     "wp20"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s1-04-a-near-one-breath-1",
@@ -785,7 +787,8 @@
     "wp06",
     "wp07",
     "wp08"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s1-18-a-3m-wake-2",
@@ -799,7 +802,8 @@
     "wp13",
     "wp14",
     "wp15"
-   ]
+   ],
+   "every_s": 8
   },
   {
    "id": "v1s1-19-a-3m-one-breath-1",
