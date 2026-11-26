@@ -12,7 +12,7 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.5] - 2026-10-28
+## [0.5.5] - 2026-11-25
 
 Replay a voice bank and run the body's checks over SSH.
 
@@ -32,8 +32,14 @@ Replay a voice bank and run the body's checks over SSH.
 - `tools/bank/`, the voice bank's tools: a checker for its manifests, a
   prompter that records a sitting on the reference body over SSH, a
   labelling pass, a replay runner held exactly to golden files per
-  platform, a paid replay within a monthly ledger, cassettes made from the
-  Deepgram replays already paid for, and a monthly canary (#16)
+  platform, a paid replay within a monthly allowance of audio minutes,
+  cassettes made from the Deepgram replays already paid for, and a monthly
+  canary (#16)
+- The prompter keeps each take on screen until the next one, counts in
+  each prompt 3, 2, 1, gives a take with a pause 8 s, and records a file
+  again with `--again`, keeping the old one with its takes excluded;
+  `tools/bank/sit.py` runs it from the laptop and plays quiet tones in the
+  laptop's earbuds at each count, warning when the cues stop (#16)
 - `tools/body/run.py`, the body runner: from the laptop it puts a tree on
   the reference body over SSH, runs the suites, the checks and the bank's
   replays, runs the microphone and speaker steps only inside a named
@@ -47,9 +53,16 @@ Replay a voice bank and run the body's checks over SSH.
 - CI runs `actions/setup-python` 7.1.0, Dependabot's change from #15
   carried into this version (#16)
 
+### Fixed
+- `emet-providers` needs `emet-sdk` 0.5.1 or later, as `emet-hal` and
+  `emet-engine` do. Its floor of 0.1 was met by an unrelated package that
+  took the name `emet-sdk` on PyPI on 2026-10-30, so installing
+  `emet-providers` alone could fetch that package in place of Emet's
+  SDK (#16)
+
 Verified on the laptop and, over SSH, on the reference body, a Raspberry
-Pi 5, 2026-10-27 and 28. The release sitting has not run yet. Measurements
-in #16.
+Pi 5, 2026-10-27 to 2026-11-25. No release sitting: the release changes
+nothing a person judges in conversation. Measurements in #16.
 
 ## [0.5.4] - 2026-10-27
 
