@@ -20,11 +20,13 @@ from pathlib import Path
 from emet_sdk.discovery import PluginRegistry
 from emet_sdk.validate import MissingPluginError, ValidationError
 
+from emet_engine import board
 from emet_engine.cli import (
     _load,
     _replay,
     add_body_flags,
     boot_lines,
+    identity_line,
     install_stop_signals,
     print_explanation,
     print_run_footer,
@@ -38,6 +40,10 @@ __all__ = ["main"]
 
 
 async def _run(args: argparse.Namespace) -> int:
+    # Which tree ran, first, so a boot that fails still names it; and under
+    # `--stats` the board as the run found it, read again at the footer.
+    print(identity_line("emet-talk"), flush=True)
+    board_start = board.read_board() if args.stats else None
     install_stop_signals()
     registry = PluginRegistry.discover()
     if not registry:
@@ -147,7 +153,7 @@ async def _run(args: argparse.Namespace) -> int:
                 task.uncancel()
 
         print(f"\n{'stopped' if interrupted else 'source ended'}. {exchanges} exchange(s).")
-        print_run_footer(session, stats=args.stats)
+        print_run_footer(session, stats=args.stats, board_start=board_start)
     return 0
 
 
@@ -176,7 +182,9 @@ def main(argv: list[str] | None = None) -> int:
         help="report the loop's timings at the end: the wait for the words, "
         "the first word, the first sound, and whether the loop kept up; and "
         "under each wake that handed audio over, its lag, the end of the name "
-        "written as silence, and what the level stop alone would have written",
+        "written as silence, and what the level stop alone would have written; "
+        "and the board's temperature, throttle flags and load average at the "
+        "start and at the end, as far as the machine reports them",
     )
     add_body_flags(parser)
     args = parser.parse_args(argv)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-providers"
-version = "0.5.4"
+version = "0.5.5"
 description = "Emet providers: speech recognition, language model and voice plugins that reach a service, or a model on disk."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,7 +16,7 @@ keywords = ["emet", "robotics", "stt", "llm", "tts", "providers"]
 # instead of a chip; the contract it satisfies is the same kind of thing and
 # lives in the same place. The engine never imports this package either: a
 # transcriber reaches it by name through the `emet.stt` entry-point group.
-dependencies = ["emet-sdk>=0.1"]
+dependencies = ["emet-sdk>=0.5.1"]
 
 [project.optional-dependencies]
 # The Deepgram transcriber speaks the wire protocol itself and needs only a

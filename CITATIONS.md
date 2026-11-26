@@ -88,6 +88,10 @@ The pronunciations themselves were derived for this project by decoding
 reference audio with PocketSphinx's own allphone search, then checked for false
 firing.
 
+`tools/bank/label.py` also uses PocketSphinx's forced alignment and CMUdict to
+place each take's words in the voice bank. Its one added word, "octopuses", is
+spelled from CMUdict's own "octopus" and "campuses".
+
 ---
 
 ## Piper, and the LJ Speech voice
@@ -118,6 +122,67 @@ corpus licence excludes "the development, marketing, commercialisation, sale
 or licencing of voice synthesis" products; a default a project promises
 people may fork and sell cannot rest on that. The voice files themselves are
 downloaded by the owner and are not in this repository.
+
+## faster-whisper and Whisper small.en
+
+**SYSTRAN.** faster-whisper 1.2.1, <https://github.com/SYSTRAN/faster-whisper>,
+**MIT**. The model is `Systran/faster-whisper-small.en` at revision d1d751a5,
+**MIT** on its card, a CTranslate2 conversion of OpenAI's Whisper small.en
+(<https://github.com/openai/whisper>, **MIT**; the Hugging Face card for
+`openai/whisper-small.en` says Apache-2.0, so the two sources disagree, both
+read 2026-10-27 and 28). A tool: `tools/bank/label.py`
+runs it in a tools venv to write a transcript of each take of the private
+voice bank, and none of the four packages imports it. Nothing is copied.
+
+## The Reachy LiteRT sample's environment record
+
+**The Google AI Edge Authors.** `samples/litert_lm/reachy-voice-robot/emulator/env.py`
+in <https://github.com/google-ai-edge/litert-samples> at 99fd82f
+(2026-10-24), **Apache-2.0** (the repository's LICENSE and the sample's
+README, verified 2026-10-27). The method behind the board lines in the
+`--stats` footer
+([`emet_engine/board.py`](emet-engine/emet_engine/board.py)):
+`vcgencmd measure_temp` and `vcgencmd get_throttled` parsed as text, with
+the load average, before and after a run. A port of its lines 107 to 151
+and 174 to 192, rewritten in Emet's style; the file keeps its copyright
+line. The identity line's `not-installed` for a missing package is its
+line 41's. Left out: the hostname and the kernel command line, which a
+footer pasted into a public pull request should not carry. Neither the
+repository's root nor the sample has a NOTICE file.
+
+## Pollen Robotics: microduck and reachy_mini
+
+**Pollen Robotics.** <https://github.com/pollen-robotics/microduck> at
+942e58e and <https://github.com/pollen-robotics/reachy_mini> at 9fb2bfcbd,
+both **Apache-2.0** (verified 2026-10-27). Two ideas, and one CI step
+adapted:
+
+- Each microduck daemon's first log line is its identity, build and
+  revision (`docs/design/architecture.md` lines 531 to 536 and 591 to
+  592). Emet's identity line at boot
+  ([`emet_engine/cli.py`](emet-engine/emet_engine/cli.py)) asks git at
+  boot where microduck compiles the revision in, and says the revision is
+  unknown for an installed copy.
+- microduck's CI runs its arm64 work on GitHub's `ubuntu-24.04-arm`
+  runner (`.github/workflows/ci.yml`). Emet's advisory arm64 job does the
+  same.
+- reachy_mini's CI runs its audio code against a PulseAudio null sink
+  looped to capture. The setup lines of Emet's `virtual sound card` job
+  are adapted from its `.github/actions/virtual-sound-card/action.yml`,
+  with names changed: the same `pulseaudio` command, `~/.asoundrc` and
+  `PULSE_SERVER` line. The real PortAudio path then runs with no sound
+  card.
+
+## VCR and vcrpy
+
+**Ruby's VCR** (<https://github.com/vcr/vcr>, **Hippocratic License 2.1**)
+and **Python's vcrpy** (<https://github.com/kevin1024/vcrpy>, **MIT**),
+both checked 2026-10-27. The idea and the name of a cassette, an exchange
+recorded once and replayed when the same request comes again, behind the
+mock transcriber's cassette mode
+([`emet_providers/cassette.py`](emet-providers/emet_providers/cassette.py)).
+Emet keys a turn by the sha256 of the exact bytes fed rather than by an
+HTTP request. No code is taken from either, and neither is a dependency.
 
 ---
 

@@ -14,7 +14,7 @@ wakes should not install them. So they live here.
 
 | Entry point | Group | What it is |
 |---|---|---|
-| `mock` | `emet.stt` | Reads words out of the bytes it is given, one partial a frame, then a final |
+| `mock` | `emet.stt` | Reads words out of the bytes it is given, one partial a frame, then a final; or plays a cassette of a real transcriber's answers back for the same bytes |
 | `deepgram` | `emet.stt` | Streaming recognition through Deepgram, `nova-3` unless the soul says otherwise. Extra: `deepgram` |
 | `mock` | `emet.llm` | Repeats what it heard, or says a scripted line, one word a delta; can ask for a tool |
 | `anthropic` | `emet.llm` | Claude through the Messages API, streamed, `claude-opus-5` unless the soul says otherwise. Extra: `anthropic` |
@@ -99,6 +99,80 @@ models:
     key_env: "EMET_LOCAL_KEY"
     params: {url: "http://localhost:11434/v1", max_tokens_field: "max_tokens"}
 ```
+
+## Replaying a transcriber for nothing
+
+A cassette is what a real transcriber said for exact bytes. The mock
+transcriber plays one back, so a replay of a bank recording gets Deepgram's
+words again without a key, a network or a cent. A body sets it under
+`models.stt.params`:
+
+```yaml
+models:
+  stt:
+    provider: mock
+    params:
+      cassette: ~/voicebank/cassettes          # a file, or a directory of them
+      cassette_request:                        # the request the run stands for
+        provider: deepgram
+        model: nova-3
+        sample_rate: 16000
+        query: {encoding: linear16, channels: "1", interim_results: "true",
+                punctuate: "true", smart_format: "false"}
+      record_turns: runs/2026-10-27/turns      # each utterance's bytes, as fed
+```
+
+The request is the one the real plugin would make:
+`cassette.request_for("deepgram", DeepgramTranscriber(...).query())` moves
+`model` and `sample_rate` out of the query and keeps every other parameter
+it sends.
+
+- **A hit** needs every byte of the utterance to hash to a recorded turn's
+  `fed_sha256`, among the turns recorded for `cassette_request` (every turn
+  when it is absent). A recorded partial is given on the `feed()` call whose
+  bytes so far match it.
+- **A miss** is an empty final whose `error` reads `cassette miss`. It never
+  raises. The runner puts those bytes on the paid list.
+- **A cassette that cannot be read** leaves `start()` unhealthy with the
+  reason, as `fail_on_start` does. `cassette` excludes `transcript`.
+- **`record_turns`** writes `turn-0001.raw` and on, exactly as fed, and one
+  line a turn to `turns.jsonl`: bytes, feed sizes, sha256, hit or miss, the
+  final and the number of partials. A directory that already holds a
+  `turns.jsonl` is refused.
+- Without these params the mock does what it always did.
+
+`emet_providers.cassette` reads and writes the files (`load`, `save`,
+`TurnRecorder` for a writer, `Player` for playing back), and refuses any
+request field named like a credential. The format is
+[`tools/bank/FORMAT.md`](../tools/bank/FORMAT.md). Cassettes hold what
+somebody said, so they live in the voice bank and never in this repository.
+The running hash costs a median 1.90 us a 2560-byte frame on a Windows
+laptop and 1.83 us on the reference body, and the mock's whole `feed()` with
+a 100-turn cassette 2.60 us and 2.56 us (Python 3.13, 2026-10-28; the
+script and its output are in `releases/v0.5.5/timings/`, outside this
+repository).
+
+## The live tests, recorded
+
+`tests/test_deepgram_live.py`, `test_llm_live.py` and `test_tts_live.py`
+call the vendors for real, and skip unless `EMET_LIVE_TESTS=1` and the
+vendor's key are set. With `EMET_LIVE_RECORD=<dir>` as well, each saves what
+it received, as it came (the WebSocket messages, or the response's bytes
+chunk by chunk), with the model the vendor reported and the date, to one
+JSON file a test (`"format": "emet-live-record/1"`). Request headers are
+never kept, response headers only from a short list that carries no
+credential, and a file holding the value of any `*_KEY` variable in the
+environment is refused before it is written. The files can serve the
+stand-in servers as fixtures, so parsing could be tested against real bytes
+as well as the documented shapes; no test loads one yet, and none is in the
+repository.
+
+`tools/bank/canary.py` runs those four tests with recording on, then replays
+one cassette turn through the real Deepgram plugin and prints `stale` when
+the model version or the final differs from the cassette. It spends money
+only with `--spend`: without it, it runs only the checks that need no
+network, says what it would spend, and spends nothing. With it, it records
+itself in the ledger it is given, once a month.
 
 ## How a provider is chosen
 

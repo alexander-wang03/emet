@@ -1,0 +1,108 @@
+{
+  "format": "emet-golden/1",
+  "recording": "find-my-phone-0.5.4",
+  "sha256": "53ec050bdb12fef205ea10917c72c78c8629367792601a79da390dcac42fff62",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 875,
+    "wakes": 6,
+    "turns": 6,
+    "name_cut": "1 of 6"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "find-my-phone-0.5.4/01",
+      "wake_end_sample": 116480,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "8ee824d790b8c2d9b02ce2f3aca80877f2e66acca5a3869ff1496b416b3512a9",
+      "fed_sha256": "ed54e639790292df4699cec6c91e8555c488213d439a8fdea2b558baea67e53b",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "find-my-phone-0.5.4/02",
+      "wake_end_sample": 198400,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "f4278ce0ad264f035c3d3b11bc87a34f58be8e35214c690800a1451911c92bb4",
+      "fed_sha256": "ec472fc0df1261719a007c36a53caa00713a195685a2ba9ef7b2b9643d47819a",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "find-my-phone-0.5.4/03",
+      "wake_end_sample": 302080,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "8eea928c2a11e6824d8d5d23fabf4c0f5d3cf5ec28d13a73e6b7e9a661a52871",
+      "fed_sha256": "96beec8cddba08a9a09990600a86057a090f1db043ef317523b520528a1692bb",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "find-my-phone-0.5.4/08",
+      "wake_end_sample": 774400,
+      "lag_ms": 150.0,
+      "name_ms": 90.0,
+      "level_ms": 90.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "e198f0025b45e98139766f83b480aae2daf52c94224a884b309cc36d735ee16c",
+      "fed_sha256": "7e502f709e382c98886d3af0606fe7e90b6e29b25a6ac5ffc1d48142a363c494",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "find-my-phone-0.5.4/09",
+      "wake_end_sample": 871680,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "2c162e71459dc2f81bb7367c274d4dcb56cb818f387c84f66017ec6053252e4b",
+      "fed_sha256": "fd72fe02ba0ee466e9c52e83f817f254c1196b1022164372e7ea65330743eba3",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "find-my-phone-0.5.4/10",
+      "wake_end_sample": 989440,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "bb5493411e53359e5be69f628307d199e95ebb3d6dbc5f04bd9271350c3ad08b",
+      "fed_sha256": "b4341e5670a049230bdcb906879fec96242de9f65a1ba969dc68ea25eecc8add",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

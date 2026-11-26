@@ -1,0 +1,66 @@
+{
+  "format": "emet-golden/1",
+  "recording": "talk-5min",
+  "sha256": "0159ea0926a70a48eb2b176dcdfd93011b4a0aa92be715c2067c38a76e12fddd",
+  "platform": "linux-aarch64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 3750,
+    "wakes": 3,
+    "turns": 3,
+    "name_cut": "0 of 3"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "talk-5min/01",
+      "wake_end_sample": 372480,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "f9aa1b7b0fbfbc40e3797a7dae8fabf50e8278cc40597aacd4a702d943e1503f",
+      "fed_sha256": "52f7600578227f0ce9eb4520ecde2e68aaf2a8bb427cd9a5e5b10dcca39d7064",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "talk-5min/01",
+      "wake_end_sample": 1702400,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "b344b3ddb0ed198ba398a9cf20cc59c9d2ce1efaae08c1411f923796095cb374",
+      "fed_sha256": "41f849baf2fe37fffa5b81cd183ed4009e363dccdb1a84c1b99db99ccf17688c",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "talk-5min/01",
+      "wake_end_sample": 1761280,
+      "lag_ms": 180.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "8dfc03053dba8f01273a9681ffe797c0ca4690c9426f824b302f544e5ec61be0",
+      "fed_sha256": "cef865693a288b256107e169180d3880240b101534f5714eb28c8d318201b986",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}
