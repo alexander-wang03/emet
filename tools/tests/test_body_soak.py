@@ -557,7 +557,8 @@ def test_a_flat_soak_names_its_numbers():
 
 
 @pytest.mark.parametrize("overrides, says", [
-    ({"samples": samples(rss_mb=lambda i: 96.0 + i * 0.02)}, "resident memory grew 1.20 MB an hour, at or over 1"),
+    ({"samples": samples(rss_mb=lambda i: 96.0 + i * 0.02)},
+     "resident memory grew 1.20 MB an hour over the second half of the soak, at or over 1"),
     ({"samples": samples(threads=lambda i: 3 + i // 20)}, "threads were not constant: 3 after the warm-up, 5 at the end"),
     ({"samples": samples(fds=lambda i: 14 + (i == 30))}, "open files were not constant: 14 after the warm-up, 14 at the end, 15 at most"),
     ({"listen": FOOTER.format(max="81.20", over=1)}, "1 frame(s) took over 80 ms"),
@@ -630,6 +631,17 @@ def test_memory_that_grows_just_under_the_line_is_flat_and_just_over_is_not():
     over = judged(samples=samples(rss_mb=lambda i: 96.0 + i * (1.01 / 60)))
     assert under["flat"] is True and 0.98 < under["rss_growth_mb_per_h"] < 1.0
     assert over["flat"] is False and over["rss_growth_mb_per_h"] >= 1.0
+
+
+def test_one_step_that_then_holds_still_is_flat_and_a_step_in_the_second_half_is_not():
+    """The rehearsal's shape on the body (2026-11-26): 3.9 MB once at minute
+    24, then still for the rest. Its whole slope is over the line and its
+    second half's is none, so it is flat; the same step at minute 45 fails."""
+    early = judged(samples=samples(rss_mb=lambda i: 140.5 + (3.9 if i >= 24 else 0.0)))
+    assert early["flat"] is True, early["reasons"]
+    assert early["rss_growth_mb_per_h"] == 0.0 and early["rss_growth_whole_mb_per_h"] > 1.0
+    late = judged(samples=samples(rss_mb=lambda i: 140.5 + (3.9 if i >= 45 else 0.0)))
+    assert late["flat"] is False and late["rss_growth_mb_per_h"] >= 1.0
 
 
 def test_memory_and_threads_of_the_boot_are_left_out():

@@ -602,6 +602,14 @@ WARMUP_S = 300
 #: frame and, when the engine's own budget line names the same 80 ms, by its
 #: count of frames over it.
 RSS_GROWTH_MB_PER_H = 1.0
+#: The growth is held over the second half of the samples after the warm-up,
+#: so a leak that runs the whole soak fails and one step that then holds
+#: still does not. 0.5.6's rehearsal soak on the body (2026-11-26,
+#: releases/v0.5.6/body/2026-11-26/soak/samples.txt) rose 3.9 MB once, at
+#: minute 24, and stayed at 148,528 kB for the 36 minutes after: 6.21 MB an
+#: hour over its whole length, none over its second half. The whole length's
+#: slope is still printed beside it.
+RSS_JUDGED_FROM = 0.5
 FRAME_BUDGET_MS = 80.0
 MIN_SOAK_SAMPLES = 3
 #: How often the laptop asks whether the soak has ended, and how long it
@@ -1388,7 +1396,9 @@ def summarize_soak(minutes: int, files: dict[str, str]) -> dict[str, Any]:
     judged = [s for s in listening if start_t is not None and (number(s, "t") or 0) - start_t >= WARMUP_S]
     rss = [(number(s, "t"), number(s, "rss_kb")) for s in judged]
     points = [(t, kb / 1024.0) for t, kb in rss if t is not None and kb is not None]
-    growth = slope_per_hour(points)
+    growth_whole = slope_per_hour(points)
+    late = points[int(len(points) * RSS_JUDGED_FROM):]
+    growth = slope_per_hour(late) if len(late) >= MIN_SOAK_SAMPLES else growth_whole
     fds = [v for v in (number(s, "fds") for s in judged) if v is not None]
     threads = [v for v in (number(s, "threads") for s in judged) if v is not None]
     if not refused:
@@ -1399,7 +1409,8 @@ def summarize_soak(minutes: int, files: dict[str, str]) -> dict[str, Any]:
             reasons.append(f"resident memory was read in {len(points)} of the {len(judged)} sample(s) after the "
                            "warm-up, too few to say whether it grew")
         elif growth >= RSS_GROWTH_MB_PER_H:
-            reasons.append(f"resident memory grew {growth:.2f} MB an hour, at or over {RSS_GROWTH_MB_PER_H:g}")
+            reasons.append(f"resident memory grew {growth:.2f} MB an hour over the second half of the soak, at or "
+                           f"over {RSS_GROWTH_MB_PER_H:g}")
         if fds and min(fds) != max(fds):
             reasons.append(f"open files were not constant: {int(fds[0])} after the warm-up, {int(fds[-1])} at the "
                            f"end, {int(max(fds))} at most")
@@ -1474,6 +1485,7 @@ def summarize_soak(minutes: int, files: dict[str, str]) -> dict[str, Any]:
         "rss_start_mb": round(rss_all[0] / 1024.0, 1) if rss_all else None,
         "rss_end_mb": round(rss_all[-1] / 1024.0, 1) if rss_all else None,
         "rss_growth_mb_per_h": round(growth, 3) if growth is not None else None,
+        "rss_growth_whole_mb_per_h": round(growth_whole, 3) if growth_whole is not None else None,
         "open_files": first_last_max(fds),
         "threads": first_last_max(threads),
         "frames": int(footer["frames"]) if "frames" in footer else None,

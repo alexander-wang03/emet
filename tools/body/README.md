@@ -349,7 +349,10 @@ the run's last step on the body, after the speaker and the microphone, so a
   that did not run or did not exit 0 does, and its count is then null.
 - **Flat** is Stage 4's exit, each threshold a constant in `run.py`, judged
   on the samples after a five-minute warm-up: resident memory growing under
-  1 MB an hour (`RSS_GROWTH_MB_PER_H`, the least-squares slope), open files
+  1 MB an hour (`RSS_GROWTH_MB_PER_H`, the least-squares slope over the
+  second half of those samples, `RSS_JUDGED_FROM`, so one step that then
+  holds still passes and a leak that runs the whole soak does not; the
+  whole length's slope is recorded beside it), open files
   and threads constant, no frame over 80 ms (`FRAME_BUDGET_MS`, held to the
   footer's longest frame, and to its count of frames over when the
   engine's own budget line names 80 ms), no throttle flag raised during the
