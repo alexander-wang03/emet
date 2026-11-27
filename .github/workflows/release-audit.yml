@@ -8,7 +8,7 @@
 # finishes with `--complete`. On a pull request it also checks the pull
 # request itself, as far as CI can: the version bumped above master's, the
 # title as the entry says, the entry citing this pull request, no
-# attribution, not yet tagged.
+# attribution, not yet tagged. `tools/ci.py audit` runs both checks.
 #
 # Apart from ci.yml so that a title or body edited on GitHub reruns this
 # without rerunning every suite. Editing a merged pull request fires the same
@@ -30,29 +30,40 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+
+# No step reads or writes the Actions cache (ci.yml says why).
+cache-mode: none
 
 jobs:
   audit:
     name: release audit
     if: github.event_name != 'pull_request' || github.event.pull_request.state == 'open'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # listed again, since a job's list replaces the workflow's
+      pull-requests: read # `gh pr view` reads this pull request's title and body
     steps:
+      # The whole history, for the tags and every version's commit. The
+      # token is not kept: the audit reaches GitHub through `gh`, which reads
+      # GH_TOKEN, and `git ls-remote origin` needs no token on a public
+      # repository. Both ran that way on the laptop on 2026-11-26: an
+      # anonymous ls-remote with no credential helper, and `gh pr view` with
+      # an empty configuration folder and only GH_TOKEN set, the token being
+      # the maintainer's own. The first run on a runner shows the job's own
+      # token, which reads contents and pull requests alone.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - name: Every version since 0.4.1
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python tools/release_audit.py
-      # Runs even when the history above failed, so a pull request learns
-      # about its own title in the same run.
-      - name: This pull request, as far as CI can tell
-        if: github.event_name == 'pull_request' && !cancelled()
-        env:
+      # tools/ci.py audit checks the history, then this pull request with
+      # `--ci`, the second even when the first failed, so a pull request
+      # learns about its own title in the same run. It runs the second only
+      # when PR is set, which is on a pull request alone.
+      - env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: python tools/release_audit.py --pr "$PR" --ci
+        run: python tools/ci.py audit --install

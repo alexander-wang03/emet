@@ -1,0 +1,8 @@
+$ emet validate --verify-drivers unwired.yaml
+exit 1
+--- stdout
+FAIL unwired.yaml  (manifest)
+     x missing_plugin /capabilities/0/driver/plugin
+       driver plugin 'acme_ws2812' is not installed. Install the package that provides it, or correct the name. A typo here is a different failure from missing hardware.
+--- stderr
+(nothing)

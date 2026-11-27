@@ -1,0 +1,8 @@
+$ emet validate chains.yaml
+exit 1
+--- stdout
+FAIL chains.yaml  (chains)
+     x malformed_chain
+       chain 'express.curiosity': rung 0 is a voice rung but is not last. Voice always binds, so every rung after it would be unreachable.
+--- stderr
+(nothing)

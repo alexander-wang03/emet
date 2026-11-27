@@ -1,0 +1,32 @@
+$ emet-listen body.yaml soul.yaml --state state.json
+exit 0
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+listening for 'hey emet'
+  engine   mock
+  source   wav
+  audio    16000 Hz, 80 ms frames
+  patience 900 ms
+  body     a speakerphone on a desk (probe)
+  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+             voice  utter        speak
+             voice  inflect      express.affection express.amusement
+                                 express.boredom express.concern
+                                 express.confusion express.curiosity
+                                 express.delight express.surprise
+                                 express.thinking
+             voice  tone         signal.booting signal.listening signal.muted
+             voice  explain      move.approach move.retreat move.turn_to
+                                 signal.error signal.offline
+             voice  backchannel  acknowledge
+             voice  silence      attend.bearing attend.none attend.person
+                                 attend.speaker idle.doze idle.fidget
+                                 idle.look_around idle.settle move.stop
+                                 move.wander signal.speaking signal.thinking
+  state    state.json, nothing carried in or out: a recording is not this body's room
+  (ctrl-c to stop)
+
+
+source ended. heard it 0 time(s).
+--- stderr
+  ! state.json is not a JSON object (Expecting value: line 1 column 1 (char 0)). Running without it; the file is copied to state.json.bad before the next save.

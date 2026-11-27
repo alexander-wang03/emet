@@ -1,0 +1,8 @@
+$ emet validate unterminated-chain.yaml
+exit 1
+--- stdout
+FAIL unterminated-chain.yaml  (chains)
+     x unterminated_chain
+       chain 'express.curiosity' does not terminate in a voice rung. Its last rung selects {role: eyes}, which a bare body may not have. Every chain must end in `actuator: {voice: true}` so that no intent can fail for lack of hardware (principle 2).
+--- stderr
+(nothing)

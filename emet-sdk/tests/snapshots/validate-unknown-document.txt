@@ -1,0 +1,8 @@
+$ emet validate notes.yaml
+exit 1
+--- stdout
+FAIL notes.yaml  (unknown)
+     x unknown_document
+       cannot tell what kind of document this is. Expected a top-level `manifest_version`, `bundle_version`, or `pack_version` key, a chain file, or a .db memory database.
+--- stderr
+(nothing)

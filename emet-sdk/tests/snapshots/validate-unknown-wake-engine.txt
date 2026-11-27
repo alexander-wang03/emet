@@ -1,0 +1,8 @@
+$ emet validate unknown-wake-engine.yaml
+exit 1
+--- stdout
+FAIL unknown-wake-engine.yaml  (manifest)
+     x missing_plugin /audio/wake/engine
+       no wake word plugin provides 'porcupine'. Installed: mock, pocketsphinx. `audio.wake.engine` is an open enum: this value is legal, the plugin simply is not installed. Unlike a missing driver this is an error rather than a warning, because a robot that cannot hear its own name has nothing to fall back to.
+--- stderr
+(nothing)

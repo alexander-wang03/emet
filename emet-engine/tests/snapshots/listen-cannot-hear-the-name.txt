@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the wake engine 'mock' cannot hear 'hey emet', so this robot would never answer to its own name. Unlike a missing head there is nothing to fall back to, so it will not start.

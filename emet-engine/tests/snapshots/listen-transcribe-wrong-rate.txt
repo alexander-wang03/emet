@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --transcribe
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the speech recognition provider 'mock' would run at 8000 Hz and the wake engine fixed 16000 Hz. One microphone feeds both, so they have to agree; a transcriber hearing speech at the wrong speed raises no error and produces nonsense. It will not start.

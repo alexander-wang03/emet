@@ -1,0 +1,10 @@
+$ emet validate legged-no-plugin.yaml
+exit 1
+--- stdout
+FAIL legged-no-plugin.yaml  (manifest)
+     x missing_plugin /capabilities/0/kinematics
+       no locomotion plugin provides 'legged'. Installed: differential, tracked. `kinematics` is an open enum: this value is legal, the plugin simply is not installed.
+     ! driver_not_installed /capabilities
+       1 driver plugin(s) named here are not installed (emet_hal.pca9685). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.
+--- stderr
+(nothing)

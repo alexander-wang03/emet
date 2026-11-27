@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+speech was asked for and no voice is configured. Name one under `models.tts.provider` in the soul, or take it over with `models.tts.provider` in the body. Installed: deepgram, mock, piper.

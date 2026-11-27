@@ -1,0 +1,8 @@
+$ emet validate junk.db
+exit 1
+--- stdout
+FAIL junk.db  (unknown)
+     x read_error
+       DatabaseError: file is not a database
+--- stderr
+(nothing)

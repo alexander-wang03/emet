@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml --transcribe
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+deepgram: no key: the environment variable EMET_SNAPSHOT_KEY is not set. Deepgram keys come from console.deepgram.com; export it in the shell that runs the robot. The key is never written into a soul or a manifest.
+
+the speech recognition provider 'deepgram' cannot start, so what people say would go nowhere. It will not run half-deaf. no key: the environment variable EMET_SNAPSHOT_KEY is not set. Deepgram keys come from console.deepgram.com; export it in the shell that runs the robot. The key is never written into a soul or a manifest.

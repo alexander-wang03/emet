@@ -1,0 +1,10 @@
+$ emet validate wave.pack.yaml
+exit 1
+--- stdout
+FAIL wave.pack.yaml  (pack)
+     x unknown_intent /clips/wave/intent
+       unknown argument 'glee' for intent 'express'. Allowed: affection, amusement, boredom, concern, confusion, curiosity, delight, surprise, thinking
+     x keyframes_unordered /clips/nod/keyframes
+       clip 'nod': keyframe t_ms values are not monotonically increasing ([400, 100])
+--- stderr
+(nothing)

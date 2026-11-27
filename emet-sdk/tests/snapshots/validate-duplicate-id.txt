@@ -1,0 +1,10 @@
+$ emet validate duplicate-id.yaml
+exit 1
+--- stdout
+FAIL duplicate-id.yaml  (manifest)
+     x duplicate_id /capabilities/1/id
+       capability id 'head' is used by both capability 0 and 1; ids must be unique across the manifest
+     ! driver_not_installed /capabilities
+       1 driver plugin(s) named here are not installed (emet_hal.pca9685). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.
+--- stderr
+(nothing)

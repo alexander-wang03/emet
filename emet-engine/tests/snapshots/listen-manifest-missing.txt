@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+could not read body.yaml: [Errno 2] No such file or directory: 'body.yaml'

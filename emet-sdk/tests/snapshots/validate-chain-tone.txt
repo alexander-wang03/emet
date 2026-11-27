@@ -1,0 +1,8 @@
+$ emet validate chains.yaml
+exit 1
+--- stdout
+FAIL chains.yaml  (chains)
+     x unknown_tone_preset /express.curiosity/rungs/1/params/preset
+       chain 'express.curiosity' plays the tone 'chime', which the engine cannot render. Tones: falling_pair, rising_pair, soft_click.
+--- stderr
+(nothing)

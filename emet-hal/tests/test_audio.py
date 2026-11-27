@@ -15,10 +15,12 @@ binary blobs whose provenance nobody can check.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import threading
 import sys
 import types
+import warnings
 import wave
 from array import array
 from pathlib import Path
@@ -414,6 +416,160 @@ def test_the_wav_sink_needs_a_destination():
         run(WavSink({"sink": "wav"}).start())
 
 
+def test_a_wav_sink_that_cannot_open_its_file_says_so_and_nothing_else(tmp_path):
+    """A folder that is not there. The sink's own error is the whole of what
+    happens. Before 0.5.6 `wave.open()` was given the path, failed in its own
+    `open()`, and left a half-built writer whose `__del__` raised
+    `AttributeError` (CPython 3.13.2, `Lib/wave.py`), printed on stderr
+    beside the error. This suite runs with warnings as errors, and pytest
+    makes an exception in a finalizer one of them, so the collection below is
+    where the old code fails."""
+    sink = WavSink({"sink": "wav", "params": {"path": str(tmp_path / "missing" / "said.wav")}})
+
+    with pytest.raises(AudioError, match="could not open .* for writing"):
+        run(sink.start())
+    gc.collect()
+
+    assert not (tmp_path / "missing").exists()
+    with pytest.raises(AudioError, match="was not started"):
+        run(sink.play(silence(10)))
+    run(sink.stop())
+
+
+def test_a_stopped_wav_sink_has_closed_its_file(tmp_path):
+    """The sink opens the file and hands it to `wave`, which closes only a
+    file it opened itself. So `stop()` closes both, and a sink that is let go
+    afterwards leaves nothing for the garbage collector to warn about."""
+    path = tmp_path / "said.wav"
+    sink = WavSink({"sink": "wav", "params": {"path": str(path)}}, AudioFormat(sample_rate=22050))
+
+    async def scenario():
+        await sink.start()
+        await sink.play(silence(100))
+        await sink.stop()
+        await sink.stop()  # a second stop has nothing left to close
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        run(scenario())
+        # Checked while the sink is still held, so the collector cannot have
+        # closed the file in `stop()`'s place.
+        assert not sink._close.alive, "stop() closed the writer and the file"
+        os.replace(path, tmp_path / "moved.wav")  # Windows refuses to move a file still open
+        del sink
+        gc.collect()
+
+    assert [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)] == []
+    with wave.open(str(tmp_path / "moved.wav")) as w:
+        assert w.getnframes() == 100
+
+
+def test_a_wav_sink_let_go_without_a_stop_still_closes_its_file(tmp_path):
+    """A sink nobody stopped. When `wave` opened the file itself, its writer
+    closed it on the way out, and no warning came. The sink opens the file
+    now, so the sink sees to the same: when it is collected, the writer is
+    closed first, which flushes what it wrote, then the file."""
+    path = tmp_path / "said.wav"
+
+    async def scenario():
+        sink = WavSink({"sink": "wav", "params": {"path": str(path)}}, AudioFormat(sample_rate=22050))
+        await sink.start()
+        await sink.play(silence(100))
+        # No stop(): the sink goes when this returns.
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        run(scenario())
+        gc.collect()
+
+    assert [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)] == []
+    os.replace(path, tmp_path / "moved.wav")  # Windows refuses to move a file still open
+    with wave.open(str(tmp_path / "moved.wav")) as w:
+        assert w.getnframes() == 100, "what the writer held reaches the file when the sink is collected"
+
+
+def test_a_wav_sink_given_nothing_still_writes_a_header(tmp_path):
+    """Started and stopped with no play. `writeframes` writes the header and
+    its lengths as it goes, so only here does the writer's own close write
+    the header, and the file is a wav with no frames."""
+    path = tmp_path / "said.wav"
+    sink = WavSink({"sink": "wav", "params": {"path": str(path)}}, AudioFormat(sample_rate=22050))
+
+    async def scenario():
+        await sink.start()
+        await sink.stop()
+
+    run(scenario())
+    assert path.stat().st_size == 44
+    with wave.open(str(path)) as w:
+        assert w.getnframes() == 0
+        assert w.getframerate() == 22050
+
+
+def test_a_wav_sink_whose_format_wave_refuses_closes_the_file_it_opened(tmp_path):
+    """A rate of 0, which `wave` refuses after the sink has opened the file.
+    The sink closes the file and the half-set-up writer before it raises, so
+    the collector finds no open file and no writer to fail in its `__del__`.
+    Before, the file reached the collector unclosed, with a ResourceWarning,
+    and the writer raised "sampling rate not specified" from its `__del__`."""
+    sink = WavSink({"sink": "wav", "params": {"path": str(tmp_path / "said.wav")}}, AudioFormat(sample_rate=0))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(AudioError, match="could not write a wav header .*bad frame rate"):
+            run(sink.start())
+        gc.collect()
+
+    assert [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)] == []
+    with pytest.raises(AudioError, match="was not started"):
+        run(sink.play(silence(10)))
+
+
+def test_a_wav_sink_started_again_closes_the_writer_it_had(tmp_path):
+    """Started twice with no stop between, which nothing in the engine does.
+    The first writer is closed before the file is opened again, so the file
+    is the second take alone. Closed after the reopen, as before 0.5.6, it
+    wrote what it still held over the start of the file, and the first
+    take's tail stayed after the second take's frames."""
+    path = tmp_path / "said.wav"
+
+    async def scenario():
+        sink = WavSink({"sink": "wav", "params": {"path": str(path)}}, AudioFormat(sample_rate=22050))
+        await sink.start()
+        await sink.play(silence(1000))
+        await sink.start()
+        await sink.play(silence(300))
+        await sink.stop()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        run(scenario())
+        gc.collect()
+
+    assert [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)] == []
+    with wave.open(str(path)) as w:
+        assert w.getnframes() == 300
+    assert path.stat().st_size == 44 + 600, "a header and the second take's frames, nothing after"
+
+
+def test_the_suite_runs_with_warnings_as_errors(request):
+    """Every warning is an error in this suite. The wav sink tests above
+    that collect garbage fail on an exception raised in a writer's
+    `__del__` only through it, since pytest reports that exception as a
+    warning. So the `filterwarnings` line of `pyproject.toml` is held too:
+    `error` first, and after it only an `ignore` that names the start of a
+    message, a category and a module. A blanket
+    `ignore::DeprecationWarning`, a deleted line or a `-W` that loosens it
+    fails here."""
+    lines = request.config.getini("filterwarnings")
+    assert lines[:1] == ["error"]
+    for line in lines[1:]:
+        action, message, category, module = (line.split(":") + [""] * 4)[:4]
+        assert action == "ignore" and message and category and module, f"too broad: {line!r}"
+    with pytest.raises(DeprecationWarning, match="canary"):
+        warnings.warn("canary", DeprecationWarning)
+
+
 def test_a_speaker_can_be_built_without_touching_hardware():
     """Construction must be inert; only `start()` may open a device. A test
     that constructs one must not make a sound."""
@@ -577,6 +733,25 @@ def drained(spk: Speaker) -> bytes:
     return bytes(stream.out).rstrip(b"\x00")
 
 
+async def until(condition, what: str, *, timeout_s: float = 2.0) -> None:
+    """Wait a millisecond at a time until `condition()` holds, and fail
+    naming `what` if `timeout_s` passes first."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while not condition():
+        if loop.time() >= deadline:
+            pytest.fail(f"waited {timeout_s:.1f} s for {what}")
+        await asyncio.sleep(0.001)
+
+
+async def finished(task, what: str, *, timeout_s: float = 1.0):
+    """Await `task`, and fail naming `what` if `timeout_s` passes first."""
+    try:
+        return await asyncio.wait_for(task, timeout_s)
+    except TimeoutError:
+        pytest.fail(f"waited {timeout_s:.1f} s for {what}")
+
+
 def test_playback_goes_through_one_stream_that_stays_open():
     """0.4 opened a stream per buffer, which clicked between chunks, so the
     engine gathered each sentence before playing it and the cloud voice cost
@@ -642,11 +817,17 @@ def test_cancel_empties_the_queue_and_frees_the_waiting_play():
     async def scenario():
         await started(spk)
         task = asyncio.ensure_future(spk.play(long_pcm))
-        while spk._stream is None:
-            await asyncio.sleep(0.001)
+        # Until play() has queued, which is when it waits on the card: it
+        # queues and registers its waiter with no await between. The stream
+        # is the wrong sign. The worker thread assigns it before it hands
+        # `_open`'s result back, play() resumes two turns of the loop after
+        # that, and a cancel() in between found nothing to free. That is how
+        # this test failed every time it ran alone under `python -X dev`
+        # (seen on the development laptop, 2026-11-26).
+        await until(lambda: spk.queued_bytes, "play() to queue its audio and wait on the card")
         spk._stream.pump()
         await spk.cancel()
-        await asyncio.wait_for(task, 1.0)
+        await finished(task, "cancel() to free the waiting play()")
         silence = spk._stream.pump()
         await pumped(spk, spk.play(after_pcm))
         return silence, drained(spk)
@@ -656,6 +837,82 @@ def test_cancel_empties_the_queue_and_frees_the_waiting_play():
     assert silence == bytes(640), "what was queued is gone"
     assert heard.endswith(after_pcm), "and the next play goes through the same stream"
     assert not stream.closed
+
+
+def test_a_cancel_while_the_device_is_opening_drops_that_play():
+    """A first `play()` opens the device before it queues anything, so a
+    `cancel()` in that moment finds an empty queue and no waiter. Before
+    0.5.6 that play went on to queue its audio once the device was open and
+    played all of it after the cancel had returned, against the sink
+    contract's "stop immediately". `Mouth.hush()` cancels its play task
+    before it cancels the sink, so the engine did not reach this in 0.5.5.
+    Its audio was handed over before the cancel, so the cancel drops it with
+    the rest."""
+    spk = speaker_with_fake_portaudio()
+    gate = threading.Event()
+    long_pcm = bytes(range(1, 256)) * 100
+    after_pcm = b"\x07\x07" * 40
+
+    class SlowToOpen(FakeOutputStream):
+        def start(self):
+            gate.wait(2.0)
+            super().start()
+
+    spk._sd = types.SimpleNamespace(RawOutputStream=SlowToOpen)
+
+    async def scenario():
+        await started(spk)
+        playing = asyncio.ensure_future(spk.play(long_pcm))
+        await until(lambda: FakeOutputStream.instances, "play() to begin opening the device")
+        await spk.cancel()
+        gate.set()
+        await finished(playing, "the cancelled play() to return once the device was open")
+        left = spk.queued_bytes
+        silence = spk._stream.pump()
+        await pumped(spk, spk.play(after_pcm))
+        return left, silence, drained(spk)
+
+    left, silence, heard = run(scenario())
+    (stream,) = FakeOutputStream.instances
+    assert left == 0, "nothing of the cancelled play was queued"
+    assert silence == bytes(640)
+    assert heard.lstrip(b"\x00") == after_pcm, "the next play is heard, and only it"
+    assert stream.started and not stream.closed, "through the stream the cancelled play opened"
+
+
+def test_a_cancel_drops_a_second_play_waiting_behind_the_device_open():
+    """A second `play()` that arrives while the first is opening the device
+    waits for the open with nothing queued, and a `cancel()` then drops it
+    too: each `play()` reads the count of cancels on the way in. Read once
+    the device was open, the count would show the second no cancel, and it
+    would queue and play whole after the cancel had returned."""
+    spk = speaker_with_fake_portaudio()
+    gate = threading.Event()
+    first_pcm = bytes(range(1, 256)) * 100
+    second_pcm = b"\x07\x07" * 400
+
+    class SlowToOpen(FakeOutputStream):
+        def start(self):
+            gate.wait(2.0)
+            super().start()
+
+    spk._sd = types.SimpleNamespace(RawOutputStream=SlowToOpen)
+
+    async def scenario():
+        await started(spk)
+        first = asyncio.ensure_future(spk.play(first_pcm))
+        await until(lambda: FakeOutputStream.instances, "the first play() to begin opening the device")
+        second = asyncio.ensure_future(spk.play(second_pcm))
+        await asyncio.sleep(0.01)  # the second reads the count and waits for the open
+        await spk.cancel()
+        gate.set()
+        await finished(first, "the first play() to return once the device was open")
+        await finished(second, "the second play() to return, dropped with the first")
+        return spk.queued_bytes
+
+    assert run(scenario()) == 0, "nothing of either play was queued"
+    (stream,) = FakeOutputStream.instances
+    assert stream.started, "the one stream the first play() opened"
 
 
 def test_stop_closes_the_stream_and_a_later_play_is_refused():

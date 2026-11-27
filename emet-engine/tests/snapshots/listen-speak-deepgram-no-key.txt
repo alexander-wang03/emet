@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+deepgram voice: no key: the environment variable EMET_SNAPSHOT_KEY is not set. Deepgram keys come from console.deepgram.com; put it in the keys file. The key is never written into a soul or a manifest.
+
+the voice 'deepgram' cannot start, so the robot would answer and never be heard. It will not run. no key: the environment variable EMET_SNAPSHOT_KEY is not set. Deepgram keys come from console.deepgram.com; put it in the keys file. The key is never written into a soul or a manifest.

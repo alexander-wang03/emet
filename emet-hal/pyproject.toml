@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-hal"
-version = "0.5.5"
-description = "Emet HAL: hardware abstraction layer. Drivers, locomotion, wake, and audio plugins."
+version = "0.5.6"
+description = "Emet's hardware abstraction layer, with its drivers, locomotion, wake and audio plugins."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{ name = "The Emet Authors" }]
 keywords = ["emet", "robotics", "hal", "drivers"]
 
-dependencies = ["emet-sdk>=0.5.1"]
+dependencies = ["emet-sdk>=0.5.6"]
 
 [project.optional-dependencies]
 # The shipped wake engine. Optional because a body that never wakes (a test
@@ -22,7 +22,7 @@ wake = ["pocketsphinx>=5.0"]
 # it needs the system PortAudio (`apt install libportaudio2`) that a headless
 # build has no use for.
 audio = ["sounddevice>=0.4"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=9.2.0"]
 
 # Installing a package is what makes a driver exist. Nothing scans directories
 # and the engine has no compiled-in list of known hardware.
@@ -59,3 +59,12 @@ packages = ["emet_hal"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Every warning is an error. One raised while a test runs, such as a
+# deprecated call, fails that test. One raised when an object is freed,
+# such as an unclosed file or connection or a coroutine never awaited,
+# fails whichever test is running then, which can be a later one, and one
+# raised while the test files are imported fails the collection. A warning
+# from inside somebody else's package that Emet cannot fix gets one narrow
+# `ignore` line below `error`, naming its category, the start of its
+# message and its module, with the package and version that raise it.
+filterwarnings = ["error"]

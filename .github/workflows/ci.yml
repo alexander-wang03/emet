@@ -1,14 +1,33 @@
 # Emet CI.
 #
-# Two things are checked, and the second matters more than it looks.
+# Every job's commands are in tools/ci.py, which GitHub, the laptop and the
+# body runner all call, so a step is written once and can be run before a
+# push. `python tools/ci.py --list` names the jobs. This file keeps what only
+# GitHub holds: the runner, the matrix, the machine setup, and what an event
+# gives a job through `env:`. The reason for each step is in tools/ci.py.
+#
+# Of the jobs below, two hold the design:
 #
 #   tests:    the 0.1 acceptance criteria, executable.
 #   layering: emet_sdk imports nothing internal; emet_hal, emet_providers
 #               and emet_engine import emet_sdk only. The same job runs the
-#               release invariants and the house-style check.
+#               release invariants, the house-style check, the code-health
+#               budget, zizmor and tools/ci/check_workflows.py over these
+#               workflows.
 #
 # The layering check exists because the closed-engine plan used to enforce that
-# boundary structurally, and an open monorepo does not. See DISTRIBUTION.md §2.
+# boundary structurally, and an open monorepo does not. See DESIGN.md,
+# "Layering is enforced by CI".
+#
+# The rules every workflow in this folder keeps, held by
+# tools/ci/check_workflows.py, three of them by zizmor as well: `contents:
+# read` at the top, and more only on a job, each entry with its reason
+# beside it; every action pinned to a full commit SHA with its version
+# beside it; `timeout-minutes` on every job; no checkout keeps its token; no
+# expression inside a `run:` line, where `env:` carries the value; a step
+# that calls tools/ci.py runs `python tools/ci.py <key> --install` and
+# nothing else; the event's name in the concurrency group of a workflow a
+# schedule starts.
 
 name: ci
 
@@ -16,396 +35,178 @@ name: ci
 # Triggering on both for every branch ran the whole suite twice per push,
 # doubling Actions minutes, which are metered on private repositories, and
 # filling the checks list with confusing (push)/(pull_request) pairs.
+#
+# The weekly run is every job here but dco and mutmut, on master. A release
+# of pocketsphinx, websockets or httpx that breaks Emet is then found within
+# a week, where a quiet month used to leave it for the next change to find.
+# Monday 05:23 UTC is Sunday evening in the maintainer's time zone, so the
+# result is there at the week's first check-in. The minute is off the top of
+# the hour because GitHub delays scheduled runs under load, may drop them,
+# and names the start of every hour as a busy time (GitHub Docs, events that
+# trigger workflows, verified 2026-11-26). GitHub turns a public
+# repository's schedules off after 60 days with no activity (the same page),
+# so the close of each release reads `gh workflow list` to see they are
+# still on. `workflow_dispatch` starts the same run by hand.
 on:
   push:
     branches: [master]
     tags: ["v*"]
   pull_request:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# No job here reads or writes the Actions cache. A cache written by one run
+# and restored by a later one is a way into the run on a tag. On PR #17's
+# run of 2026-11-26 (run 45786684092, GitHub API, read 2026-11-26) the jobs
+# that restored pip's cache took 7 to 11 s to install the packages; no run
+# without the cache has been timed yet, and 0.5.6's first run gives the
+# times to set beside them. `none` makes GitHub refuse the cache to every
+# job (GitHub Docs, workflow syntax, `cache-mode`, verified 2026-11-26).
+# Leaving `cache:` off setup-python keeps that one action from the cache
+# and leaves it open to every other step.
+cache-mode: none
+
+# A newer push to a branch or a pull request cancels the run before it. The
+# event's name is in the group so the weekly run and a run started by hand
+# each have a group of their own: with the ref alone, the weekly run on
+# master and a push to master would cancel each other, and the weekly run is
+# one of the green runs an advisory job is counted on before it is required.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Layering, release invariants, house style, code health, and zizmor over
+  # these workflows.
   layering:
     name: layering
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - name: Check package layering
-        run: python tools/check_layering.py .
-
-      # Cross-package invariants no single suite can see: the four packages
-      # agreeing about the version, every discovery group having something
-      # behind it, and no document advertising a version the code is not.
-      - name: Check release invariants
-        run: python tools/release_check.py .
-
-      # House style, mechanised because 0.3 removed 178 em-dashes by hand
-      # after they had passed review one at a time. See CONTRIBUTING.md.
-      - name: Check house style
-        run: python tools/check_style.py .
+      - run: python tools/ci.py layering --install
 
   # The release audit runs in its own workflow, release-audit.yml, so that a
   # pull request title edited on GitHub reruns it without these suites.
 
+  # Every commit of a pull request carries Signed-off-by. The range comes
+  # from the event, so the job is for pull requests only, and the checkout
+  # takes the whole history to hold both ends of it.
   dco:
     name: dco sign-off
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Every commit carries Signed-off-by
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          missing=0
-          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
-            if ! git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
-              echo "missing sign-off: $sha  $(git log -1 --format=%s "$sha")"
-              missing=1
-            fi
-          done
-          if [ "$missing" = "1" ]; then
-            echo
-            echo "Emet uses a DCO. Sign your commits with 'git commit -s',"
-            echo "or add sign-off to existing work with 'git rebase --signoff <base>'."
-            echo "See CONTRIBUTING.md."
-            exit 1
-          fi
-          echo "all commits signed off"
-
-  wheel:
-    name: wheel install
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
+      - env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python tools/ci.py dco --install
 
-      # Data files live in two different places depending on how you install.
-      # In a source checkout `schemas/` sits BESIDE the package; in a built
-      # wheel `force-include` moves it INSIDE. An editable install keeps the
-      # source layout, so every other job in this file exercises only one of
-      # those two paths, and it is the path no user of the project ever takes.
-      #
-      # A typo in the force-include would leave the whole suite green and break
-      # the first person to run `pip install emet-sdk`. So: build a real wheel,
-      # install it properly, and run from somewhere the source tree cannot be
-      # found by accident.
-      - name: Build wheels
-        run: |
-          python -m pip install --upgrade build
-          python -m build --wheel emet-sdk
-          python -m build --wheel emet-hal
-          python -m build --wheel emet-providers
-          python -m build --wheel emet-engine
+  # Real wheels, built twice and compared, installed into a fresh
+  # environment and run from outside the source tree. An editable install
+  # keeps the source layout, so every other job here exercises the one path
+  # no user of the project ever takes. The same job checks that no Emet name
+  # resolves from the package index.
+  wheel:
+    name: wheel install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python tools/ci.py wheel --install
 
-      - name: Data files are actually inside the wheel
-        run: |
-          python - <<'PY'
-          import glob, sys, zipfile
-          wheel = sorted(glob.glob("emet-sdk/dist/*.whl"))[-1]
-          names = set(zipfile.ZipFile(wheel).namelist())
-          required = [
-              "emet_sdk/schemas/body-manifest.schema.json",
-              "emet_sdk/schemas/soul-bundle.schema.json",
-              "emet_sdk/schemas/motion-pack.schema.json",
-              "emet_sdk/chains/core.yaml",
-              "emet_sdk/chains/express.yaml",
-          ]
-          missing = [r for r in required if r not in names]
-          if missing:
-              print(f"{wheel} is missing packaged data files:")
-              for m in missing:
-                  print(f"  - {m}")
-              sys.exit(1)
-          print(f"all {len(required)} data files present in {wheel}")
-          PY
-
-      - name: Install the wheels, not the source
-        run: |
-          python -m pip install emet-sdk/dist/*.whl emet-hal/dist/*.whl emet-providers/dist/*.whl emet-engine/dist/*.whl
-
-      # `cd /tmp` is the point of this step: from here the source checkout is
-      # not on the path, so anything that resolves must be coming out of the
-      # installed package.
-      - name: CLI works from outside the source tree
-        run: |
-          cd /tmp
-          emet --version
-          emet-listen --help > /dev/null
-          emet-talk --help > /dev/null
-          emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/bodiless.yaml"
-          emet validate "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --verify-drivers
-          emet explain  "$GITHUB_WORKSPACE/emet-sdk/examples/mock-scout.yaml" --why
-
-      - name: Plugin discovery works from an installed wheel
-        run: |
-          cd /tmp
-          python - <<'PY'
-          from importlib.metadata import version
-          from emet_sdk.discovery import PluginRegistry
-
-          r = PluginRegistry.discover()
-          assert r.has_locomotion("differential"), "entry points did not survive packaging"
-          assert r.has_locomotion("tracked")
-          assert r.has_driver("emet_hal.mock")
-          assert r.has_wake("pocketsphinx"), "wake group did not survive packaging"
-          assert r.has_audio("microphone"), "audio group did not survive packaging"
-          assert r.has_audio_out("speaker"), "audio_out group did not survive packaging"
-          assert r.has_stt("mock"), "stt group did not survive packaging"
-          assert r.has_llm("mock"), "llm group did not survive packaging"
-          assert r.has_tts("mock"), "tts group did not survive packaging"
-          print("discovered:", [f"{g}:{n}" for g, n in r])
-
-          # The version is declared once, in pyproject.toml, and read back
-          # through importlib.metadata. From a wheel that resolution path is
-          # different from an editable install, so it is worth checking here
-          # rather than only in the test suite.
-          import emet_sdk, emet_hal, emet_providers, emet_engine
-          for dist, mod in (
-              ("emet-sdk", emet_sdk),
-              ("emet-hal", emet_hal),
-              ("emet-providers", emet_providers),
-              ("emet-engine", emet_engine),
-          ):
-              assert mod.__version__ == version(dist), f"{dist} version drifted"
-              assert mod.__version__ != "0+unknown", f"{dist} reports no version"
-          print("versions:", emet_sdk.__version__)
-          PY
-
+  # The four suites, the dependency licences and the CLI on the examples, on
+  # each supported Python. On 3.13 the suites run under Python's development
+  # mode, the tools' own tests run, and coverage is printed with no floor.
   test:
     name: test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      # emet-hal and emet-providers are installed too, and not only so their
-      # own tests run: plugin discovery reads entry points, so several SDK and
-      # engine tests are meaningless unless something is actually registered
-      # to discover.
-      - name: Install packages
-        run: |
-          python -m pip install -e "emet-sdk[dev]"
-          python -m pip install -e "emet-hal[dev]"
-          python -m pip install -e "emet-providers[dev,deepgram,anthropic,openai]"
-          python -m pip install -e "emet-engine[dev]"
-
-      # The shipped wake engine, which is an optional extra rather than a hard
-      # dependency. pocketsphinx publishes cp311 and cp313 wheels and no cp312
-      # one, so installing it everywhere would make the 3.12 job compile a
-      # speech decoder from source. The wake tests `importorskip`, so 3.12 runs
-      # the rest of the suite and skips them, and the engine is still exercised
-      # on two of the three versions.
-      - name: Install the wake engine where a wheel exists
-        if: matrix.python-version != '3.12'
-        run: python -m pip install -e "emet-hal[wake]"
-
-      - name: Test emet-sdk
-        working-directory: emet-sdk
-        run: python -m pytest -q
-
-      - name: Test emet-hal
-        working-directory: emet-hal
-        run: python -m pytest -q
-
-      # No network and no key. The mocks need nothing, and every real
-      # provider is tested against a stand-in server; the live tests skip
-      # unless a key and EMET_LIVE_TESTS=1 are set.
-      - name: Test emet-providers
-        working-directory: emet-providers
-        run: python -m pytest -q
-
-      # Runs without a microphone, an acoustic model or a network: the loop is
-      # exercised through a wav file, the mock detector and the mock
-      # transcriber, all reached by the same entry-point discovery the real
-      # ones use.
-      - name: Test emet-engine
-        working-directory: emet-engine
-        run: python -m pytest -q
-
-      # The tools' own tests: the voice bank's tools and the body runner.
-      # They import no package beyond the four, so one Python is enough, and
-      # 3.13 is the one the laptop and the reference body run. Tests that need
-      # the bank's audio skip without it, since the bank never leaves the
-      # maintainer's machines.
-      - name: Test tools
-        if: matrix.python-version == '3.13'
-        run: python -m pytest -q tools/tests
-
-      # Exercises the CLI against the editable install. This does NOT prove the
-      # packaged layout works; see the `wheel` job for that.
-      - name: CLI accepts the valid examples
-        working-directory: emet-sdk
-        run: emet validate examples/bodiless.yaml examples/scout-01.yaml examples/emet-soul.yaml
-
-      # A manifest wired entirely to installed plugins must pass the strict
-      # check the engine will apply at boot.
-      - name: Fully-mocked manifest passes the boot-strictness check
-        working-directory: emet-sdk
-        run: emet validate examples/mock-scout.yaml --verify-drivers
-
-      - name: Binding tables resolve
-        working-directory: emet-sdk
-        run: |
-          emet explain examples/bodiless.yaml
-          emet explain examples/mock-scout.yaml --why
-
-      - name: CLI rejects the invalid examples
-        working-directory: emet-sdk
-        run: |
-          for f in examples/invalid/*.yaml; do
-            if emet validate "$f" > /dev/null 2>&1; then
-              echo "FAIL: $f validated clean but should not have"
-              exit 1
-            fi
-          done
-          echo "all invalid fixtures rejected"
+      - run: python tools/ci.py test --install
 
   # The same four suites with every optional extra absent: no pocketsphinx,
   # no sounddevice, no websockets, no httpx, no piper-tts. A body that only
   # ever wakes installs none of them, and every test that needs one has to
-  # skip rather than fail. This used to be a rule that lived on one laptop
-  # (shadow the modules by hand before every push); now it is a job.
+  # skip. This used to be a rule that lived on one laptop; now it is a job.
   bare:
     name: test (no extras)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-          cache: pip
-      - name: Install the packages and nothing optional
-        run: |
-          python -m pip install -e "emet-sdk[dev]"
-          python -m pip install -e "emet-hal[dev]"
-          python -m pip install -e "emet-providers[dev]"
-          python -m pip install -e "emet-engine[dev]"
-      - name: Every optional extra is really absent
-        run: |
-          python - <<'PY'
-          import importlib.util, sys
-          present = [m for m in ("pocketsphinx", "sounddevice", "websockets", "httpx", "piper") if importlib.util.find_spec(m)]
-          if present:
-              print("optional extras leaked into the bare job:", present)
-              sys.exit(1)
-          print("bare: no optional extras installed")
-          PY
-      - name: Test emet-sdk
-        working-directory: emet-sdk
-        run: python -m pytest -q
-      - name: Test emet-hal
-        working-directory: emet-hal
-        run: python -m pytest -q
-      - name: Test emet-providers
-        working-directory: emet-providers
-        run: python -m pytest -q
-      - name: Test emet-engine
-        working-directory: emet-engine
-        run: python -m pytest -q
+      - run: python tools/ci.py bare --install
 
-  # The four suites on the reference body's architecture, on GitHub's arm64
-  # runner, which is free on public repositories (verified 2026-10-27, GitHub
-  # Docs, GitHub-hosted runners reference). The Pi runs them too, over SSH
-  # (tools/body/run.py); this job runs them on every pull request. Running
-  # arm64 work on `ubuntu-24.04-arm` is microduck's CI (Pollen Robotics,
-  # Apache-2.0, .github/workflows/ci.yml): the idea taken, no code.
+  # The four suites and the licence check on the reference body's
+  # architecture, on GitHub's arm64 runner, which is free on public
+  # repositories (verified 2026-10-27, GitHub Docs, GitHub-hosted runners
+  # reference). The Pi runs them too, over SSH (tools/body/run.py); this job
+  # runs them on every pull request. Running arm64 work on `ubuntu-24.04-arm`
+  # is microduck's CI (Pollen Robotics, Apache-2.0,
+  # .github/workflows/ci.yml): the idea taken, no code.
   #
   # Advisory, by the maintainer's decision of 2026-10-27: never a required
   # check. Advisory has to mean green as well as unrequired, because
-  # `release_audit.py --merge` holds a merge until every check passes, so
-  # each step below may fail without failing the job. A suite that failed
-  # is a warning on the run, raised by the last step.
+  # `release_audit.py --merge` holds a merge until every check passes. So
+  # tools/ci.py runs every suite whatever the one before it did, raises a
+  # warning that names each that failed, and exits 0.
   arm64:
     name: test (arm64, advisory)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-          cache: pip
-      - name: Install packages
-        id: install
-        continue-on-error: true
-        run: |
-          python -m pip install -e "emet-sdk[dev]"
-          python -m pip install -e "emet-hal[dev,wake]"
-          python -m pip install -e "emet-providers[dev,deepgram,anthropic,openai]"
-          python -m pip install -e "emet-engine[dev]"
-      - name: Test emet-sdk
-        id: sdk
-        continue-on-error: true
-        working-directory: emet-sdk
-        run: python -m pytest -q
-      - name: Test emet-hal
-        id: hal
-        continue-on-error: true
-        working-directory: emet-hal
-        run: python -m pytest -q
-      - name: Test emet-providers
-        id: providers
-        continue-on-error: true
-        working-directory: emet-providers
-        run: python -m pytest -q
-      - name: Test emet-engine
-        id: engine
-        continue-on-error: true
-        working-directory: emet-engine
-        run: python -m pytest -q
-      # `outcome` is a step's result before continue-on-error turns a failure
-      # into a pass (verified 2026-10-27, GitHub Docs, contexts reference).
-      - name: Say which steps failed on arm64
-        if: always()
-        env:
-          RESULTS: >-
-            install=${{ steps.install.outcome }}
-            emet-sdk=${{ steps.sdk.outcome }}
-            emet-hal=${{ steps.hal.outcome }}
-            emet-providers=${{ steps.providers.outcome }}
-            emet-engine=${{ steps.engine.outcome }}
-        run: |
-          failed=""
-          for pair in $RESULTS; do
-            [ "${pair#*=}" = "success" ] || failed="$failed ${pair%%=*}"
-          done
-          if [ -n "$failed" ]; then
-            echo "::warning title=arm64 (advisory)::failed on ubuntu-24.04-arm:$failed"
-            echo "Failed on ubuntu-24.04-arm (advisory):$failed" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "The four suites passed on ubuntu-24.04-arm." >> "$GITHUB_STEP_SUMMARY"
-          fi
+      - run: python tools/ci.py arm64 --install
 
   # The real PortAudio path, which every other job leaves out: the suites
   # stand a wav file in for the microphone and the null sink in for the
   # speaker, so no test opens the hardware of the machine running it. Here a
   # PulseAudio null sink is the speaker and its monitor the microphone, named
-  # to ALSA in ~/.asoundrc, and emet-hal/tests/test_audio_virtual.py plays a
-  # tone through `Speaker` and hears it through `MicrophoneSource`. A hosted
-  # runner has no sound card to reach. EMET_VIRTUAL_AUDIO is set in this job
-  # alone, and that file skips without it (the maintainer's decision of
-  # 2026-10-27). test_audio.py runs here too, so its tests that need
-  # sounddevice run against a real PortAudio once.
+  # to ALSA in ~/.asoundrc. A hosted runner has no sound card to reach.
+  # EMET_VIRTUAL_AUDIO is set in this job alone, and the test file skips
+  # without it (the maintainer's decision of 2026-10-27).
   #
   # The setup lines below, the pulseaudio command line, the ~/.asoundrc and
   # the PULSE_SERVER line, are adapted from reachy_mini's
@@ -414,23 +215,32 @@ jobs:
   # the sink's and the two devices' names changed; the apt line takes three
   # of the packages its install-system-deps action lists. The runner is
   # pinned to 24.04 because the apt package names are that release's.
+  #
+  # After the tests, the live run (CI6): `emet-listen --transcribe --stats`
+  # listens on the monitor source for 30 s while pulseaudio-utils' paplay
+  # plays emet-hal/tests/clips/hey-emet-ljspeech.wav into the null sink,
+  # every model stage the mock, and the run must hear its name once. It is
+  # an advisory step inside this job, so it never turns the check red, until
+  # E12 (c)'s count graduates it: ten green runs, pull-request runs and the
+  # weekly run on master counted, at least two of them pull requests
+  # (RELEASE_PROCESS.md §11). Each release's plan records the step's results
+  # under "The first CI run" in its §3, and the plan that graduates it
+  # records the count beside the ruleset block in its §6.
   sound:
     name: virtual sound card
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-          cache: pip
       - name: Install PulseAudio, ALSA's pulse plugin and PortAudio
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils libasound2-plugins libportaudio2
-      - name: Install packages
-        run: |
-          python -m pip install -e "emet-sdk[dev]"
-          python -m pip install -e "emet-hal[dev,audio]"
       - name: Start PulseAudio with a null sink, and name both ends to ALSA
         run: |
           pulseaudio -D --exit-idle-time=-1 --disable-shm \
@@ -444,9 +254,105 @@ jobs:
           pcm.emet_virtual_source { type pulse device "emet_null.monitor" }
           EOF
           echo "PULSE_SERVER=unix:/tmp/pulse.sock" >> "$GITHUB_ENV"
-          python -m sounddevice
-      - name: Test the PortAudio path through the virtual card
-        working-directory: emet-hal
-        env:
+      - env:
           EMET_VIRTUAL_AUDIO: "1"
-        run: python -m pytest -q tests/test_audio_virtual.py tests/test_audio.py
+        run: python tools/ci.py sound --install
+
+  # The commands the README and the contributor documents give that are safe
+  # in a clean checkout, run on a fresh runner, and every relative link and
+  # anchor in the repository's Markdown.
+  # Advisory until it has its green runs: tools/ci.py warns and exits 0.
+  docs:
+    name: docs (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python tools/ci.py docs --install
+
+  # What a builder or a plugin author would see change against master: the
+  # SDK's public names and signatures and the schemas, printed into the run's
+  # summary. It reads master out of git, so the checkout takes the whole
+  # history. Advisory: it prints and never fails.
+  api-diff:
+    name: api-diff (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python tools/ci.py api-diff --install
+
+  # Mutation testing of the gate functions a pull request changes, naming
+  # every mutant no test killed. mutmut needs `fork`, so it runs here and
+  # never on the Windows laptop. On a pull request the base comes from the
+  # event; started by hand on a branch, tools/ci.py compares with
+  # origin/master, so the checkout takes the whole history. On master there
+  # is nothing to compare, so a push and the weekly run skip the job; the
+  # nightly run of every gate function is CI10's, at 0.6. Advisory:
+  # survivors are a warning for the review's tests lens.
+  mutmut:
+    name: mutmut (advisory)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python tools/ci.py mutmut --install
+
+  # The generated bank's small set (P10, CI5): five recordings of public
+  # voices in simulated rooms, 75 takes, replayed at the shipped threshold
+  # with the mock transcriber and held to this platform's goldens in
+  # tools/bank/golden/generated/. tools/ci.py fetches it from the store that
+  # tools/bank/generated/store.json names, held to the archive's sha256, and
+  # while that file's fields are empty it says the job was not run and exits
+  # 0 (D8). The store's cassettes, when its bank carries them, answer for the
+  # transcriber. A recording with no golden for linux-x86_64 fails the job;
+  # its golden is written for review into the folder the last step uploads,
+  # and comes back in a pull request.
+  #
+  # Advisory until E12 (c)'s count graduates it: ten green runs, pull-request
+  # runs and the weekly run on master counted, at least two of them pull
+  # requests (RELEASE_PROCESS.md §11). A run whose bank step says "not run"
+  # counts as no green run.
+  # Each release's plan records the job's results under "The first CI run"
+  # in its §3, and the plan that graduates it records the count beside the
+  # ruleset block in its §6.
+  bank:
+    name: bank (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - env:
+          EMET_BANK_GOLDEN_OUT: ${{ runner.temp }}/emet-bank-goldens
+        run: python tools/ci.py bank --install
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-goldens-small
+          path: ${{ runner.temp }}/emet-bank-goldens
+          if-no-files-found: ignore
+          retention-days: 30

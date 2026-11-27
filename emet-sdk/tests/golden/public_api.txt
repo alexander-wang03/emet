@@ -1,0 +1,428 @@
+emet_sdk
+    Action = emet_sdk.types.Action
+    ActuatorPlugin = emet_sdk.plugin.ActuatorPlugin
+    AudioFormat = emet_sdk.types.AudioFormat
+    AudioSource = emet_sdk.types.AudioSource
+    BodyFact = emet_sdk.types.BodyFact
+    CapabilityDescriptor = emet_sdk.types.CapabilityDescriptor
+    CapabilityPlugin = emet_sdk.plugin.CapabilityPlugin
+    Health = emet_sdk.types.Health
+    Intent = emet_sdk.types.Intent
+    LanguageModelDescriptor = emet_sdk.types.LanguageModelDescriptor
+    LanguageModelPlugin = emet_sdk.plugin.LanguageModelPlugin
+    LocomotionDescriptor = emet_sdk.types.LocomotionDescriptor
+    LocomotionPlugin = emet_sdk.plugin.LocomotionPlugin
+    MemoryKind = emet_sdk.types.MemoryKind
+    Message = emet_sdk.types.Message
+    PluginError = emet_sdk.plugin.PluginError
+    Pose = emet_sdk.types.Pose
+    Priority = emet_sdk.types.Priority
+    Prompt = emet_sdk.types.Prompt
+    Reading = emet_sdk.types.Reading
+    ReplyDone = emet_sdk.types.ReplyDone
+    ReplyEvent = emet_sdk.types.TextDelta | emet_sdk.types.ToolCall | emet_sdk.types.ReplyDone
+    SCHEMA_VERSION: str = '0.1'
+    SelfModel = emet_sdk.types.SelfModel
+    Sensitivity = emet_sdk.types.Sensitivity
+    SensorPlugin = emet_sdk.plugin.SensorPlugin
+    Target = emet_sdk.types.Target
+    TargetKind = emet_sdk.types.TargetKind
+    TextDelta = emet_sdk.types.TextDelta
+    ToolCall = emet_sdk.types.ToolCall
+    ToolSpec = emet_sdk.types.ToolSpec
+    TranscriberDescriptor = emet_sdk.types.TranscriberDescriptor
+    TranscriberPlugin = emet_sdk.plugin.TranscriberPlugin
+    Transcript = emet_sdk.types.Transcript
+    Twist = emet_sdk.types.Twist
+    VoiceDescriptor = emet_sdk.types.VoiceDescriptor
+    VoicePlugin = emet_sdk.plugin.VoicePlugin
+    WakeDescriptor = emet_sdk.types.WakeDescriptor
+    WakeEvent = emet_sdk.types.WakeEvent
+    WakePlugin = emet_sdk.plugin.WakePlugin
+    __version__: str
+
+emet_sdk.chains
+    class ActuatorSelector  [dataclass, frozen, slots]
+        field role: str | None = None
+        field type: str | None = None
+        field axis: str | None = None
+        field voice: bool = False
+        def __post_init__(self) -> None
+        def __str__(self) -> str
+        def matches(self, cap: CapabilityDescriptor) -> bool
+    class Chain  [dataclass, frozen, slots]
+        field intent: str
+        field rungs: tuple[Rung, ...]
+        field mode: str = 'first'
+        def __post_init__(self) -> None
+        property voice_rung -> Rung
+    class ChainError(ValueError)
+    class ChainMode
+        attribute ALL = 'all'
+        attribute FIRST = 'first'
+        attribute VALUES = frozenset({'all', 'first'})
+    EXPLAIN_TOPICS: frozenset = frozenset({'cannot_move', 'cannot_turn', 'error', 'offline'})
+    class Rung  [dataclass, frozen, slots]
+        field actuator: ActuatorSelector
+        field action: str
+        field params: Mapping[str, Any] = factory dict -> {}
+        property is_voice -> bool
+    TONE_PRESETS: frozenset = frozenset({'falling_pair', 'rising_pair', 'soft_click'})
+    class UnterminatedChainError(emet_sdk.chains.ChainError)
+    VOICE_ACTIONS: frozenset = frozenset({'backchannel', 'explain', 'inflect', 'silence', 'tone', 'utter'})
+    def parse_chain_set(raw: Mapping[str, Any]) -> dict[str, Chain]
+
+emet_sdk.discovery
+    GROUP_ACTUATOR: str = 'emet.actuators'
+    GROUP_AUDIO: str = 'emet.audio'
+    GROUP_AUDIO_OUT: str = 'emet.audio_out'
+    GROUP_LLM: str = 'emet.llm'
+    GROUP_LOCOMOTION: str = 'emet.locomotion'
+    GROUP_SENSOR: str = 'emet.sensors'
+    GROUP_STT: str = 'emet.stt'
+    GROUP_TTS: str = 'emet.tts'
+    GROUP_WAKE: str = 'emet.wake'
+    class PluginRegistry
+        classmethod discover(cls) -> 'PluginRegistry'
+        def __bool__(self) -> bool
+        def __init__(self, actuators: Mapping[str, EntryPoint] | None = None, sensors: Mapping[str, EntryPoint] | None = None, locomotion: Mapping[str, EntryPoint] | None = None, wake: Mapping[str, EntryPoint] | None = None, audio: Mapping[str, EntryPoint] | None = None, audio_out: Mapping[str, EntryPoint] | None = None, stt: Mapping[str, EntryPoint] | None = None, llm: Mapping[str, EntryPoint] | None = None, tts: Mapping[str, EntryPoint] | None = None, *, verify_drivers: bool = False) -> None
+        def __iter__(self) -> Iterator[tuple[str, str]]
+        def has_audio(self, source: str) -> bool
+        def has_audio_out(self, sink: str) -> bool
+        def has_driver(self, plugin: str) -> bool
+        def has_llm(self, provider: str) -> bool
+        def has_locomotion(self, kinematics: str) -> bool
+        def has_stt(self, provider: str) -> bool
+        def has_tts(self, provider: str) -> bool
+        def has_wake(self, engine: str) -> bool
+        def load_audio(self, source: str) -> type
+        def load_audio_out(self, sink: str) -> type
+        def load_driver(self, plugin: str) -> type
+        def load_llm(self, provider: str) -> type
+        def load_locomotion(self, kinematics: str) -> type
+        def load_stt(self, provider: str) -> type
+        def load_tts(self, provider: str) -> type
+        def load_wake(self, engine: str) -> type
+        def with_verification(self, verify_drivers: bool) -> 'PluginRegistry'
+        property audio_names -> list[str]
+        property audio_out_names -> list[str]
+        property driver_names -> list[str]
+        property llm_names -> list[str]
+        property locomotion_names -> list[str]
+        property stt_names -> list[str]
+        property tts_names -> list[str]
+        property wake_names -> list[str]
+    def discover() -> PluginRegistry
+
+emet_sdk.intents
+    ALL_INTENTS: mappingproxy = {'acknowledge': frozenset(), 'attend': frozenset({'bearing', 'none', 'person', 'speaker'}), 'attend_joint': frozenset({'*'}), 'express': frozenset({'affection', 'amusement', 'boredom', 'concern', 'confusion', 'curiosity', 'delight', 'surprise', 'thinking'}), 'gesture': frozenset({'*'}), 'idle': frozenset({'doze', 'fidget', 'look_around', 'settle'}), 'manipulate': frozenset({'grasp', 'offer', 'release'}), 'move': frozenset({'approach', 'retreat', 'stop', 'turn_to', 'wander'}), 'navigate': frozenset({'*'}), 'signal': frozenset({'booting', 'error', 'listening', 'muted', 'offline', 'speaking', 'thinking'}), 'speak': frozenset({'*'})}
+    DEFAULT_PRIORITY: mappingproxy = {'acknowledge': Priority.SPEECH, 'attend': Priority.ATTENTION, 'attend_joint': Priority.ATTENTION, 'express': Priority.EXPRESSIVE, 'gesture': Priority.EXPRESSIVE, 'idle': Priority.IDLE, 'manipulate': Priority.LOCOMOTION, 'move': Priority.LOCOMOTION, 'navigate': Priority.LOCOMOTION, 'signal': Priority.SIGNAL, 'speak': Priority.SPEECH}
+    FREE_ARGUMENT: frozenset = frozenset({'*'})
+    P0_INTENTS: mappingproxy = {'acknowledge': frozenset(), 'attend': frozenset({'bearing', 'none', 'person', 'speaker'}), 'express': frozenset({'affection', 'amusement', 'boredom', 'concern', 'confusion', 'curiosity', 'delight', 'surprise', 'thinking'}), 'idle': frozenset({'doze', 'fidget', 'look_around', 'settle'}), 'move': frozenset({'approach', 'retreat', 'stop', 'turn_to', 'wander'}), 'signal': frozenset({'booting', 'error', 'listening', 'muted', 'offline', 'speaking', 'thinking'}), 'speak': frozenset({'*'})}
+    RESERVED_INTENTS: mappingproxy = {'attend_joint': frozenset({'*'}), 'gesture': frozenset({'*'}), 'manipulate': frozenset({'grasp', 'offer', 'release'}), 'navigate': frozenset({'*'})}
+    class UnknownIntentError(ValueError)
+    def is_reserved(kind: str) -> bool
+    def make(kind: str, argument: str | None = None, *, intensity: float = 0.5, target: Target | None = None, duration_ms: int | None = None, priority: Priority | None = None, interruptible: bool = True) -> Intent
+    def validate_intent_name(kind: str, argument: str | None = None) -> None
+
+emet_sdk.models
+    STAGES: frozenset = frozenset({'chat', 'micro', 'stt', 'tts'})
+    def chat_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> dict[str, Any] | None
+    def model_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any], stage: str) -> dict[str, Any] | None
+    def stt_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> dict[str, Any] | None
+    def tts_selection(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> dict[str, Any] | None
+
+emet_sdk.plugin
+    class ActuatorPlugin(emet_sdk.plugin.CapabilityPlugin)
+        abstract async def apply(self, action: Action) -> None
+        abstract def describe(self) -> CapabilityDescriptor
+        async def home(self) -> None
+    class CapabilityPlugin(emet_sdk.plugin.Plugin)
+        attribute capability_type: ClassVar[str] = ''
+        def __init__(self, capability: Mapping[str, Any]) -> None
+    class LanguageModelPlugin(emet_sdk.plugin.Plugin)
+        abstract def describe(self) -> LanguageModelDescriptor
+        abstract def reply(self, prompt: Prompt) -> AsyncIterator[ReplyEvent]
+        attribute provider: ClassVar[str] = ''
+        def __init__(self, config: Mapping[str, Any]) -> None
+    class LocomotionPlugin(emet_sdk.plugin.CapabilityPlugin)
+        abstract async def command(self, twist: Twist) -> None
+        abstract def describe(self) -> LocomotionDescriptor
+        async def stop(self, hard: bool = False) -> None
+        attribute kinematics: ClassVar[str] = ''
+    class Plugin(abc.ABC)
+        async def shutdown(self) -> None
+        async def start(self) -> None
+        def carry_over(self) -> Mapping[str, Any]
+        def health(self) -> Health
+    class PluginError(RuntimeError)
+    class SensorPlugin(emet_sdk.plugin.CapabilityPlugin)
+        abstract async def poll(self) -> Reading
+        abstract def describe(self) -> CapabilityDescriptor
+    class TranscriberPlugin(emet_sdk.plugin.Plugin)
+        abstract async def feed(self, frame: bytes) -> Transcript | None
+        abstract async def finish(self) -> Transcript
+        abstract def describe(self) -> TranscriberDescriptor
+        attribute provider: ClassVar[str] = ''
+        def __init__(self, config: Mapping[str, Any], fmt: AudioFormat) -> None
+    class VoicePlugin(emet_sdk.plugin.Plugin)
+        abstract def describe(self) -> VoiceDescriptor
+        abstract def speak(self, text: str) -> AsyncIterator[bytes]
+        attribute provider: ClassVar[str] = ''
+        def __init__(self, config: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> None
+    class WakePlugin(emet_sdk.plugin.Plugin)
+        abstract async def process(self, frame: bytes) -> WakeEvent | None
+        abstract def describe(self) -> WakeDescriptor
+        async def reset(self) -> None
+        attribute engine: ClassVar[str] = ''
+        def __init__(self, config: Mapping[str, Any], phrase: str) -> None
+
+emet_sdk.resolve
+    class Binding  [dataclass, frozen, slots]
+        field intent: str
+        field rung_index: int
+        field action: str
+        field params: Mapping[str, Any] = factory dict -> {}
+        field capability_id: str | None = None
+        field is_voice: bool = False
+        field skipped: tuple[SkippedRung, ...] = ()
+        property degraded -> bool
+        property target -> str
+    class BindingTable  [dataclass, frozen, slots]
+        field bindings: Mapping[str, Binding]
+        field capabilities: tuple[CapabilityDescriptor, ...] = ()
+        def __contains__(self, intent: str) -> bool
+        def __getitem__(self, intent: str) -> Binding
+        def __iter__(self)
+        def __len__(self) -> int
+        def unused_capabilities(self) -> list[str]
+        property hardware_bound -> list[Binding]
+        property used_capabilities -> list[str]
+        property voice_bound -> list[Binding]
+    class SkippedRung  [dataclass, frozen, slots]
+        field index: int
+        field selector: str
+        field reason: str
+        def __str__(self) -> str
+    def descriptors_from_manifest(manifest: Mapping[str, Any]) -> list[CapabilityDescriptor]
+    def load_chains(overrides: Iterable[Any] = ()) -> dict[str, Chain]
+    def resolve(chains: Mapping[str, Chain], capabilities: Sequence[CapabilityDescriptor] = ()) -> BindingTable
+    def shipped_chain_files() -> list[Path]
+    def unused_reasons(chains: Mapping[str, Chain], capabilities: Sequence[CapabilityDescriptor], table: 'BindingTable') -> dict[str, str]
+
+emet_sdk.types
+    class Action  [dataclass, frozen, slots]
+        field capability_id: str
+        field name: str
+        field params: Mapping[str, Any] = factory dict -> {}
+        field intensity: float = 0.5
+        field duration_ms: int | None = None
+    class AudioFormat  [dataclass, frozen, slots]
+        field sample_rate: int = 16000
+        field frame_samples: int = 1280
+        property frame_bytes -> int
+        property frame_ms -> float
+    class AudioSink(typing.Protocol)  [protocol, runtime checkable]
+        async def cancel(self) -> None
+        async def play(self, pcm: bytes) -> None
+        async def start(self) -> None
+        async def stop(self) -> None
+        attribute format: AudioFormat
+    class AudioSource(typing.Protocol)  [protocol, runtime checkable]
+        async def read(self) -> bytes | None
+        async def start(self) -> None
+        async def stop(self) -> None
+        attribute format: AudioFormat
+    class BodyFact  [dataclass, frozen, slots]
+        field key: str
+        field text: str
+        field present: bool = True
+    class CapabilityDescriptor  [dataclass, frozen, slots]
+        field capability_id: str
+        field capability_type: str
+        field role: str | None = None
+        field form: str | None = None
+        field actions: frozenset[str] = frozenset()
+        field axes: frozenset[str] = frozenset()
+        field joints: tuple[str, ...] = ()
+        field healthy: bool = True
+    class Health  [dataclass, frozen, slots]
+        field ok: bool = True
+        field detail: str | None = None
+        field faults: tuple[str, ...] = ()
+    class Intent  [dataclass, frozen, slots]
+        field kind: str
+        field argument: str | None = None
+        field intensity: float = 0.5
+        field target: Target | None = None
+        field duration_ms: int | None = None
+        field priority: Priority = Priority.EXPRESSIVE
+        field interruptible: bool = True
+        def __post_init__(self) -> None
+        property name -> str
+    class LanguageModelDescriptor  [dataclass, frozen, slots]
+        field provider: str
+        field model: str | None = None
+        field streaming: bool = True
+        field tools: bool = True
+        field healthy: bool = True
+    class LocomotionDescriptor  [dataclass, frozen, slots]
+        field kinematics: str
+        field max_linear_mps: float
+        field max_angular_rps: float
+        field can_turn_in_place: bool
+        field can_translate_and_rotate: bool
+        field holonomic: bool = False
+    class MemoryKind(enum.StrEnum)
+        member FACT = 'fact'
+        member EVENT = 'event'
+        member PREFERENCE = 'preference'
+        member PROMISE = 'promise'
+        member FEELING = 'feeling'
+        member SELF = 'self'
+    class Message  [dataclass, frozen, slots]
+        field role: str
+        field content: str = ''
+        field tool_calls: tuple[ToolCall, ...] = ()
+        field tool_call_id: str | None = None
+        def __post_init__(self) -> None
+    class Pose  [dataclass, frozen, slots]
+        field joints: Mapping[str, float] = factory dict -> {}
+    class Priority(enum.IntEnum)
+        member SAFETY = 100
+        member SIGNAL = 90
+        member SPEECH = 80
+        member ATTENTION = 60
+        member EXPRESSIVE = 40
+        member LOCOMOTION = 30
+        member IDLE = 10
+    class Prompt  [dataclass, frozen, slots]
+        field system: str
+        field messages: tuple[Message, ...]
+        field tools: tuple[ToolSpec, ...] = ()
+        field max_tokens: int = 1024
+        def __post_init__(self) -> None
+    class Reading  [dataclass, frozen, slots]
+        field capability_id: str
+        field kind: str
+        field values: Mapping[str, float] = factory dict -> {}
+        field stale: bool = False
+    class ReplyDone  [dataclass, frozen, slots]
+        field text: str
+        field stop_reason: str = 'end'
+        field tool_calls: tuple[ToolCall, ...] = ()
+        field model: str | None = None
+        field input_tokens: int | None = None
+        field output_tokens: int | None = None
+        field error: str | None = None
+        def __post_init__(self) -> None
+    ReplyEvent = emet_sdk.types.TextDelta | emet_sdk.types.ToolCall | emet_sdk.types.ReplyDone
+    SAMPLE_BYTES: int = 2
+    STOP_REASONS: frozenset = frozenset({'end', 'error', 'length', 'refusal', 'tool'})
+    class SelfModel  [dataclass, frozen, slots]
+        field facts: tuple[BodyFact, ...] = ()
+        field explanations: Mapping[str, str | None] = factory dict -> {}
+        property absences -> tuple[BodyFact, ...]
+        property text -> str
+    class Sensitivity(enum.IntEnum)
+        member OPEN = 0
+        member PERSONAL = 1
+        member PRIVATE = 2
+        member SEALED = 3
+    class Target  [dataclass, frozen, slots]
+        field kind: TargetKind = TargetKind.NONE
+        field bearing_deg: float | None = None
+        field person_id: str | None = None
+        field capability_id: str | None = None
+        def __post_init__(self) -> None
+    class TargetKind(enum.StrEnum)
+        member NONE = 'none'
+        member BEARING = 'bearing'
+        member PERSON = 'person'
+        member CAPABILITY = 'capability'
+    class TextDelta  [dataclass, frozen, slots]
+        field text: str
+    class ToolCall  [dataclass, frozen, slots]
+        field id: str
+        field name: str
+        field arguments: Mapping[str, Any] = factory dict -> {}
+    class ToolSpec  [dataclass, frozen, slots]
+        field name: str
+        field description: str
+        field parameters: Mapping[str, Any] = factory <lambda> -> {'properties': {}, 'type': 'object'}
+    class TranscriberDescriptor  [dataclass, frozen, slots]
+        field provider: str
+        field model: str | None = None
+        field streaming: bool = False
+        field sample_rate: int = 16000
+        field healthy: bool = True
+    class Transcript  [dataclass, frozen, slots]
+        field text: str
+        field final: bool = False
+        field confidence: float = 1.0
+        field error: str | None = None
+        def __post_init__(self) -> None
+    class Twist  [dataclass, frozen, slots]
+        field linear_mps: float = 0.0
+        field angular_rps: float = 0.0
+        property is_stop -> bool
+    class VoiceDescriptor  [dataclass, frozen, slots]
+        field provider: str
+        field model: str | None = None
+        field sample_rate: int = 22050
+        field streaming: bool = False
+        field healthy: bool = True
+    class WakeDescriptor  [dataclass, frozen, slots]
+        field engine: str
+        field phrases: frozenset[str] = frozenset()
+        field supports_custom_phrases: bool = False
+        field sample_rate: int = 16000
+        field frame_samples: int = 1280
+        field healthy: bool = True
+        def can_detect(self, phrase: str) -> bool
+    class WakeEvent  [dataclass, frozen, slots]
+        field phrase: str
+        field confidence: float = 1.0
+        field lag_ms: float = 0.0
+        def __post_init__(self) -> None
+
+emet_sdk.validate
+    BUILTIN_AUDIO: frozenset = frozenset({'microphone', 'wav'})
+    BUILTIN_AUDIO_OUT: frozenset = frozenset({'null', 'speaker', 'wav'})
+    BUILTIN_LLM: frozenset = frozenset({'anthropic', 'mock', 'openai'})
+    BUILTIN_LOCOMOTION: frozenset = frozenset({'differential', 'tracked'})
+    BUILTIN_STT: frozenset = frozenset({'deepgram', 'mock'})
+    BUILTIN_TTS: frozenset = frozenset({'deepgram', 'mock', 'piper'})
+    BUILTIN_WAKE: frozenset = frozenset({'mock'})
+    DEFAULT_AUDIO_SINK: str = 'speaker'
+    DEFAULT_AUDIO_SOURCE: str = 'microphone'
+    DEFAULT_WAKE_ENGINE: str = 'pocketsphinx'
+    class Finding  [dataclass, frozen, slots]
+        field severity: Severity
+        field code: str
+        field message: str
+        field path: str = ''
+        def __str__(self) -> str
+    class MissingPluginError(emet_sdk.validate.ValidationError)
+    PluginRegistry = emet_sdk.discovery.PluginRegistry
+    Severity = Literal['error', 'warning']
+    class ValidationError(Exception)
+        def __init__(self, report: ValidationReport) -> None
+    class ValidationReport  [dataclass, slots]
+        field findings: list[Finding] = factory list -> []
+        def add(self, severity: Severity, code: str, message: str, path: str = '') -> None
+        def error(self, code: str, message: str, path: str = '') -> None
+        def extend(self, other: ValidationReport) -> None
+        def raise_for_status(self) -> None
+        def warn(self, code: str, message: str, path: str = '') -> None
+        property errors -> list[Finding]
+        property ok -> bool
+        property warnings -> list[Finding]
+    def load_yaml(path: str | Path) -> Any
+    def validate_chain_document(doc: Any) -> ValidationReport
+    def validate_manifest(doc: Any, *, registry: PluginRegistry | None = None) -> ValidationReport
+    def validate_memory_db(path: str | Path) -> ValidationReport
+    def validate_motion_pack(doc: Any) -> ValidationReport
+    def validate_pairing(manifest: Mapping[str, Any], soul: Mapping[str, Any]) -> ValidationReport
+    def validate_soul(doc: Any) -> ValidationReport
+

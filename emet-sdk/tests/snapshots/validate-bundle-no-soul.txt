@@ -1,0 +1,8 @@
+$ emet validate emet.emet
+exit 1
+--- stdout
+FAIL emet.emet  (bundle)
+     x missing_file
+       bundle has no soul.yaml at emet.emet/soul.yaml
+--- stderr
+(nothing)

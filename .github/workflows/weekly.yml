@@ -1,0 +1,131 @@
+# The jobs that only a schedule runs, Scorecard and pip-audit over the
+# supply chain and the generated bank's full set.
+#
+# Scorecard (OpenSSF's ossf/scorecard-action, Apache-2.0) scores how the
+# repository is run: pinned actions, token permissions, branch rules, signed
+# releases and more. Its results go to the repository's code scanning page
+# and, by the maintainer's decision of 2026-11-26 (E12 (a)), to OpenSSF's
+# public API, which allows a badge. Code-Review and Branch-Protection score
+# low for a project with one maintainer, by construction.
+#
+# pip-audit (the PyPA's, Apache-2.0) reads each package's resolved set,
+# every extra included, against the advisory database (BVP2 stage 1). It
+# runs here and never on a pull request, since a third party's database
+# should not block unrelated work. A finding is a warning in the run's
+# summary and a row of the next plan's ledger.
+#
+# The full set (P10) is every voice in every room, 100 recordings and 181
+# minutes, too long for a pull request, so it lives here: this file has no
+# pull_request or push trigger, and a test reads that it never gains one.
+#
+# No job opens an issue, pushes or changes a file. Scorecard's two writes
+# are its SARIF to code scanning and its results to OpenSSF's API; the
+# bank's one upload is the goldens its platform lacks, for review.
+
+name: weekly
+
+# Monday 05:47 UTC, the same Sunday evening in the maintainer's time zone as
+# ci.yml's weekly run, so one check-in reads both. Off the top of the hour
+# for the reason ci.yml gives. `workflow_dispatch` starts it by hand.
+on:
+  schedule:
+    - cron: "47 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No job reads or writes the Actions cache (ci.yml says why).
+cache-mode: none
+
+# The event is in the group, as in ci.yml, so a run started by hand and the
+# scheduled run never cancel each other.
+concurrency:
+  group: weekly-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Scorecard's README (v2.6.0, read 2026-11-26) gives the job exactly these
+  # two permissions with the default token, and when results are published
+  # allows only its approved actions in the job: no `run:` step, no job
+  # `env:`, a GitHub-hosted Ubuntu runner, and no workflow-level write
+  # permission or top-level `env:` in this file. It supports the default
+  # branch alone. A run by hand is experimental for Scorecard (its README,
+  # v2.6.0: `push` and `schedule` are supported, `workflow_dispatch` is
+  # experimental); the scheduled run is the one to read.
+  #
+  # The pin below fixes the action's action.yaml and no more. That file
+  # runs a Docker image named by a tag,
+  # `docker://ghcr.io/ossf/scorecard-action:v2.6.0` (its action.yaml at
+  # v2.6.0, read 2026-11-26), with this job's token. No pin in this
+  # repository can hold the image, since a job that publishes may run only
+  # Scorecard's approved actions, and a `docker://` step by digest is not
+  # one of them. It is an accepted risk.
+  scorecard:
+    name: scorecard
+    if: github.event.repository.default_branch == github.ref_name
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      security-events: write # uploads the SARIF to code scanning
+      id-token: write # signs the results published to api.scorecard.dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5 # v2.6.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: results.sarif
+
+  # Advisory: tools/ci.py prints each finding with its fixed version, warns
+  # and exits 0.
+  pip-audit:
+    name: pip-audit (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python tools/ci.py pip-audit --install
+
+  # The generated bank's full set, as ci.yml's `bank` job replays the small
+  # one: fetched from tools/bank/generated/store.json's store and held to
+  # its sha256, replayed at the shipped threshold, held to this platform's
+  # goldens, and "not run" while the store has published no set (D8). On
+  # the laptop, 2026-11-26, the replay alone took about 9 minutes (stream
+  # C3); the limit leaves room for a slower runner and the 247 MB download.
+  #
+  # Advisory. E12 (c)'s count is ten green runs, at least two of them pull
+  # requests (RELEASE_PROCESS.md §11), and this job never runs on a pull
+  # request, so it stays advisory until the maintainer says which count a
+  # weekly job graduates on. Each release's plan records its results under
+  # "The first CI run" in its §3.
+  bank-full:
+    name: bank-full (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - env:
+          EMET_BANK_GOLDEN_OUT: ${{ runner.temp }}/emet-bank-goldens
+        run: python tools/ci.py bank-full --install
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-goldens-full
+          path: ${{ runner.temp }}/emet-bank-goldens
+          if-no-files-found: ignore
+          retention-days: 30

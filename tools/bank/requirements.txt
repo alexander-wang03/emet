@@ -9,43 +9,107 @@
 #   <scratch>/tools-venv/bin/python -m pip install -r tools/bank/requirements.txt           (Linux)
 #
 # Every pin is the full set pip resolved on the laptop (Windows x86-64,
-# Python 3.13.2, 2026-10-27). Each licence is PyPI's field or classifier for
-# that version, read through its JSON API on 2026-10-27.
+# Python 3.13.2, 2026-10-27).
+#
+# The licences below are the licence gate's table (tools/check_licences.py),
+# read from each distribution's installed metadata in a venv made from this
+# list on the laptop (Windows x86-64, Python 3.13.2), by D9's rule with
+# MPL-2.0 allowed (E55 (c)). Made on 2026-11-26, and again the same day once
+# the gate stopped passing a family with no variant. Each metadata reading
+# agrees with the licence written beside its pin by hand on 2026-10-27, from
+# PyPI's JSON API. To make the table again, install the list into a tools
+# venv, then from emet/:
+#
+#   python tools/check_licences.py --requirements tools/bank/requirements.txt --python <tools-venv>/Scripts/python.exe --table   (Windows)
+#   python tools/check_licences.py --requirements tools/bank/requirements.txt --python <tools-venv>/bin/python --table           (Linux)
+#
+# and put each line of the table behind "# " here. The command exits 1
+# today, on two pins. numpy's expression names 0BSD, Zlib and CC0-1.0 beside
+# BSD-3-Clause and MIT, and the allowed list names none of those three.
+# tokenizers declares only the Apache classifier, which names no version.
+# Its wheel carries no licence file; its SBOM
+# (tokenizers-0.23.3.dist-info/sboms/tokenizers-python.cyclonedx.json, read
+# 2026-11-26) names Apache-2.0 for tokenizers and an expression of its own
+# for each Rust crate compiled into it. pocketsphinx and colorama declare
+# only the BSD classifier too, and pass by the licence files read in their
+# wheels (the read list of tools/licences.json). Whether numpy's three
+# licences count as permissive, and whether tokenizers' SBOM counts as the
+# licence read, are the maintainer's questions, open.
+#
+# | Package | Version | Licence | Brought by | Verdict |
+# |---|---|---|---|---|
+# | faster-whisper | 1.2.1 | MIT | the list | allowed |
+# | ctranslate2 | 4.8.3 | MIT | faster-whisper | allowed |
+# | pocketsphinx | 5.1.1 | BSD-2-Clause AND BSD-3-Clause AND MIT (read by hand; its metadata: BSD (classifier, no variant)) | the list | allowed: BSD-2-Clause AND BSD-3-Clause AND MIT as read in pocketsphinx 5.1.1's wheel, dist-info/licenses/LICENSE, read 2026-11-26: two-clause and three-clause BSD texts and two MIT texts, none with an advertising clause |
+# | huggingface_hub | 2.3.0 | Apache-2.0 | faster-whisper | allowed |
+# | numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | faster-whisper (through ctranslate2) | REFUSED: 0BSD, CC0-1.0 and Zlib are outside the allowed list, and no exception in tools/licences.json names numpy |
+# | anyio | 4.15.1 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
+# | av | 19.0.2 | BSD-3-Clause | faster-whisper | allowed |
+# | cffi | 2.1.1 | MIT-0 | pocketsphinx (through sounddevice) | allowed |
+# | click | 8.5.0 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
+# | colorama | 0.4.6 | BSD-3-Clause (read by hand; its metadata: BSD (classifier, no variant)) | faster-whisper (through tqdm); pytest | allowed: BSD-3-Clause as read in colorama 0.4.6's wheel, dist-info/licenses/LICENSE.txt, read 2026-11-26: the three-clause BSD text |
+# | filelock | 4.2.4 | MIT | faster-whisper (through huggingface_hub) | allowed |
+# | flatbuffers | 25.12.19 | Apache-2.0 | faster-whisper (through onnxruntime) | allowed |
+# | fsspec | 2026.9.0 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
+# | h11 | 0.16.0 | MIT | faster-whisper (through huggingface_hub, httpx2, httpcore2) | allowed |
+# | hf-xet | 1.7.0 | Apache-2.0 | faster-whisper (through huggingface_hub) | allowed |
+# | httpcore2 | 2.16.0 | BSD-3-Clause | faster-whisper (through huggingface_hub, httpx2) | allowed |
+# | httpx2 | 2.16.0 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
+# | idna | 3.20 | BSD-3-Clause | faster-whisper (through huggingface_hub, httpx2) | allowed |
+# | onnxruntime | 1.31.1 | MIT | faster-whisper | allowed |
+# | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause | faster-whisper (through huggingface_hub); pytest | allowed |
+# | protobuf | 7.36.2 | BSD-3-Clause | faster-whisper (through onnxruntime) | allowed |
+# | pycparser | 3.12 | BSD-3-Clause | pocketsphinx (through sounddevice, cffi) | allowed |
+# | PyYAML | 6.0.3 | MIT | faster-whisper (through ctranslate2) | allowed |
+# | sounddevice | 0.5.6 | MIT | pocketsphinx | allowed |
+# | tokenizers | 0.23.3 | Apache (classifier, no version) | faster-whisper | REFUSED: it says no more than a family, and no `read` entry in tools/licences.json gives the licence a person read |
+# | tqdm | 4.70.1 | MPL-2.0 AND MIT | faster-whisper | allowed |
+# | truststore | 0.10.5 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
+# | typing_extensions | 4.16.0 | PSF-2.0 | faster-whisper (through huggingface_hub) | allowed |
+# | pytest | 9.1.1 | MIT | the list | allowed |
+# | iniconfig | 2.3.1 | MIT | pytest | allowed |
+# | pluggy | 1.7.0 | MIT | pytest | allowed |
+# | Pygments | 2.21.0 | BSD-2-Clause | pytest | allowed |
+# | pip | 24.3.1 | MIT | not in the list, and no pin requires it | allowed |
+#
+# Outside what metadata can say: av's wheels carry FFmpeg's libraries, whose
+# licence in that build is unverified. The maintainer allowed them, with
+# tqdm, in the laptop's tools venv, never distributed (2026-11-24).
 
 # What label.py imports
-faster-whisper==1.2.1        # MIT
-ctranslate2==4.8.3           # MIT; 4.8.4 (2026-10-25) was two days old, so the one before it
-pocketsphinx==5.1.1          # BSD (classifier); the same version as the repo venv's wake extra
-huggingface_hub==2.3.0       # Apache-2.0; fetches the model at its pinned revision
-numpy==2.5.4                 # BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+faster-whisper==1.2.1
+ctranslate2==4.8.3           # 4.8.4 (2026-10-25) was two days old, so the one before it
+pocketsphinx==5.1.1          # the same version as the repo venv's wake extra
+huggingface_hub==2.3.0       # fetches the model at its pinned revision
+numpy==2.5.4
 
 # What they pull in
-anyio==4.15.1                # MIT
-av==19.0.2                   # BSD-3-Clause; its wheels carry FFmpeg's libraries, whose licence in that build is unverified. label.py hands whisper samples, so av decodes nothing
-cffi==2.1.1                  # MIT-0
-click==8.5.0                 # BSD-3-Clause
-colorama==0.4.6              # BSD (classifier); pulled in on Windows only
-filelock==4.2.4              # MIT
-flatbuffers==25.12.19        # Apache 2.0
-fsspec==2026.9.0             # BSD-3-Clause
-h11==0.16.0                  # MIT
-hf-xet==1.7.0                # Apache-2.0
-httpcore2==2.16.0            # BSD-3-Clause
-httpx2==2.16.0               # BSD-3-Clause
-idna==3.20                   # BSD-3-Clause
-onnxruntime==1.31.1          # MIT; faster-whisper's voice filter, which label.py leaves off
-packaging==26.3              # Apache-2.0 OR BSD-2-Clause
-protobuf==7.36.2             # BSD-3-Clause
-pycparser==3.12              # BSD-3-Clause
-PyYAML==6.0.3                # MIT
-sounddevice==0.5.6           # MIT; pocketsphinx's dependency. label.py blocks its import, so no device opens
-tokenizers==0.23.3           # Apache (classifier)
-tqdm==4.70.1                 # MPL-2.0 AND MIT
-truststore==0.10.5           # MIT
-typing_extensions==4.16.0    # PSF-2.0
+anyio==4.15.1
+av==19.0.2                   # label.py hands whisper samples, so av decodes nothing
+cffi==2.1.1
+click==8.5.0
+colorama==0.4.6              # pulled in on Windows only
+filelock==4.2.4
+flatbuffers==25.12.19
+fsspec==2026.9.0
+h11==0.16.0
+hf-xet==1.7.0
+httpcore2==2.16.0
+httpx2==2.16.0
+idna==3.20
+onnxruntime==1.31.1          # faster-whisper's voice filter, which label.py leaves off
+packaging==26.3
+protobuf==7.36.2
+pycparser==3.12
+PyYAML==6.0.3
+sounddevice==0.5.6           # pocketsphinx's dependency. label.py blocks its import, so no device opens
+tokenizers==0.23.3
+tqdm==4.70.1
+truststore==0.10.5
+typing_extensions==4.16.0
 
 # For the label tests that need faster-whisper
-pytest==9.1.1                # MIT
-iniconfig==2.3.1             # MIT
-pluggy==1.7.0                # MIT
-Pygments==2.21.0             # BSD-2-Clause
+pytest==9.1.1
+iniconfig==2.3.1
+pluggy==1.7.0
+Pygments==2.21.0

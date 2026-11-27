@@ -1,0 +1,44 @@
+$ emet-listen body.yaml soul.yaml --speak
+exit 0
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+listening for 'hey emet'
+  engine   mock
+  source   wav
+  audio    16000 Hz, 80 ms frames
+  patience 900 ms
+  body     a speakerphone on a desk (probe)
+  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+             voice  utter        speak
+             voice  inflect      express.affection express.amusement
+                                 express.boredom express.concern
+                                 express.confusion express.curiosity
+                                 express.delight express.surprise
+                                 express.thinking
+             voice  tone         signal.booting signal.listening signal.muted
+             voice  explain      move.approach move.retreat move.turn_to
+                                 signal.error signal.offline
+             voice  backchannel  acknowledge
+             voice  silence      attend.bearing attend.none attend.person
+                                 attend.speaker idle.doze idle.fidget
+                                 idle.look_around idle.settle move.stop
+                                 move.wander signal.speaking signal.thinking
+  state    <tmp>/user-state/probe.json, nothing carried in or out: a recording is not this body's room
+  self     12 sentence(s) about its body, 8 of them what it cannot do; tags offered: 9
+  stt      mock (streaming)
+  llm      mock
+  voice    mock (16000 Hz)
+  (ctrl-c to stop)
+
+  heard 'hey emet'  (confidence 0.90)
+    hearing 'hello'
+    hearing 'hello there'
+    then 1.1s of speech, ended on silence
+    said 'hello there'
+    reply: Fine. The POISON word.
+    spoke 1 sentence(s)
+    the voice could not say 'The POISON word.': simulated: the voice failed on 'POISON'
+
+source ended. heard it 1 time(s).
+--- stderr
+voice: simulated: the voice failed on 'POISON'

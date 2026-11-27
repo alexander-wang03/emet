@@ -1,0 +1,9 @@
+$ emet-listen body.yaml soul.yaml
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+  x schema /
+    'audio' is a required property
+
+body.yaml is not a valid manifest

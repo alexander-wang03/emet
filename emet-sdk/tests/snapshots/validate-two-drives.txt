@@ -1,0 +1,10 @@
+$ emet validate two-drives.yaml
+exit 1
+--- stdout
+FAIL two-drives.yaml  (manifest)
+     x multiple_drives /capabilities/1
+       found 2 drive capabilities (at indices [0, 1]); P0 permits at most one. Hybrid locomotion is V1.
+     ! driver_not_installed /capabilities
+       1 driver plugin(s) named here are not installed (emet_hal.tb6612). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.
+--- stderr
+(nothing)

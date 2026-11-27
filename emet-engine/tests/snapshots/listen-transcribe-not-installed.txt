@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --transcribe
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+[error] missing_plugin: no speech recognition provider provides 'whisper'. Installed: deepgram, mock. The value is legal. Install the package that provides it, or correct the name.

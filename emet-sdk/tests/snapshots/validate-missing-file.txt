@@ -1,0 +1,8 @@
+$ emet validate absent.yaml
+exit 1
+--- stdout
+FAIL absent.yaml  (unknown)
+     x missing_file
+       no such file or directory: absent.yaml
+--- stderr
+(nothing)

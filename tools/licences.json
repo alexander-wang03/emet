@@ -1,0 +1,57 @@
+{
+  "format": "emet-licences/2",
+  "about": [
+    "The licence gate's list, read by tools/check_licences.py.",
+    "allowed: the licences a dependency may carry, base install or extra, as the maintainer decided E55 (a) on 2026-11-26 (research/sota-2026-11-25/decisions.md; releases/v0.5.6/contract.md section 5).",
+    "tools_allowed: added to allowed for a tools venv's pinned list, D9's rule with MPL-2.0 allowed (E55 (c)).",
+    "read: the licence a person read in a distribution's own licence file, for a distribution whose metadata says only a family (a classifier such as `BSD License`, which names no variant) or nothing. declares is what the metadata said then: a family (BSD, Apache), nothing, or the metadata's own text. An entry holds only while the metadata says the same, and its licence is then judged like a declared one. A licence outside allowed still needs an exception.",
+    "exceptions: a dependency whose licence is outside allowed, each with the licence it declares, the paths that bring it and the reason. An exception holds only while the distribution declares exactly that licence, and only for the paths in via: `package` is its base install, `package[extra]` one extra.",
+    "A new exception is the maintainer's decision, and it gets a CITATIONS.md entry."
+  ],
+  "allowed": ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "PSF-2.0", "MIT-0"],
+  "tools_allowed": ["MPL-2.0"],
+  "first_party": ["emet-sdk", "emet-hal", "emet-providers", "emet-engine"],
+  "read": [
+    {
+      "package": "pocketsphinx",
+      "declares": "BSD",
+      "licence": "BSD-2-Clause AND BSD-3-Clause AND MIT",
+      "where": "pocketsphinx 5.1.1's wheel, dist-info/licenses/LICENSE, read 2026-11-26: two-clause and three-clause BSD texts and two MIT texts, none with an advertising clause"
+    },
+    {
+      "package": "colorama",
+      "declares": "BSD",
+      "licence": "BSD-3-Clause",
+      "where": "colorama 0.4.6's wheel, dist-info/licenses/LICENSE.txt, read 2026-11-26: the three-clause BSD text"
+    },
+    {
+      "package": "pip-api",
+      "declares": "Apache",
+      "licence": "Apache-2.0",
+      "where": "pip-api 0.0.35's wheel, dist-info/licenses/LICENSE, read 2026-11-26: the Apache License 2.0's terms, sections 1 to 9, nothing added (a CI tool, tools/ci/requirements.txt)"
+    },
+    {
+      "package": "pip-audit",
+      "declares": "Apache",
+      "licence": "Apache-2.0",
+      "where": "pip-audit 2.10.1's wheel, dist-info/licenses/LICENSE, read 2026-11-26: the Apache License 2.0's terms, sections 1 to 9, nothing added (a CI tool, tools/ci/requirements.txt)"
+    }
+  ],
+  "exceptions": [
+    {
+      "package": "certifi",
+      "licence": "MPL-2.0",
+      "via": ["emet-providers[deepgram]", "emet-providers[anthropic]", "emet-providers[openai]"],
+      "reason": "MPL-2.0, taken unmodified and never bundled (E55 (b), 2026-11-26): httpx requires it and checks every HTTPS call to a vendor against its bundle of roots; Emet never imports, copies or ships it, and MPL-2.0's terms reach only certifi's own files",
+      "recorded": "CITATIONS.md, certifi; floored at 2026.10.18 in the three extras for PYSEC-2026-4320"
+    },
+    {
+      "package": "piper-tts",
+      "licence": "GPL-3.0-or-later",
+      "via": ["emet-providers[piper]"],
+      "reason": "GPL-3.0-or-later because espeak-ng is compiled into its wheel; Emet imports it through the optional piper extra and never bundles it, so a body without the extra carries no GPL code",
+      "recorded": "CITATIONS.md, Piper; CLAUDE.md's decisions table, the Piper row"
+    }
+  ],
+  "tools_exceptions": []
+}

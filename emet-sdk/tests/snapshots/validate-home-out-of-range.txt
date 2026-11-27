@@ -1,0 +1,10 @@
+$ emet validate home-out-of-range.yaml
+exit 1
+--- stdout
+FAIL home-out-of-range.yaml  (manifest)
+     x home_out_of_range /capabilities/0/joints/1/home_deg
+       joint 'tilt': home_deg 60 lies outside range_deg [-30, 45]. Homing would drive the joint into its own limit.
+     ! driver_not_installed /capabilities
+       1 driver plugin(s) named here are not installed (emet_hal.pca9685). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.
+--- stderr
+(nothing)

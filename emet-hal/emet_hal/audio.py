@@ -41,6 +41,7 @@ import os
 import sys
 import threading
 import wave
+import weakref
 from array import array
 from collections import deque
 from dataclasses import dataclass
@@ -627,6 +628,10 @@ class Speaker:
         self._played = 0
         self._closed = False
         self._waiters: deque[tuple[int, asyncio.Future[None]]] = deque()
+        #: How many times `cancel()` has run. Only the loop touches it. A
+        #: `play()` reads it on the way in, and one that finds it changed once
+        #: the device is open drops its audio instead of queueing it.
+        self._cancels = 0
         #: Callbacks PortAudio reported late: it had to insert a gap because
         #: this process did not service the card in time. Zero on a machine
         #: that keeps up. It says nothing about whether the queue ran dry,
@@ -772,6 +777,7 @@ class Speaker:
             raise AudioError("int16 audio has an even number of bytes")
         if not pcm:
             return
+        cancels = self._cancels
         async with self._opening:
             if self._stream is None:
                 await asyncio.to_thread(self._open)
@@ -779,6 +785,13 @@ class Speaker:
             if self._closed:
                 # `stop()` ran while this call was opening the device.
                 raise AudioError("speaker was stopped")
+            if self._cancels != cancels:
+                # `cancel()` ran while this call waited for the device, with
+                # nothing of it queued yet. The audio was handed over before
+                # the cancel, so it goes with the rest of what the cancel
+                # dropped. Queued now, it would play whole after the cancel
+                # returned.
+                return
         # With a gain, scale and queue a block at a time. A sentence from a
         # local voice arrives as one chunk several seconds long, and scaling
         # it whole before queueing any of it could outlast the block left in
@@ -817,14 +830,16 @@ class Speaker:
             ) from None
 
     async def cancel(self) -> None:
-        """Stop within a block: empty the queue and free every waiting
-        `play()`. The stream stays open, playing silence, so the next
-        sentence starts without a click.
+        """Stop within a block: empty the queue, free every waiting `play()`,
+        and drop the audio of a `play()` still opening the device. The
+        stream stays open, playing silence, so the next sentence starts
+        without a click.
 
         What PortAudio already holds, one block plus the card's output
         latency, is still heard. That is the floor for barge-in.
         """
         with self._lock:
+            self._cancels += 1
             dropped = len(self._pending)
             self._pending.clear()
             self._played += dropped
@@ -879,6 +894,18 @@ def _shut(stream: Any) -> None:
         except Exception:  # pragma: no cover - a stream already gone
             pass
 
+
+def _close_wav(wav: wave.Wave_write, raw: Any) -> None:
+    """Close a wav writer, then the file it was handed. In that order: the
+    writer's close flushes the file and writes the header of a sink that was
+    given nothing, and `wave` leaves a file it did not open itself for its
+    owner to close."""
+    try:
+        wav.close()
+    finally:
+        raw.close()
+
+
 class WavSink:
     """Writes what the robot said to a file instead of playing it.
 
@@ -896,20 +923,49 @@ class WavSink:
         self.format = fmt or AudioFormat(sample_rate=22050)
         self.path = str((self.config.get("params") or {}).get("path") or "")
         self._wav: wave.Wave_write | None = None
+        #: Closes the writer and the file under it, once. `stop()` calls it;
+        #: a sink let go with no `stop()` has it called when it is collected,
+        #: as `wave` did for a file it had opened itself.
+        self._close: weakref.finalize | None = None
 
     async def start(self) -> None:
         if not self.path:
             raise AudioError(
                 "the wav sink needs a destination: set `audio.output.params.path`."
             )
+        # A writer this one replaces is closed before the file is opened
+        # again: its close writes out what it still holds, which would land
+        # over the new take. Nothing is left to close once `stop()` ran.
+        previous, self._close, self._wav = self._close, None, None
+        if previous is not None:
+            previous()
+        # Opened here and handed over. Given the path, a `wave.open()` that
+        # cannot open it leaves a half-built writer whose `__del__` raises
+        # AttributeError (CPython 3.13.2, Lib/wave.py), printed on stderr
+        # beside the error below.
         try:
-            wav = wave.open(self.path, "wb")
+            raw = open(self.path, "wb")
         except Exception as exc:
             raise AudioError(f"could not open {self.path!r} for writing: {exc}") from exc
-        wav.setnchannels(1)
-        wav.setsampwidth(SAMPLE_BYTES)
-        wav.setframerate(self.format.sample_rate)
+        wav = None
+        try:
+            wav = wave.open(raw, "wb")
+            wav.setnchannels(1)
+            wav.setsampwidth(SAMPLE_BYTES)
+            wav.setframerate(self.format.sample_rate)
+        except Exception as exc:
+            # The file is the sink's to close. A writer left half set up
+            # raises from its `__del__` on the header it cannot write, so it
+            # is closed here, where that error is expected and dropped.
+            if wav is not None:
+                try:
+                    wav.close()
+                except Exception:
+                    pass
+            raw.close()
+            raise AudioError(f"could not write a wav header to {self.path!r}: {exc}") from exc
         self._wav = wav
+        self._close = weakref.finalize(self, _close_wav, wav, raw)
 
     async def play(self, pcm: bytes) -> None:
         if self._wav is None:
@@ -922,8 +978,8 @@ class WavSink:
 
     async def stop(self) -> None:
         if self._wav is not None:
-            self._wav.close()
             self._wav = None
+            self._close()
 
 
 class NullSink:

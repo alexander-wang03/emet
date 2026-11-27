@@ -1,0 +1,4 @@
+# Text is stored with LF endings whatever the machine checks it out with, so
+# a wheel built from any checkout has the same bytes (BVP3, 0.5.6).
+* text=auto eol=lf
+*.wav binary

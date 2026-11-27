@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml
+exit 2
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+no plugins are installed, so there is no microphone and no wake
+engine to use. Install the hardware layer:
+    pip install 'emet-hal[audio,wake]'

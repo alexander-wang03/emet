@@ -1,0 +1,8 @@
+$ emet validate --strict unwired.yaml
+exit 1
+--- stdout
+FAIL unwired.yaml  (manifest)
+     ! driver_not_installed /capabilities
+       1 driver plugin(s) named here are not installed (acme_ws2812). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.
+--- stderr
+(nothing)

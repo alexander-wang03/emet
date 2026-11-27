@@ -1,0 +1,10 @@
+$ emet validate unknown-mount.yaml
+exit 1
+--- stdout
+FAIL unknown-mount.yaml  (manifest)
+     x unknown_reference /capabilities/1/mounted_on
+       'front_cam' is mounted_on 'torso', which is not a capability in this manifest. Known ids: front_cam, head
+     ! driver_not_installed /capabilities
+       2 driver plugin(s) named here are not installed (emet_hal.pca9685, emet_hal.libcamera). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.
+--- stderr
+(nothing)

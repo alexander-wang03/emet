@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+  ! driver_not_installed /capabilities
+
+[error] missing_plugin: no driver plugin provides 'acme_ws2812'. Installed: emet_hal.mock, emet_hal.mock_sensor. The value is legal. Install the package that provides it, or correct the name.

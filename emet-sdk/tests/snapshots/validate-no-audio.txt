@@ -1,0 +1,8 @@
+$ emet validate no-audio.yaml
+exit 1
+--- stdout
+FAIL no-audio.yaml  (manifest)
+     x schema /
+       'audio' is a required property
+--- stderr
+(nothing)
