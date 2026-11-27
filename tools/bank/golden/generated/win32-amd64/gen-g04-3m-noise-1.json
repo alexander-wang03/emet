@@ -1,0 +1,136 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g04-3m-noise-1",
+  "sha256": "51092c7cdde65409b47608b5b39aee28da281bdb9ddc7268cd026aef3f4d018e",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1712,
+    "wakes": 8,
+    "turns": 8,
+    "name_cut": "0 of 8"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g04-3m-noise-1/01",
+      "wake_end_sample": 107520,
+      "lag_ms": 180.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "44105bac21c6d3b3f5c585c20007ebe916f6c33968bf245f65505288ae2f9d26",
+      "fed_sha256": "f7c0860483b5d1b0d427217044cec3a42cf839a0d4218fbc459c0d093bd49401",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g04-3m-noise-1/03",
+      "wake_end_sample": 331520,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "6689ef2956bd872e7adb614e259313834d1eb2b763008d3270ce74d590067dbe",
+      "fed_sha256": "f4be90a36fbd3b59a9459b3e76a092c6db6259557e5a07655887f7163d65a8de",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g04-3m-noise-1/04",
+      "wake_end_sample": 459520,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "8f477e995b4bd5db8d1d0e262eb14ff67aa03a8da6034bf11f73da613135a0d5",
+      "fed_sha256": "263996de752d3e00a0df0d0cf98771d7fe1535ed033796e207f58ccfb1120f46",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g04-3m-noise-1/05",
+      "wake_end_sample": 554240,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "7ca5af9d93ba18d93b3329b094b0a63a8769a61e2a8bf45c24c1a5e5a00e4c93",
+      "fed_sha256": "8fac8f39310306c2df28da4d71e6fae7ef155c182d18609ca980f8c30f5d4874",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "gen-g04-3m-noise-1/06",
+      "wake_end_sample": 646400,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "a6ac5af187ce74bcc9203bb11584b4f32a9c9c27af3072c7ba1c7f15c02084bc",
+      "fed_sha256": "53b8396dcef8d2ccaf0c6614b9fe1a0e27c3f9d7b7c1431f7643c0604f562e53",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "gen-g04-3m-noise-1/09",
+      "wake_end_sample": 940800,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "87b441d85cb7a3b93497c445ff75e03a7754daa40f37a74169324bf459b45f6f",
+      "fed_sha256": "ba47dcd83bab97fa9b6fc7162a6eba226dfdc5017f0803e0655f42eb1a869f84",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "gen-g04-3m-noise-1/10",
+      "wake_end_sample": 1036800,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "cf5a759436d8a236b34f2b352608c41764c9b08b63539aaf818fb7f6e4aea14d",
+      "fed_sha256": "bf186e93858d9a196319e9a08bf8b9e1945dff59db7b35469de318084e1fe978",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "gen-g04-3m-noise-1/12",
+      "wake_end_sample": 1223680,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "51c2c733cadaf62a3fd832b6aee90abc05d7b8cd750eda9519ceedc8264cbc20",
+      "fed_sha256": "e9e97096b0fd87497392103ca9ae2b9c1e6572cc4927220a2d5bba0beb54f98d",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

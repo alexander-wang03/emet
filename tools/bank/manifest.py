@@ -17,6 +17,7 @@ The API is small on purpose, since `record.py` and `label.py` import it too:
     sha256_file(path)         the hash a recording is known by
     wav_facts(path)           rate, channels, bits, frames and duration
     take_at(manifest, sample) the take whose slot holds a sample
+    plan_of(manifest)         the plan `record.py` recorded it under, or None
 
 `kind` is one of `bank`, `manifest`, `cassette` and `golden`. The standard
 library only, so the tools run in the repo's venv and on the reference body
@@ -44,6 +45,7 @@ __all__ = [
     "sha256_file",
     "wav_facts",
     "take_at",
+    "plan_of",
 ]
 
 #: The `format` field each kind of file carries.
@@ -64,10 +66,14 @@ CASSETTE_HITS = ("hit", "miss", None)
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-#: A speaker is an id and never a name: "s" and digits, so a name cannot pass.
-_SPEAKER = re.compile(r"^s\d{2,}$")
+#: A speaker is an id and never a name: "s" and digits for a person, "g" and
+#: digits for a generated voice (FORMAT.md), so a name cannot pass.
+_SPEAKER = re.compile(r"^[sg]\d{2,}$")
 _PLATFORM = re.compile(r"^(win32|linux|darwin)-[a-z0-9_]+$")
 _NAME_CUT = re.compile(r"^\d+ of \d+$")
+#: `made_with` as `record.py` writes it (`manifest_head`): its own path, then
+#: the plan's id, which is lowercase letters, digits and hyphens there.
+_PLAN = re.compile(r"^tools/bank/record\.py, plan ([a-z0-9][a-z0-9-]*)(?=;|$)")
 
 
 class BankError(ValueError):
@@ -119,15 +125,15 @@ def _opt_str(v: Any) -> bool:
     return v is None or isinstance(v, str)
 
 
-def _keys(doc: dict, required: Iterable[str], where: str, out: list[str]) -> None:
-    """Every required key present and no other: a misspelt field is a
-    problem, never a field quietly ignored."""
-    required = tuple(required)
+def _keys(doc: dict, required: Iterable[str], where: str, out: list[str], optional: Iterable[str] = ()) -> None:
+    """Every required key present and no other but the optional ones: a
+    misspelt field is a problem, never a field quietly ignored."""
+    required, optional = tuple(required), tuple(optional)
     for key in required:
         if key not in doc:
             out.append(f"{where}: no {key!r}")
     for key in doc:
-        if key not in required:
+        if key not in required and key not in optional:
             out.append(f"{where}: unknown field {key!r}")
 
 
@@ -159,8 +165,11 @@ def _check_bank(doc: dict, out: list[str]) -> None:
         for sid, who in speakers.items():
             if not _SPEAKER.match(str(sid)):
                 out.append(f"bank: speaker {sid!r} is not an id like s01; a speaker is never a name")
-            if not isinstance(who, dict) or set(who) != {"consent"} or not _relative(who.get("consent")):
-                out.append(f"bank: speaker {sid!r} names its consent file, and nothing else")
+            # A person names a consent file; a generated voice names its voice record in its place.
+            names = "voice" if str(sid).startswith("g") else "consent"
+            kind = "voice record" if names == "voice" else "consent file"
+            if not isinstance(who, dict) or set(who) != {names} or not _relative(who.get(names)):
+                out.append(f"bank: speaker {sid!r} names its {kind}, and nothing else")
 
 
 MANIFEST_FIELDS = (
@@ -175,7 +184,7 @@ TAKE_FIELDS = (
 
 
 def _check_manifest(doc: dict, out: list[str]) -> None:
-    _keys(doc, MANIFEST_FIELDS, "manifest", out)
+    _keys(doc, MANIFEST_FIELDS, "manifest", out, optional=("generated",))
     mid = doc.get("id")
     if not isinstance(mid, str) or not _ID.match(mid):
         out.append("manifest: id is lowercase letters, digits, dots, dashes and underscores")
@@ -208,6 +217,11 @@ def _check_manifest(doc: dict, out: list[str]) -> None:
         out.append("manifest: room names a room in bank.json")
     if not isinstance(doc.get("speaker"), str) or not _SPEAKER.match(doc.get("speaker") or ""):
         out.append("manifest: speaker is an id like s01, never a name")
+    # What made a generated recording travels in it; check.py judges what is inside.
+    if ("generated" in doc and not isinstance(doc["generated"], dict)) or (
+            str(doc.get("speaker") or "").startswith("g") != ("generated" in doc)):
+        out.append("manifest: a generated voice's recording says what made it under generated, an object, "
+                   "and no other recording has one")
     dm = doc.get("distance_m")
     if not (dm is None or (_is_num(dm) and dm >= 0)):
         out.append("manifest: distance_m is a measured number of metres, or null")
@@ -270,6 +284,13 @@ def _check_manifest(doc: dict, out: list[str]) -> None:
                 out.append(f"{where}: exclude is null or {{\"reason\": \"...\", \"date\": \"YYYY-MM-DD\"}}")
 
 
+def _terms(v: Any) -> bool:
+    """A cassette's `keyterm`: the terms sent, in order, each non-empty text
+    (`emet_providers.cassette`). The one query value that is a list, and the
+    one name holding "key" that is no credential."""
+    return isinstance(v, list) and bool(v) and all(isinstance(t, str) and t for t in v)
+
+
 def _check_cassette(doc: dict, out: list[str]) -> None:
     _keys(doc, ("format", "turns"), "cassette", out)
     turns = doc.get("turns")
@@ -288,9 +309,11 @@ def _check_cassette(doc: dict, out: list[str]) -> None:
             out.append(f"{where}: request is provider, model, sample_rate and query")
         else:
             query = req.get("query")
-            if not isinstance(query, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in query.items()):
-                out.append(f"{where}: request.query maps text to text")
-            elif any(re.search(r"key|token|auth|secret|pass", k, re.I) for k in query):
+            if not isinstance(query, dict) or not all(
+                    isinstance(k, str) and (_terms(v) if k == "keyterm" else isinstance(v, str))
+                    for k, v in query.items()):
+                out.append(f"{where}: request.query maps text to text, and keyterm to a list of text")
+            elif any(k != "keyterm" and re.search(r"key|token|auth|secret|pass", k, re.I) for k in query):
                 out.append(f"{where}: request.query holds a field named like a credential")
             if not isinstance(req.get("provider"), str) or not _opt_str(req.get("model")) or not _is_int(req.get("sample_rate")):
                 out.append(f"{where}: request's provider is text, model text or null, sample_rate a number")
@@ -512,3 +535,16 @@ def take_at(manifest: dict[str, Any], sample: int) -> dict[str, Any] | None:
         if slot.get("start", 0) <= sample < slot.get("end", -1):
             return take
     return None
+
+
+def plan_of(manifest: dict[str, Any]) -> str | None:
+    """The plan `record.py` recorded this under, read from `made_with`
+    (`tools/bank/record.py, plan v1-sitting-1`), or None for a recording
+    no plan made: bank v0's were prompted by shell scripts.
+
+    A plan is one sitting, and the sitting is the only grouping a manifest
+    records. `replay.py` asks it of a recording that has no golden: a plan
+    with no golden at all is a sitting still being recorded."""
+    made_with = manifest.get("made_with")
+    found = _PLAN.match(made_with) if isinstance(made_with, str) else None
+    return found.group(1) if found else None

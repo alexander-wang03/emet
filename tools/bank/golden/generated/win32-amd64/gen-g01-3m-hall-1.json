@@ -1,0 +1,80 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g01-3m-hall-1",
+  "sha256": "d87597f7426fb95fb9fc816743b2eed4cc2183464212efa83f54d0a5c2a7f376",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1712,
+    "wakes": 4,
+    "turns": 4,
+    "name_cut": "0 of 4"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g01-3m-hall-1/01",
+      "wake_end_sample": 104960,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "819c1e7847c952729b7d27897af545b0dae75fd2e5d3839949fb661b12f81cb5",
+      "fed_sha256": "119c391ed3f0120cd57fea3eda713ab25d7304e4f5e25e532902cd06475630ff",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g01-3m-hall-1/03",
+      "wake_end_sample": 334080,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "30cf043abc38d5bd275d56eef90a4de1c6b46b213779292c75d094331ca2f100",
+      "fed_sha256": "e55b534404c6d2371b72a46be8dc862a64dc84646821c35a90602d398c57e403",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g01-3m-hall-1/07",
+      "wake_end_sample": 746240,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "522c824779773dc1bbc8ca344eeb6ae74a0368022c062a60223b3fd3480c1d35",
+      "fed_sha256": "82c7a908c531c64f7549fa781803204875abf4cb6f7a056e1e3c36fa692bdea5",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g01-3m-hall-1/15",
+      "wake_end_sample": 2160640,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "3aaae30619c029895664f70dad87fd980363f2ff8765ed686ebac9f48a0915ca",
+      "fed_sha256": "9f55fd8a7b993424f1e529c557a688878505266dc0689c835f061c06e8e68744",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

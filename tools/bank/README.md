@@ -11,7 +11,8 @@ and hashes. `FORMAT.md` is every file's format.
 | Tool | Does | Needs |
 |---|---|---|
 | `manifest.py` | reads, checks and writes the bank's files; the one reader every tool shares | the standard library |
-| `check.py` | checks a bank: index, manifests, hashes, slots, consent | the standard library |
+| `check.py` | checks a bank: index, manifests, hashes, slots, consent; a generated bank's voices, provenance and sums | the standard library |
+| `generate.py` | builds the generated bank from public voices and simulated rooms; packs and fetches it | the standard library, numpy to be fast; Piper in a venv of its own, run and never imported |
 | `record.py` | prompts and records a sitting on the reference body | the standard library, `arecord` |
 | `label.py` | labels takes: energy, forced alignment, a whisper transcript, flags | a tools venv (`requirements.txt`) |
 | `replay.py` | replays the bank through `emet-listen`, against the goldens | the repo's venv |
@@ -122,8 +123,72 @@ reason, goes in the pull request. Goldens are per platform
 (`win32-amd64`, `linux-aarch64`, `linux-x86_64`); on 2026-10-27 the
 laptop's and the reference body's agreed in every field of all 115 wakes.
 
+A recording with no golden fails the compare. A sitting still being
+recorded is the one case held to nothing: while no recording of its plan
+has a golden on any platform, each is replayed, printed as `UNRELEASED`
+and named in the total line. `--update` on such a recording writes its
+golden and says that the plan is held from then on, on every platform, so
+a sitting's goldens are written on the laptop and on the body in one
+change. A compare that held no recording to a golden exits 1.
+
 A replay is never a hardware result (`RELEASING.md` §6): a number from it
 names its platform, commit, bank version and start mean.
+
+## The generated bank
+
+A second bank that anybody may hold: speech made by Piper from public
+voices (`generated/voices.json`: LJ Speech's voice and three others whose
+every dataset allows it, each pinned by sha256), played through simulated
+rooms (`generated/rooms.json`), saying phrases whose text is already in
+this repository (`generated/phrases.json`). Once its store is published
+(decision D8, `emet-testaudio`), it screens a change on every pull request
+and every week without the maintainer's voice; until then no pull request
+replays it, and `python tools/ci.py bank` says it was not run. **It never
+sets or moves a default**: a synthetic voice is no second voice and a
+simulated room is no second room, so its numbers never stand for a body or
+a real room. `FORMAT.md`, "A generated bank", has its files.
+
+```sh
+python tools/bank/generate.py --plan                    # both sets' recordings and takes; needs no voice
+"$PY" tools/bank/check.py ../genbank/small              # its voices, provenance and sums, as for any bank
+"$PY" tools/bank/replay.py ../genbank/small --golden tools/bank/golden/generated
+```
+
+To build it, Piper goes in a venv of its own (GPL-3.0, CLAUDE.md), and the
+builder runs it as a child process. numpy makes the room and the resampler
+fast and gives the same integers as the plain Python the tests use:
+
+```sh
+python -m venv ../genbank-piper && ../genbank-piper/bin/python -m pip install piper-tts==1.8.0 onnxruntime==1.31.1
+python -m venv ../genbank-tools && ../genbank-tools/bin/python -m pip install numpy==2.5.5
+../genbank-tools/bin/python tools/bank/generate.py --fetch-voices ../genbank-voices
+../genbank-tools/bin/python tools/bank/generate.py ../genbank/small --set small --voices ../genbank-voices --piper ../genbank-piper/bin/python
+python tools/bank/generate.py --compare ../genbank/small OTHER_BUILD
+```
+
+`small` is one recording a condition, 75 takes, 9.1 minutes: every phrase
+once, for every pull request. `full` is every voice in every condition,
+100 recordings and 181 minutes, for the weekly run. Both come from
+`generated/sets.json` by `generate.py`'s `plan`, and each small recording
+is one of full's, byte for byte. Everything after the voice is whole-number
+arithmetic, so the same utterances give the same bytes on any machine;
+Piper runs with both noise scales at 0, and gave the same samples twice on
+the laptop (2026-11-26).
+
+`--pack BANK --to DIR` writes the release asset and its `.sha256`;
+`--fetch URL --sha256 HEX --to DIR` takes it back, keeps it only when the
+hash matches, and unpacks it only when every member lies inside it and the
+bank passes `check.py`. `--sums BANK` writes a built bank's `SHA256SUMS`
+again after a file is added, such as the store's cassettes under
+`cassettes/`, and checks the bank. `--clip FILE` writes the wake clip of
+`emet-hal/tests/clips/`. The goldens exist for win32-amd64 (2026-11-26);
+on another platform every recording prints `NO GOLDEN` until that
+platform's first replay writes them with `--update --platform NAME` for a
+pull request.
+
+The pull request after a bank version is published fills in that set's
+`url` and `sha256` in `generated/store.json`; until then
+`python tools/ci.py bank` and `bank-full` say they were not run.
 
 ## Cassettes and paid replays
 
@@ -146,7 +211,11 @@ A cassette is what Deepgram said for exact bytes under one request
 (`emet_providers.cassette`). A replay takes only the turns recorded under
 its request, by default the shipped plugin's, so the 0.5.3 replays made
 with `smart_format=true` never answer for today's plugin, which sends it
-false. A turn whose bytes changed misses, is listed
+false. From 0.5.6 the plugin sends `mip_opt_out=true` with every request,
+so no turn of bank v0's nine cassettes answers it, and every turn misses
+until the lead's reseed of 0.5.6 writes the reseeded turns to a new
+cassette (`--cassette-request` with 0.5.5's request still answers from the
+old ones). A turn whose bytes changed misses, is listed
 and never failed, and its bytes go on the miss list: that list is the paid
 list. `paid_replay.py` sends those bytes through the real plugin and writes
 what came back as a new cassette. It refuses before spending: a request URL
@@ -190,6 +259,8 @@ only the checks that need no network and spends nothing.
 | recordings | `Project Emet/recordings/`, `voicebank/audio/` on the Pi | never |
 | index, manifests, consent | `voicebank/bank.json`, `manifests/`, `consent/` | never |
 | labels, cassettes, miss lists, the ledger | `voicebank/labels/`, `cassettes/`, `misses/`, `ledger.json` | never |
+| the generated bank's lists and goldens | `emet/tools/bank/generated/`, `golden/generated/` | yes |
+| the generated bank | `Project Emet/genbank/`, to be published as a release asset of its own repository (D8) | never |
 
 ## Tests
 
@@ -199,4 +270,7 @@ only the checks that need no network and spends nothing.
 
 A test that needs the real bank skips without it; `EMET_BANK` names the
 bank's root and `EMET_BANK_SEARCH` more directories for its audio, separated
-as `PATH` is.
+as `PATH` is. `EMET_GENBANK` names the generated bank's small set, which is
+otherwise looked for at `Project Emet/genbank/small/`. The builder's tests
+need neither Piper nor numpy nor the network: a fake voice gives a tone for
+each text.

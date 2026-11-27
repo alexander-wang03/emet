@@ -29,6 +29,21 @@ speaks a different protocol (`/v2/speak`, raw audio over WebSocket only, with
 its own turn and interrupt messages); it is in the deferred register rather
 than in this file.
 
+**Out of the Model Improvement Program, on every request.** Every request,
+the preflight's included, carries `mip_opt_out=true` (the maintainer,
+2026-11-24: "Yes"). Deepgram's Model Improvement Partnership Program page
+(developers.deepgram.com, read 2026-11-26) names the text-to-speech REST
+API among the endpoints that take it, with the example
+`https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&mip_opt_out=true`,
+and says "Data from opted-out requests is retained only for the duration
+necessary to process the request." Deepgram's changelog of 2026-03-05 says
+pay as you go customers opt out "with no impact on the rates listed on
+deepgram.com/pricing". No body can turn it off: `params.mip_opt_out` and
+`params.query.mip_opt_out` may say true, which changes nothing, and any
+other value is judged at construction and held in `refusal`. `query()`
+raises `PluginError` with it and `start()` reports unhealthy with it, before
+the key is read or a request is made.
+
 **One request per sentence.** The engine hands over a sentence at a time and
 plays each as its audio completes, so a request per sentence is what lets
 the first sentence be heard while the language model is still writing the
@@ -51,7 +66,9 @@ Params, all optional, from the body's `models.tts.params`:
     query         mapping of extra query parameters, passed through as
                   strings. `model`, `encoding`, `container` and
                   `sample_rate` are fixed by this plugin and cannot be
-                  overridden here.
+                  overridden here; `mip_opt_out` may only say true.
+    mip_opt_out   true, or absent. The plugin sends `mip_opt_out=true`
+                  whatever the body says, and any other value is refused.
     url           the endpoint, for a self-hosted deployment.
                   Default https://api.deepgram.com/v1/speak
     timeout_s     seconds per request, connect and read. Default 30.
@@ -109,6 +126,9 @@ SPEED_MIN, SPEED_MAX = 0.7, 1.5
 #: Query keys the body may not override: the format is this plugin's to
 #: state, and the engine opens the speaker to match it.
 FORMAT_KEYS = frozenset({"model", "encoding", "container", "sample_rate"})
+
+#: The Model Improvement Program's opt-out, sent as true on every request.
+OPT_OUT = "mip_opt_out"
 
 #: What the preflight says. Six characters.
 PREFLIGHT_TEXT = "Ready."
@@ -191,15 +211,38 @@ class DeepgramVoice(VoicePlugin):
             log.warning("deepgram voice: rate %.2f is outside %.1f to %.1f; using %.2f", speed, SPEED_MIN, SPEED_MAX, clamped)
             speed = clamped
         self.speed: float = speed
+        #: Why this body's requests cannot be sent, or None (the docstring).
+        self.refusal: str | None = self._judge_params()
 
     # ------------------------------------------------------------- request
 
+    def _judge_params(self) -> str | None:
+        """The first reason the body's params cannot be sent, or None."""
+        query = self.params.get("query") or {}
+        if not isinstance(query, Mapping):
+            return f"params.query is a mapping of query parameters, not {type(query).__name__} {query!r}."
+        for where, present, value in (
+            ("params.mip_opt_out", OPT_OUT in self.params, self.params.get(OPT_OUT)),
+            ("params.query.mip_opt_out", OPT_OUT in query, query.get(OPT_OUT)),
+        ):
+            if present and not (value is True or (isinstance(value, str) and value.strip().lower() == "true")):
+                return (
+                    f"{where} is {value!r}, and every Deepgram request carries "
+                    f"mip_opt_out=true, which keeps it out of Deepgram's Model Improvement "
+                    f"Program, so a body cannot turn it off. Take the line out of the body."
+                )
+        return None
+
     def query(self) -> dict[str, str]:
-        """The query string, as a mapping. Format keys win over `params.query`."""
+        """The query string, as a mapping. Format keys win over `params.query`,
+        and `mip_opt_out` is always "true". Raises `PluginError` with
+        `refusal` for a body whose requests cannot be sent."""
+        if self.refusal:
+            raise PluginError(self.refusal)
         extra = {
             str(k): str(v).lower() if isinstance(v, bool) else str(v)
             for k, v in (self.params.get("query") or {}).items()
-            if str(k) not in FORMAT_KEYS
+            if str(k) not in FORMAT_KEYS and str(k) != OPT_OUT
         }
         out = {
             **extra,
@@ -207,6 +250,7 @@ class DeepgramVoice(VoicePlugin):
             "encoding": "linear16",
             "container": "none",
             "sample_rate": str(self.sample_rate),
+            OPT_OUT: "true",
         }
         if self.speed != 1.0:
             out["speed"] = f"{self.speed:g}"
@@ -218,6 +262,9 @@ class DeepgramVoice(VoicePlugin):
     # ------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
+        if self.refusal:
+            self._fail(self.refusal)
+            return
         self._key = os.environ.get(self.key_env_name) or None
         if not self._key:
             self._fail(

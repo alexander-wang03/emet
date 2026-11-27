@@ -22,10 +22,17 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from emet_sdk.plugin import TranscriberPlugin
+from emet_sdk.plugin import PluginError, TranscriberPlugin
 from emet_sdk.types import AudioFormat, Transcript
 
-from emet_providers.deepgram import DEFAULT_KEY_ENV, DEFAULT_MODEL, DEFAULT_URL, DeepgramTranscriber
+from emet_providers.deepgram import (
+    DEFAULT_KEY_ENV,
+    DEFAULT_MODEL,
+    DEFAULT_URL,
+    KEYTERM_TOKENS,
+    DeepgramTranscriber,
+    keyterm_count,
+)
 
 FRAME = bytes(2560)
 KEY = "dg_test_key"
@@ -194,12 +201,12 @@ def test_the_souls_model_is_sent_and_reported():
 def test_body_query_params_ride_along_but_cannot_change_the_format():
     stt = make(
         FakeServer(),
-        query={"language": "en-GB", "keyterm": "Emet", "sample_rate": 8000, "encoding": "mulaw", "channels": 2,
+        query={"language": "en-GB", "redact_usage": True, "sample_rate": 8000, "encoding": "mulaw", "channels": 2,
                "vad_events": True},
     )
     q = query_of(stt.request_url())
     assert q["language"] == "en-GB"
-    assert q["keyterm"] == "Emet"
+    assert q["redact_usage"] == "true"
     assert q["vad_events"] == "true"
     assert q["sample_rate"] == "16000"
     assert q["encoding"] == "linear16"
@@ -241,6 +248,223 @@ def test_the_key_travels_as_a_token_header(monkeypatch):
     started(server, monkeypatch)
     assert server.kwargs[0]["additional_headers"] == {"Authorization": f"Token {KEY}"}
     assert server.kwargs[0]["open_timeout"] == 10.0
+
+
+# ------------------------------------------------- the opt-out and keyterms
+
+
+def test_every_connection_carries_mip_opt_out_the_preflight_included(monkeypatch):
+    """The maintainer, 2026-11-24: mip_opt_out=true with every Deepgram
+    request. The preflight's connection and each utterance's."""
+    server = FakeServer({"close": [results("one", final=True)]})
+    stt = started(server, monkeypatch)
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await stt.finish()
+
+    run(scenario())
+    assert len(server.urls) == 2, "the preflight and one utterance"
+    for url in server.urls:
+        assert parse_qs(urlparse(url).query)["mip_opt_out"] == ["true"]
+        assert url.count("mip_opt_out=") == 1
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"query": {"mip_opt_out": True}},
+        {"query": {"mip_opt_out": "TRUE"}},
+        {"mip_opt_out": True},
+        {"mip_opt_out": "true", "query": {"mip_opt_out": "true"}},
+    ],
+)
+def test_a_body_may_say_the_opt_out_is_true_which_changes_nothing(params):
+    stt = make(FakeServer(), **params)
+    assert stt.refusal is None
+    assert stt.request_url() == make(FakeServer()).request_url()
+
+
+@pytest.mark.parametrize(
+    "params, where",
+    [
+        ({"query": {"mip_opt_out": False}}, "params.query.mip_opt_out is False"),
+        ({"query": {"mip_opt_out": "false"}}, "params.query.mip_opt_out is 'false'"),
+        ({"mip_opt_out": False}, "params.mip_opt_out is False"),
+        ({"mip_opt_out": 0}, "params.mip_opt_out is 0"),
+        ({"mip_opt_out": None}, "params.mip_opt_out is None"),
+    ],
+)
+def test_a_body_cannot_turn_the_opt_out_off(params, where):
+    stt = make(FakeServer(), **params)
+    assert stt.refusal is not None and stt.refusal.startswith(where)
+    assert "a body cannot turn it off" in stt.refusal
+    assert "keeps it out of Deepgram's Model Improvement Program" in stt.refusal, "it says what the opt-out does"
+    assert "maintainer" not in stt.refusal, "an owner is told what the line does, not who decided it"
+    with pytest.raises(PluginError, match="cannot turn it off"):
+        stt.request_url()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "wss://api.deepgram.com/v1/listen?mip_opt_out=false&",
+        "wss://api.deepgram.com/v1/listen?keyterm=Emet,Emmett&",
+        "wss://api.deepgram.com/v1/listen?",
+        "wss://deepgram.internal/v1/listen#x",
+    ],
+)
+def test_a_url_holding_a_query_is_refused_so_no_parameter_passes_the_rules(monkeypatch, url):
+    """A query in `params.url` would go out ahead of the plugin's own, so a
+    body could send mip_opt_out=false first, or one comma-joined keyterm,
+    past every rule above. Refused at construction, naming the URL, and
+    nothing reads the key or connects for it."""
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    server = FakeServer()
+    stt = make(server, url=url)
+    assert stt.refusal is not None and stt.refusal.startswith(f"params.url is {url!r}, which holds a query")
+    assert "params.query or params.keyterms" in stt.refusal
+    with pytest.raises(PluginError, match="holds a query"):
+        stt.request_url()
+    run(stt.start())
+    assert not stt.describe().healthy and server.urls == [] and stt._key is None
+
+
+def test_a_refused_body_reads_no_key_connects_nowhere_and_says_why(monkeypatch):
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    server = FakeServer()
+    stt = make(server, mip_opt_out=False, keyterms=["Emet"])
+    run(stt.start())
+    assert not stt.describe().healthy
+    health = stt.health()
+    assert health.detail == stt.refusal and health.faults == ("start_failed",)
+    assert server.urls == [], "no connection is attempted for a request that cannot be sent"
+    assert stt._key is None, "the key is not read for it either"
+
+
+def test_keyterms_are_sent_one_parameter_an_entry_in_the_bodys_order(monkeypatch):
+    server = FakeServer()
+    stt = started(server, monkeypatch, keyterms=["Emet", "Hey Emet", "Afflatus"])
+    assert stt.keyterms == ("Emet", "Hey Emet", "Afflatus")
+    for url in (stt.request_url(), server.urls[0]):
+        assert parse_qs(urlparse(url).query)["keyterm"] == ["Emet", "Hey Emet", "Afflatus"]
+        assert url.endswith("&keyterm=Emet&keyterm=Hey+Emet&keyterm=Afflatus"), "a space inside a term goes out as +"
+    assert stt.query()["keyterm"] == ["Emet", "Hey Emet", "Afflatus"]
+
+
+def test_the_query_string_for_a_body_with_two_keyterms():
+    """The whole URL, so the report can quote it: no key is in it, since the
+    key travels in a header."""
+    stt = make(FakeServer(), keyterms=["Emet", "Hey Emet"])
+    assert stt.request_url() == (
+        "wss://api.deepgram.com/v1/listen?encoding=linear16&channels=1&interim_results=true"
+        "&punctuate=true&smart_format=false&mip_opt_out=true&sample_rate=16000&model=nova-3"
+        "&keyterm=Emet&keyterm=Hey+Emet"
+    )
+
+
+@pytest.mark.parametrize("params", [{}, {"keyterms": []}, {"keyterms": None}])
+def test_a_body_with_no_keyterms_sends_none(params):
+    stt = make(FakeServer(), **params)
+    assert stt.refusal is None and stt.keyterms == ()
+    assert "keyterm" not in stt.query() and "keyterm" not in stt.request_url()
+
+
+def test_a_nova_3_variant_takes_keyterms():
+    stt = make(FakeServer(), config={"model": "nova-3-medical"}, keyterms=["Emet"])
+    assert stt.refusal is None
+    assert query_of(stt.request_url())["keyterm"] == "Emet"
+
+
+@pytest.mark.parametrize(
+    "params, config, words",
+    [
+        ({"keyterms": "Emet"}, {}, ["params.keyterms is a list of terms", "str 'Emet'"]),
+        ({"keyterms": {"Emet": 1}}, {}, ["params.keyterms is a list of terms", "dict"]),
+        ({"keyterms": ["Emet", 42]}, {}, ["params.keyterms entry 2, 42, is int", "a keyterm is text"]),
+        ({"keyterms": ["Emet", ""]}, {}, ["params.keyterms entry 2, '', is empty"]),
+        ({"keyterms": ["   "]}, {}, ["params.keyterms entry 1, '   ', is empty"]),
+        ({"keyterms": ["Emet "]}, {}, ["params.keyterms entry 1, 'Emet ', begins or ends with a space"]),
+        (
+            {"keyterms": ["Emet", "Emmett,Emet"]},
+            {},
+            ["params.keyterms entry 2, 'Emmett,Emet', holds a comma", "silently boosts nothing instead of failing",
+             "developers.deepgram.com/docs/keyterm", "Give each term an entry of its own"],
+        ),
+        ({"keyterms": ["Emet;Emmett"]}, {}, ["entry 1, 'Emet;Emmett', holds a semicolon", "Do not separate keyterms"]),
+        ({"keyterms": ["Emet\nEmmett"]}, {}, ["entry 1", "holds a line break or another control character"]),
+        ({"keyterms": ["Emet\tEmmett"]}, {}, ["entry 1", "holds a line break or another control character"]),
+        ({"keyterms": ["Emet\u0085Emmett"]}, {}, ["entry 1", "holds a line break or another control character"]),
+        ({"keyterms": ["Emet\u2028Emmett"]}, {}, ["entry 1", "holds a line break or another control character"]),
+        ({"keyterms": ["Emet\u2029Emmett"]}, {}, ["entry 1", "holds a line break or another control character"]),
+        ({"keyterms": ["Emet\u009fEmmett"]}, {}, ["entry 1", "holds a line break or another control character"]),
+        ({"keyterms": ["Emet:0.15"]}, {}, ["entry 1, 'Emet:0.15', ends in a weight", "boosts nothing",
+                                           "Write the term alone, with no colon or number after it."]),
+        ({"keyterms": ["Emet:2"]}, {}, ["entry 1, 'Emet:2', ends in a weight"]),
+        ({"keyterms": ["Emet :2"]}, {}, ["entry 1, 'Emet :2', ends in a weight"]),
+        ({"keyterms": ["Emet: 2"]}, {}, ["entry 1, 'Emet: 2', ends in a weight"]),
+        ({"keyterms": ["Emet:-2"]}, {}, ["entry 1, 'Emet:-2', ends in a weight"]),
+        ({"keyterms": ["Emet:.5"]}, {}, ["entry 1, 'Emet:.5', ends in a weight"]),
+        ({"keyterms": ["Emet"] * 101}, {}, ["params.keyterms comes to 505 by Emet's count",
+                                            "past Deepgram's limit of 500 tokens a request"]),
+        ({"keyterms": ["Emet"]}, {"model": "nova-2"}, ["params.keyterms is for a Nova-3 model", "'nova-2'", "Keywords",
+                                                       "Set models.stt.model to nova-3, or take params.keyterms out"]),
+        ({"keyterm": "Emet"}, {}, ["params.keyterm is not read", "a list under params.keyterms"]),
+        ({"query": {"keyterm": "Emet"}}, {}, ["params.query.keyterm is not read", "params.keyterms", "silently boosts nothing"]),
+        ({"query": {"keyterm": "Emet,Emmett"}}, {}, ["params.query.keyterm is not read"]),
+        ({"query": {"keyterms": ["Emet"]}}, {}, ["params.query.keyterms is not read"]),
+        ({"query": ["language=en"]}, {}, ["params.query is a mapping of query parameters, not list"]),
+    ],
+)
+def test_a_keyterm_list_that_cannot_be_sent_is_refused_naming_the_entry(params, config, words):
+    stt = make(FakeServer(), config=config, **params)
+    assert stt.refusal is not None
+    for word in words:
+        assert word in stt.refusal, (word, stt.refusal)
+    assert stt.keyterms == ()
+    with pytest.raises(PluginError):
+        stt.query()
+
+
+def test_the_model_refusal_names_no_model_this_plugin_cannot_reach():
+    """Flux takes keyterms on Deepgram's page and speaks another protocol, so
+    the refusal does not offer it to an owner."""
+    for model in ("nova-2", "flux-general-en"):
+        refusal = make(FakeServer(), config={"model": model}, keyterms=["Emet"]).refusal or ""
+        assert refusal.startswith("params.keyterms is for a Nova-3 model") and "Flux" not in refusal
+
+
+@pytest.mark.parametrize("term", ["Room 4:30", "Psalm 23:1", "Gate 4: 30", "v1.2:3", "Room 4 :30"])
+def test_a_colon_and_digits_after_a_digit_are_part_of_the_term(term):
+    """A time or a reference is no weight: Deepgram takes the term as
+    written, and so it is sent as written."""
+    stt = make(FakeServer(), keyterms=[term])
+    assert stt.refusal is None, stt.refusal
+    assert parse_qs(urlparse(stt.request_url()).query)["keyterm"] == [term]
+
+
+def test_the_count_stops_at_deepgrams_500():
+    """100 four-letter terms come to 500 by Emet's count and are sent; one
+    more is refused. The count is UTF-8 bytes plus one a term, so a term
+    outside ASCII counts each of its bytes."""
+    assert make(FakeServer(), keyterms=["Emet"] * 100).refusal is None
+    assert keyterm_count(["Émet"]) == 6
+    assert keyterm_count(["Emet"] * 100) == KEYTERM_TOKENS
+
+
+def test_the_bodys_order_is_kept_and_so_are_repeats():
+    """Deepgram's page says nothing of order or of a term given twice; the
+    plugin sends what the body wrote, and the cassette key keeps it."""
+    stt = make(FakeServer(), keyterms=["Emmett", "Emet", "Emmett"])
+    assert parse_qs(urlparse(stt.request_url()).query)["keyterm"] == ["Emmett", "Emet", "Emmett"]
+
+
+def test_the_module_quotes_deepgrams_words_with_the_date():
+    from emet_providers import deepgram
+
+    doc = deepgram.__doc__ or ""
+    assert "read 2026-11-26" in doc and "silently boosts nothing" in doc
+    assert "mip_opt_out=true" in doc and "500 tokens" in doc
 
 
 # ---------------------------------------------------------------- start

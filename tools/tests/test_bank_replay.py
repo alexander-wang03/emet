@@ -454,6 +454,33 @@ def tiny_bank(tmp_path: Path) -> Path:
     return root
 
 
+def test_a_bank_and_the_other_kinds_golden_folder_are_refused_before_any_replay(tmp_path, monkeypatch, capsys):
+    """A generated bank against bank v0's folder would print NO GOLDEN for
+    every recording, and with --update write gen-*.json among bank v0's:
+    each pairing the wrong way round is refused, naming the right one."""
+    root = tiny_bank(tmp_path)
+    ran: list = []
+
+    def fake(*args):
+        ran.append(args)
+        raise replay.RunProblem("stopped by the test")
+
+    monkeypatch.setattr(replay, "replay_one", fake)
+    index = json.loads((root / "bank.json").read_text(encoding="utf-8"))
+    assert replay.main([str(root), "--golden", str(replay.GENERATED_GOLDEN)]) == 1
+    assert ("tools/bank/golden/generated holds the generated bank's goldens, and this bank is a recorded one"
+            in capsys.readouterr().err)
+    index["speakers"] = {"g01": {"voice": "voices/g01.json"}}
+    (root / "bank.json").write_text(json.dumps(index), encoding="utf-8")
+    for update in ([], ["--update"]):
+        assert replay.main([str(root), *update]) == 1
+        assert ("a generated bank's goldens are in tools/bank/golden/generated; give --golden "
+                "tools/bank/golden/generated" in capsys.readouterr().err)
+    assert ran == [], "nothing was replayed"
+    assert replay.main([str(root), "--golden", str(tmp_path / "scratch-golden")]) == 1
+    assert len(ran) == 1, "a folder of the caller's own is taken as given"
+
+
 def test_update_then_compare_on_a_recording_with_no_wake(tmp_path, capsys):
     """The whole path, emet-listen included: no device, no network, a golden
     written and then matched; a golden whose conditions differ is refused."""
@@ -484,6 +511,141 @@ def test_a_mistyped_recording_id_is_an_error(tmp_path, capsys):
     root = tiny_bank(tmp_path)
     assert replay.main([str(root), "--only", "t-0.2", "--golden", str(tmp_path / "golden")]) == 2
     assert "no recording in the bank is called t-0.2; it holds t-0.1" in capsys.readouterr().err
+
+
+# ------------------------------------------ a sitting still being recorded
+
+V1 = "tools/bank/record.py, plan v1-sitting-1"
+#: The Pi's bank as the body run of 2026-11-25 found it, in small: recordings
+#: from before the prompter, two files of a sitting, and a trial's two files.
+SITTINGS = {
+    "old-1": "tools/one_breath_prompts.sh",
+    "old-2": None,
+    "v1s1-01": V1,
+    "v1s1-02": V1 + "; says again v1s1-01/01",
+    "trial-01": "tools/bank/record.py, plan trial-30s",
+    "trial-01-2": "tools/bank/record.py, plan trial-30s; again for trial-01",
+}
+
+
+def sittings_bank(tmp_path: Path, made_with: dict[str, str | None]) -> Path:
+    """A bank of one-second recordings, each with the `made_with` given."""
+    from conftest import write_wav
+
+    root = tmp_path / "bank"
+    for seed, (rid, made) in enumerate(made_with.items(), 1):
+        pcm = noise(1.0, seed)
+        wav = write_wav(tmp_path / "rec" / f"{rid}.wav", pcm)
+        doc = a_doc(pcm)
+        doc.update(id=rid, path=f"../rec/{rid}.wav", sha256=bank_files.sha256_file(wav), made_with=made, takes=[])
+        bank_files.write(root / "manifests" / f"{rid}.json", doc, "manifest")
+    bank_files.write(root / "bank.json", {
+        "format": "emet-bank/1", "version": "2026-11-25", "files": [f"manifests/{rid}.json" for rid in made_with],
+        "rooms": {"unrecorded": {"description": "no record names the room"}},
+        "speakers": {"s01": {"consent": "consent/s01.txt"}}}, "bank")
+    return root
+
+
+def quiet_replay(doc, wav, work, conditions, cassette, request) -> dict:
+    """What `replay_one` returns for a recording with no wake, with no
+    process started: these tests are about which recordings are held."""
+    return {"footer": {"frames": 12, "wakes": 0, "turns": 0, "name_cut": None}, "wakes": [],
+            "identity": "emet-listen: a test", "all_fed_sha256": hashlib.sha256(b"").hexdigest(),
+            "all_fed_bytes": 0, "misses": [], "network_refused": 0}
+
+
+@pytest.fixture
+def sittings(tmp_path, monkeypatch):
+    """The bank, and `go(*args)`, which replays it against `golden/` on
+    linux-test and returns the exit code."""
+    monkeypatch.setattr(replay, "replay_one", quiet_replay)
+    root = sittings_bank(tmp_path, SITTINGS)
+
+    def go(*args: str, platform: str = "linux-test") -> int:
+        return replay.main([str(root), "--golden", str(tmp_path / "golden"), "--platform", platform, *args])
+
+    return go
+
+
+def test_the_plan_of_a_recording_is_read_from_what_the_prompter_writes():
+    """`plan_of` and `record.py` agree on `made_with`: a manifest head made by
+    the prompter itself, plain, as a retake file and as an --again file."""
+    import datetime
+    import record
+
+    plan = record.load_plan(BANK_TOOLS / "plans" / "trial-30s.json")
+    when = datetime.datetime(2026, 11, 25, 0, 2, 12)
+    first = plan.files[0]
+    assert bank_files.plan_of(record.manifest_head(first, plan, "plughw:3,0", None, when)) == "trial-30s"
+    first.replaces = "trial-30s-01-a-near"
+    again = record.manifest_head(first, plan, "plughw:3,0", None, when)
+    assert again["made_with"].endswith("; again for trial-30s-01-a-near") and bank_files.plan_of(again) == "trial-30s"
+    for made_with, plan_id in [
+        (V1, "v1-sitting-1"),
+        (V1 + "; says again v1s1-01/01; again for v1s1-01", "v1-sitting-1"),
+        ("tools/one_breath_prompts.sh", None),
+        (None, None),
+        ("a test, plan v1-sitting-1", None),
+        ("tools/bank/record.py, plan Not_An_Id", None),
+        ("tools/bank/record.py, plan v1-sitting-1 and more", None),
+    ]:
+        assert bank_files.plan_of({"made_with": made_with}) == plan_id, made_with
+
+
+def test_a_sitting_with_no_golden_anywhere_is_named_and_held_to_nothing(sittings, tmp_path, capsys):
+    """The 0.5.6 case: the old recordings match their goldens, and the four
+    of two plans that have none are replayed, named in every place a reader
+    looks, and fail nothing."""
+    assert sittings("--update", "--only", "old-1", "--only", "old-2") == 0
+    capsys.readouterr()
+    report = tmp_path / "report.json"
+    assert sittings("--report", str(report)) == 0
+    out = capsys.readouterr().out
+    assert "old-1: same as the golden" in out and "old-2: same as the golden" in out
+    assert "v1s1-01: UNRELEASED, plan v1-sitting-1 has no golden on any platform; 0 wakes" in out
+    assert "trial-01-2: UNRELEASED, plan trial-30s has no golden on any platform" in out
+    assert "NO GOLDEN" not in out
+    assert out.strip().splitlines()[-1] == (
+        "total: 6 replayed on linux-test from the carried mean, 2 held to a golden, 0 changed or without a "
+        "golden, 0 problem(s); 4 unreleased and held to nothing: v1s1-01, v1s1-02, trial-01, trial-01-2")
+    said = json.loads(report.read_text(encoding="utf-8"))
+    assert said["held"] == ["old-1", "old-2"]
+    assert said["unreleased"] == ["v1s1-01", "v1s1-02", "trial-01", "trial-01-2"]
+    assert set(said["recordings"]) == set(SITTINGS), "an unreleased recording is replayed and reported, never dropped"
+
+
+@pytest.mark.parametrize("golden_on", ["linux-test", "win32-test"])
+def test_a_recording_with_no_golden_fails_once_its_plan_has_one_anywhere(sittings, capsys, golden_on):
+    """0.5.5's rule, kept: one golden for one file of the sitting, on this
+    platform or on the laptop's alone, and every file of it without one
+    fails. The other plan, still with none, stays named."""
+    assert sittings("--update", "--only", "old-1", "--only", "old-2") == 0
+    assert sittings("--update", "--only", "v1s1-01", platform=golden_on) == 0
+    assert "plan v1-sitting-1 had no golden until now" in capsys.readouterr().out
+    assert sittings() == 1
+    out = capsys.readouterr().out
+    assert "v1s1-02: NO GOLDEN for linux-test" in out
+    assert ("v1s1-01: NO GOLDEN for linux-test" in out) is (golden_on != "linux-test")
+    assert "trial-01: UNRELEASED" in out and "v1s1-02: UNRELEASED" not in out
+    missing = 1 if golden_on == "linux-test" else 2
+    assert f"{missing} changed or without a golden, 0 problem(s); 2 unreleased and held to nothing: trial-01, trial-01-2" in out
+
+
+def test_a_recording_that_names_no_plan_always_needs_its_golden(sittings, capsys):
+    """Only a plan can be unreleased. A recording made any other way fails
+    without a golden, even while no golden exists at all."""
+    assert sittings("--only", "old-1", "--only", "old-2") == 1
+    out = capsys.readouterr().out
+    assert "old-1: NO GOLDEN for linux-test" in out and "old-2: NO GOLDEN for linux-test" in out
+    assert "UNRELEASED" not in out
+
+
+def test_a_compare_that_held_nothing_to_a_golden_fails(sittings, capsys):
+    """Every recording replayed is unreleased, so nothing was checked."""
+    assert sittings("--only", "v1s1-01", "--only", "trial-01") == 1
+    out = capsys.readouterr().out
+    assert "replay: no recording was held to a golden, so this run checked nothing" in out
+    assert "0 held to a golden, 0 changed or without a golden, 0 problem(s); 2 unreleased" in out
 
 
 # -------------------------------------------------------------- cassettes
@@ -570,10 +732,77 @@ def test_the_miss_list_holds_each_missed_turns_bytes_for_the_paid_replay(tmp_pat
     assert back[0]["bytes"] == raw and back[0]["handover_feeds"] == 2
 
 
+#: The request dg08 and dg09 of bank v0 were recorded for, 0.5.5's, with
+#: smart_format false, before 0.5.6 put mip_opt_out in every request and so in
+#: the key. The other seven were recorded with smart_format true.
+BEFORE_OPT_OUT = {"provider": "deepgram", "model": "nova-3", "sample_rate": 16000, "query": {
+    "channels": "1", "encoding": "linear16", "interim_results": "true", "punctuate": "true", "smart_format": "false"}}
+
+
+def test_a_miss_on_a_turn_from_before_the_opt_out_key_is_counted_on_its_line_with_the_days(
+        tmp_path, monkeypatch, capsys):
+    """Four turns miss under today's request. The cassette holds the first
+    twice, under 0.5.5's request and with smart_format true, as dg08 and
+    dg05 hold two-plus-two; the second once, under 0.5.5's; the third only
+    under another request that carries the opt-out; the fourth not at all,
+    as with how-far. The line puts two misses down to the key, with the days
+    their turns were recorded, and under 0.5.5's request it says nothing."""
+    from emet_providers import cassette
+
+    raws = [noise(0.16, seed) for seed in (11, 12, 13, 14)]
+    smart = {**BEFORE_OPT_OUT, "query": {**BEFORE_OPT_OUT["query"], "smart_format": "true"}}
+    keyed = replay.shipped_request(16000)
+    keyed["query"]["smart_format"] = "true"
+    turns = []
+    for raw, request, day in [(raws[0], BEFORE_OPT_OUT, "2026-10-03"), (raws[0], smart, "2026-10-01"),
+                              (raws[1], BEFORE_OPT_OUT, "2026-10-05"), (raws[2], keyed, "2026-11-26")]:
+        recorder = cassette.TurnRecorder(request)
+        recorder.feed(raw)
+        turns.append(recorder.turn("words", recorded=day, source="a test"))
+    (tmp_path / "c").mkdir()
+    cassette.save(tmp_path / "c" / "dg.json", turns)
+
+    def all_missed(doc, wav, work, conditions, cassette_path, request) -> dict:
+        missed = [{**turn_record(n, raw), "cassette": "miss", "handover_feeds": 1} for n, raw in enumerate(raws, 1)]
+        return {"footer": {"frames": 50, "wakes": 4, "turns": 4, "name_cut": None},
+                "wakes": [{"take": "t-0.1/01", "cassette": "miss"} for _ in raws],
+                "identity": "emet-listen: a test", "all_fed_sha256": hashlib.sha256(b"".join(raws)).hexdigest(),
+                "all_fed_bytes": sum(map(len, raws)), "misses": missed, "network_refused": 0}
+
+    monkeypatch.setattr(replay, "replay_one", all_missed)
+    args = [str(tiny_bank(tmp_path)), "--golden", str(tmp_path / "golden"), "--platform", "linux-test",
+            "--cassette", str(tmp_path / "c")]
+
+    def recording_line(*more: str) -> str:
+        assert replay.main(args + list(more)) == 1, "no golden, so the compare fails"
+        return next(text for text in capsys.readouterr().out.splitlines() if text.startswith("t-0.1: "))
+
+    assert recording_line().endswith(
+        "cassette 0 hit and 4 miss; the cassette's turns for 2 of them predate the opt-out key, "
+        "recorded from 2026-10-01 to 2026-10-05, and answer no request that carries it")
+    assert recording_line("--cassette-request", json.dumps(BEFORE_OPT_OUT)).endswith("cassette 0 hit and 4 miss")
+
+
+def test_bank_v0s_cassettes_answer_no_request_the_plugin_makes_now(real_bank):
+    """From 0.5.6 the plugin sends mip_opt_out=true, so not one turn of the
+    nine cassettes seeded on 2026-10-28 (dg02 to dg10) stands for today's
+    request: a replay under it misses every turn until the reseed."""
+    found = sorted((real_bank / "cassettes").glob("dg*.json"))
+    if not found:
+        pytest.skip("no seeded cassettes on this machine")
+    today = replay.shipped_request(16000)
+    for path in found:
+        turns = bank_files.read(path, "cassette")["turns"]
+        assert turns and not any(t["request"] == today for t in turns), path.name
+    assert any(t["request"] == BEFORE_OPT_OUT for t in bank_files.read(real_bank / "cassettes" / "dg08.json",
+                                                                        "cassette")["turns"])
+
+
 def test_the_banks_cassettes_answer_two_plus_two_as_the_shipped_plugin_heard_it(real_bank, tmp_path, capsys):
     """dg05 (smart_format true) and dg08 (false) hold the same bytes for
-    two-plus-two; the replay takes dg08's, and how-far, which no paid
-    replay heard, goes on the miss list."""
+    two-plus-two; the replay under 0.5.5's request, the one dg08 was
+    recorded for, takes dg08's, and how-far, which no paid replay heard,
+    goes on the miss list."""
     pytest.importorskip("pocketsphinx")
     runs = real_bank.parent / "releases" / "v0.5.3" / "harness" / "runs"
     if not (real_bank / "cassettes" / "dg08.json").is_file() or not runs.is_dir():
@@ -581,7 +810,8 @@ def test_the_banks_cassettes_answer_two_plus_two_as_the_shipped_plugin_heard_it(
     dg08 = json.loads(next(runs.glob("dg08_*")).joinpath("deepgram.json").read_text(encoding="utf-8"))
     report, misses = tmp_path / "r.json", tmp_path / "m" / "misses.json"
     args = [str(real_bank), "--only", "two-plus-two-0.5.2", "--only", "how-far-0.5.3", "--cassette",
-            str(real_bank / "cassettes"), "--report", str(report), "--misses", str(misses)]
+            str(real_bank / "cassettes"), "--cassette-request", json.dumps(BEFORE_OPT_OUT),
+            "--report", str(report), "--misses", str(misses)]
     args += [a for d in real_bank_search() for a in ("--search", str(d))]
     try:
         assert replay.main(args) == 0, capsys.readouterr().out

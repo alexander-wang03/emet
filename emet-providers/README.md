@@ -28,6 +28,15 @@ against the seam rather than the seam around them, and the real providers
 came as a pair: a seam with one implementation is untested as a seam.
 `DESIGN.md` sections 12.3 to 12.5 have the contracts and the reasoning.
 
+Both Deepgram plugins send `mip_opt_out=true` with every request, their
+boot checks included, so each is excluded from Deepgram's Model Improvement
+Program, and no body can turn it off. A body may give the transcriber
+`models.stt.params.keyterms`, a list of words to listen for, such as the
+robot's name. Each goes out as one `keyterm`, for a Nova-3 model only, and
+each minute with keyterms costs more on Deepgram's pricing (read
+2026-11-26). The plugin refuses `params.keyterm`, singular, and a `keyterm`
+or `keyterms` under `params.query`, so every term is checked.
+
 ## The local voice
 
 Synthesis is local by default. The reference soul names `piper`, and a
@@ -36,7 +45,7 @@ voice is two files the owner downloads once into a place the plugin looks
 or wherever `models.tts.params.voices_dir` says):
 
 ```sh
-pip install -e "emet-providers[piper]"
+pip install -e ".[piper]"
 python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
 ```
 
@@ -73,13 +82,13 @@ EMET_OPENAI_KEY=...          # from platform.openai.com
 EMET_ANTHROPIC_KEY=...       # from console.anthropic.com
 EOF
 chmod 600 ~/.config/emet/keys.env
-pip install -e "emet-providers[deepgram,openai,anthropic,piper]"
+pip install -e ".[deepgram,openai,anthropic,piper]"
 ```
 
 An installed robot reads `/etc/emet/keys.env` too, and `--keys FILE` names
-any other. A variable already exported in the shell always wins over the
-file, so a one-off key for one run still works. `keys.env` is in the
-repository's `.gitignore`, whatever directory it lands in.
+any other. A variable already exported with a value in the shell always
+wins over the file, so a one-off key for one run still works. `keys.env`
+is in the repository's `.gitignore`, whatever directory it lands in.
 
 At boot each plugin makes one cheap request (a connection for the Deepgram
 transcriber, a model listing for the language models, one six-character
@@ -118,14 +127,19 @@ models:
         model: nova-3
         sample_rate: 16000
         query: {encoding: linear16, channels: "1", interim_results: "true",
-                punctuate: "true", smart_format: "false"}
+                punctuate: "true", smart_format: "false", mip_opt_out: "true"}
       record_turns: runs/2026-10-27/turns      # each utterance's bytes, as fed
 ```
 
 The request is the one the real plugin would make:
 `cassette.request_for("deepgram", DeepgramTranscriber(...).query())` moves
 `model` and `sample_rate` out of the query and keeps every other parameter
-it sends.
+it sends. A body with `params.keyterms` adds them to the request as
+`keyterm`, a list in the body's order. A turn recorded before 0.5.6 has no
+`mip_opt_out` in its request, so it answers no request the plugin makes
+now: the player sets it aside, and the mock logs a warning with each miss
+on its bytes, naming the day it was recorded. A `cassette_request` without
+`mip_opt_out`, 0.5.5's request, still reaches those turns.
 
 - **A hit** needs every byte of the utterance to hash to a recorded turn's
   `fed_sha256`, among the turns recorded for `cassette_request` (every turn

@@ -1,0 +1,69 @@
+{
+  "format": "emet-clip/1",
+  "file": "hey-emet-ljspeech.wav",
+  "sha256": "dd6982cce8ae20465cfdd5f2785d6f7730d780fa5d90ed736303bc7e79ad6663",
+  "bytes": 245394,
+  "sample_rate": 16000,
+  "channels": 1,
+  "bits": 16,
+  "frames": 122675,
+  "duration_s": 7.667187,
+  "text": "hey emet",
+  "said": "Hey emet.",
+  "phrase_at_sample": 88000,
+  "voice": {
+    "name": "en_US-ljspeech-medium",
+    "licence": "public domain",
+    "dataset": "https://keithito.com/LJ-Speech-Dataset/",
+    "model_sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+    "config_sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+    "card_sha256": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d"
+  },
+  "engine": {
+    "name": "piper-tts",
+    "version": "1.8.0",
+    "licence": "GPL-3.0-or-later",
+    "runtime": "onnxruntime 1.31.1",
+    "arguments": "--length-scale L --noise-scale 0 --noise-w-scale 0 --sentence-silence 0.2",
+    "length_scale": 1.0,
+    "noise_scale": 0,
+    "noise_w_scale": 0
+  },
+  "condition": {
+    "id": "near",
+    "room": "sim-study",
+    "size_m": [
+      3.9,
+      3.1,
+      2.5
+    ],
+    "absorption": 0.36,
+    "source_m": [
+      1.4,
+      1.0,
+      1.2
+    ],
+    "microphone_m": [
+      1.1,
+      1.0,
+      0.8
+    ],
+    "distance_m": 0.5
+  },
+  "noise": {
+    "kind": "pink",
+    "rms": 58,
+    "level_dbfs": -55.0,
+    "seed": 12572525962746159623
+  },
+  "clipped": 0,
+  "builder_sha256": "3d25655a478ad585b69364fca9a81e814568e6488b573cb6549e1dce63f4e1b6",
+  "inputs": {
+    "voices": "9117e5ea73ef2e466621c4fb0d3657bd275636ea8985cec1e7a128f33c6020ba",
+    "rooms": "ff94514852b5fe4e8a6a8e7e31921fe5698a4ed30b212cb415ce6f60743825e2",
+    "phrases": "5586d16f3b84143d9f8951c0db14eef0f817f05e2301b662a3a3ffa5f51d4ca3",
+    "sets": "0be42b26516d6fa806f5e51d465c98924bb5da60024b0a83a9705e2edfc5f10f"
+  },
+  "command": "python tools/bank/generate.py --clip emet-hal/tests/clips/hey-emet-ljspeech.wav --voices VOICES --piper PIPER",
+  "note": "Generated speech in a simulated room shows the wake engine hears the reference voice. The clip sets no default."
+}

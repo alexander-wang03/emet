@@ -12,6 +12,126 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
+## [0.5.6] - 2026-11-26
+
+Run every release by one playbook.
+
+### Added
+- `tools/release_audit.py --pr N` reads the release's plan and the body's
+  runs, from the folder `--evidence DIR` names when it is not the default,
+  and refuses a merge with an unfinished stage, an S1 open or carried, an
+  S2 open or carried on a minor or a major or unnamed in a patch's or a
+  hotfix's pull request, no passing body run of the head, or a body flag
+  not run in this release (#19)
+- `tools/body/run.py` writes `run.json` format 2, with the body's manifest
+  and state hashes and the flags the run itself exercised, and its live step
+  runs `emet-talk` for 60 s (#19)
+- The body runner soaks the bank's recordings with the null sink, holds a
+  budget table to the last release's on the same body, audits its venv with
+  pip-audit, runs nightly from master, and cuts the network with SSH up (#19)
+- `tools/body/run.py --soak-collect` brings home a soak that outlived the
+  laptop's run (#19)
+- `tools/ci.py` holds each CI job's steps, GitHub and the laptop run them,
+  the body runner runs its `layering` job, and `--all` names each job this
+  machine could not run (#19)
+- `tools/ci/check_workflows.py` holds the workflows to the house rules, and
+  the CI-only tools install from `tools/ci/requirements.txt`, pinned by
+  hash (#19)
+- The `layering` job also runs zizmor, and checks that the tools a bare
+  Python starts need only the standard library (#19)
+- The test job on the newest Python prints each package's line coverage,
+  with no floor (#19)
+- The wheel job builds each wheel twice and compares them, and fails when an
+  install would take an Emet package from the package index (#19)
+- A weekly CI run on master, and a weekly workflow with OpenSSF Scorecard
+  and pip-audit (#19)
+- Advisory jobs run the documents' commands and links, print the public API
+  diff, run mutation testing on the gate functions and replay the generated
+  bank; the two bank jobs say they were not run until the bank's store
+  publishes a set (#19)
+- `tools/release_check.py` refuses an Emet requirement other than the
+  release's own version, and a Security line with no advisory id (#19)
+- `tools/check_style.py` refuses an email address outside four allowed
+  forms (#19)
+- `tools/check_licences.py` holds every installed dependency's licence to
+  an allowed list, `tools/check_docs.py` checks the documents, and
+  `tools/dev.py` sets up and checks a contributor's venv (#19)
+- `tools/api_diff.py`, a test holding the SDK's public API to a golden
+  file, `py.typed`, and `tools/check_health.py`, which holds the SDK's
+  contract modules to 4,000 lines (#19)
+- Seeded property tests of chain resolution and validation, and snapshot
+  tests of the failure messages of `emet validate`, `emet explain`,
+  `emet-listen` and `emet-talk` (#19)
+- `tools/bank/generate.py` builds a generated bank from four public voices
+  in simulated rooms, and a generated wake clip joins the HAL's tests (#19)
+- `tools/bank/check.py` holds a generated bank to its pinned voices, its
+  provenance and its `SHA256SUMS` (#19)
+- The `virtual sound card` job listens live with `emet-listen` for 30 s
+  while the generated wake clip plays into its null sink, and must hear the
+  name once (#19)
+- `params.keyterms` on the Deepgram transcriber, sent as one `keyterm` each
+  for a Nova-3 model (#19)
+- `tools/bank/paid_replay.py --keyterm TERM` sends a term in the replay's
+  request (#19)
+
+### Changed
+- Every Deepgram request, the voice's and the preflights included, carries
+  `mip_opt_out=true`, and the cassette key holds it and the keyterms (#19)
+- The Deepgram transcriber refuses `params.keyterm`, and a `keyterm` or
+  `keyterms` under `params.query` (#19)
+- `tools/bank/canary.py` refuses a cassette turn recorded before the
+  opt-out key (#19)
+- `emet-hal`, `emet-providers` and `emet-engine` require `emet-sdk` 0.5.6,
+  and the suites and the tools' tests run with warnings as errors (#19)
+- `emet-sdk` requires jsonschema 4.26.0 and PyYAML 6.0.4 or later, and every
+  `dev` extra pytest 9.2.0 (#19)
+- Every CI job but the weekly Scorecard runs
+  `python tools/ci.py <job> --install`; actions are pinned by commit, each
+  workflow grants `contents: read` at the top and more per job, and no
+  checkout keeps its token (#19)
+- Dependabot waits seven days before proposing a release, and watches
+  `emet-engine`, `tools/ci` and `tools/bank` as well (#19)
+- The body runner installs the provider extras and piper in its venv (#19)
+- `tools/bank/record.py` refuses a sitting plan that names a generated
+  voice (#19)
+- `tools/bank/requirements.txt` carries the licence gate's table of its
+  pins (#19)
+- `tools/bank/replay.py` names the recordings of a sitting with no goldens as
+  unreleased, and the body's bank step passes only when a recording was held
+  to a golden (#19)
+- `SECURITY.md` says what follows a report: a first answer within a week,
+  an embargo of at most 90 days, a CVE through GitHub and the advisory with
+  the fix (#19)
+- `SECURITY.md` says memory is planned for 0.6, and that no code enforces a
+  body's motion limits while it moves yet (#19)
+- The README and DESIGN open with "An open engine that gives any small
+  companion robot a portable soul." (#19)
+- `RELEASING.md` names the playbook's stages, `tools/ci.py --all`, the
+  merge's new refusals, the severity ledger, the console snapshots and the
+  API diff (#19)
+
+### Fixed
+- `validate_memory_db` closes its connection, and reads a database at a
+  path holding `#`, `?` or `%`, or at a POSIX path that begins with two
+  slashes (#19)
+- A `keys.env` line that does not parse, or holds only the `=` padding of a
+  key pasted on its own, is named by its line and never quoted, and a name
+  with an empty value sets nothing and is never named, so a key pasted on
+  its own stays out of the terminal (#19)
+- A `keys.env` saved with a UTF-8 byte-order mark loads, and a missing keys
+  file named by `EMET_KEYS` says to unset it (#19)
+- A wav sink that cannot open its file raises that error alone, one whose
+  format `wave` refuses closes the file and raises its own error, and a sink
+  never stopped closes its file (#19)
+- A wav sink started a second time closes its first writer before it opens
+  the file again, so no tail of the first take follows the second (#19)
+- The speaker's `cancel()` drops the audio of a `play()` still opening the
+  device (#19)
+
+### Security
+- The `deepgram`, `anthropic` and `openai` extras require `certifi`
+  2026.10.18 or later (PYSEC-2026-4320, GHSA-6q48-6c7w-9gw2) (#19)
+
 ## [0.5.5] - 2026-11-26
 
 Replay a voice bank and run the body's checks over SSH.

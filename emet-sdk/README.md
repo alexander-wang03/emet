@@ -37,7 +37,8 @@ the self-model; the types it compiles into live here, so a soul's
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e ".[dev]"     # Windows: .venv\Scripts\pip
+source .venv/bin/activate   # Windows: source .venv/Scripts/activate
+pip install -e ".[dev]"
 ```
 
 ## Use

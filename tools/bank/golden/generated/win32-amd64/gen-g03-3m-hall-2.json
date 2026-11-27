@@ -1,0 +1,23 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g03-3m-hall-2",
+  "sha256": "9dba136ab24cda55769cb9135e5452e886f2a7466bd5c3678cdc34c733208617",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1237,
+    "wakes": 0,
+    "turns": 0,
+    "name_cut": null
+  },
+  "wakes": []
+}

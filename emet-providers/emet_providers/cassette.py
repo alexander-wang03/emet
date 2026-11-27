@@ -29,8 +29,24 @@ median 2.60 us a frame on the laptop and 2.56 us on the body, against
 **No key is ever kept.** A query parameter whose name contains `key`,
 `token`, `auth`, `secret` or `pass` is refused on load and on save, the rule
 `cut_deepgram.py` kept its URLs by (0.5.3) and the bank's checker applies.
-It refuses Deepgram's `keyterm` too, so a body that takes `keyterm` up
-changes this rule and the checker's together.
+One name is let through: `keyterm`, Deepgram's list of words to listen for,
+which the plugin sends from 0.5.6 (AS2). Its value is the list of terms in
+the order sent, since Deepgram takes one `keyterm` parameter a term; every
+other value is text. `tools/bank/manifest.py`'s cassette check holds a file
+to the same two rules.
+
+**The request key changed once, in 0.5.6.** From then the Deepgram plugin
+sends `mip_opt_out=true` with every request, and the terms of a body's
+`params.keyterms` as `keyterm`, so both are in the query a turn is keyed
+by. A turn recorded before that has no `mip_opt_out` in its request and
+answers no request the plugin makes now: it was asked another question.
+Such a file still loads, and a `Player` standing for a request that carries
+the opt-out sets its turns aside (`stale`), logs how many once, and a miss
+on their bytes says why (`Played.reason`), with the day the turn was
+recorded; the mock transcriber logs that reason as a warning with each such
+miss. It is never played back in place of today's answer. Keyterms
+change what Deepgram returns, so a turn recorded with one list never
+answers a request with another, or with none.
 
 Cassettes hold what the maintainer said, so they live in the bank
 (`<bank>/cassettes/`) and never in this repository.
@@ -51,6 +67,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -62,14 +79,20 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 __all__ = [
     "FORMAT",
     "MISS",
+    "KEYTERM",
+    "OPT_OUT",
     "CassetteError",
     "RunningHash",
     "TurnRecorder",
     "Player",
     "Played",
     "sha256_hex",
+    "is_credential",
     "normalise_request",
     "request_for",
+    "query_of_url",
+    "predates_opt_out",
+    "stale_reason",
     "check_turn",
     "load",
     "load_file",
@@ -79,11 +102,22 @@ __all__ = [
     "model_version",
 ]
 
+log = logging.getLogger("emet_providers.cassette")
+
 FORMAT = "emet-cassette/1"
 
 #: The error a missed turn's final carries. The runner reads it to build the
 #: paid list, so it is spelled once, here.
 MISS = "cassette miss"
+
+#: The one query parameter whose value is a list: the terms, in order.
+KEYTERM = "keyterm"
+
+#: The opt-out every Deepgram request carries from 0.5.6 on.
+OPT_OUT = "mip_opt_out"
+
+#: The release whose plugin put `mip_opt_out` in every request key.
+OPT_OUT_SINCE = "0.5.6"
 
 #: A name that could carry a credential, matched anywhere in it.
 _CREDENTIAL = re.compile(r"key|token|auth|secret|pass", re.I)
@@ -154,6 +188,22 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+def is_credential(name: Any) -> bool:
+    """Whether a query parameter's name could carry a credential. `keyterm`
+    holds "key" and is let through by name: it is the words a body asks the
+    transcriber to listen for."""
+    text = str(name)
+    return text != KEYTERM and bool(_CREDENTIAL.search(text))
+
+
+def _terms(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)) or not value or not all(isinstance(t, str) and t for t in value):
+        raise CassetteError(
+            f"the request's {KEYTERM} is the list of terms sent, in order, each non-empty text, not {value!r}"
+        )
+    return list(value)
+
+
 # ------------------------------------------------------------------ request
 
 
@@ -163,8 +213,10 @@ def normalise_request(request: Any) -> dict[str, Any]:
     It has exactly `provider`, `model`, `sample_rate` and `query`. Query
     values become strings as the plugin sends them, so a body's YAML may
     write `smart_format: false`, and the query's keys are sorted;
-    `sample_rate` may be written as a string. Raises `CassetteError` for a
-    missing or unknown field, or a query parameter named like a credential.
+    `sample_rate` may be written as a string. `keyterm` is the one value
+    that is a list, the terms in the order sent, and its order is kept.
+    Raises `CassetteError` for a missing or unknown field, a query parameter
+    named like a credential, or a `keyterm` that is not a list of terms.
     """
     if not isinstance(request, Mapping):
         raise CassetteError(f"a request is a mapping, not {type(request).__name__}")
@@ -181,13 +233,15 @@ def normalise_request(request: Any) -> dict[str, Any]:
     if not isinstance(query, Mapping):
         raise CassetteError("the request's query is a mapping")
     for key in query:
-        if _CREDENTIAL.search(str(key)):
+        if is_credential(key):
             raise CassetteError(f"the request's query names {str(key)!r}, which could carry a credential; a cassette never keeps one")
     return {
         "provider": provider,
         "model": model,
         "sample_rate": rate,
-        "query": {str(k): _text(query[k]) for k in sorted(query, key=str)},
+        "query": {
+            str(k): _terms(query[k]) if str(k) == KEYTERM else _text(query[k]) for k in sorted(query, key=str)
+        },
     }
 
 
@@ -197,12 +251,51 @@ def request_for(provider: str, query: Mapping[str, Any]) -> dict[str, Any]:
     `model` and `sample_rate` move out of the query into fields of their
     own; every other parameter the plugin sends stays, its fixed ones
     included, so two runs whose plugins sent different defaults never share
-    a turn. For Deepgram, `query` is `DeepgramTranscriber.query()`.
+    a turn. For Deepgram, `query` is `DeepgramTranscriber.query()`, whose
+    `keyterm`, when the body has keyterms, is the list of them.
     """
     rest = {str(k): v for k, v in query.items() if str(k) not in ("model", "sample_rate")}
     return normalise_request(
         {"provider": provider, "model": query.get("model"), "sample_rate": query.get("sample_rate"), "query": rest}
     )
+
+
+def query_of_url(url: str) -> dict[str, Any]:
+    """A URL's query in the shape `request_for` takes: every `keyterm` in
+    the order it came, as a list, and any other name once. A name other
+    than `keyterm` that comes twice is refused, since a mapping cannot say
+    which one the server read."""
+    out: dict[str, Any] = {}
+    for name, value in parse_qsl(urlsplit(str(url)).query, keep_blank_values=True):
+        if name == KEYTERM:
+            out.setdefault(KEYTERM, []).append(value)
+        elif name in out:
+            raise CassetteError(f"the URL names {name!r} twice; only {KEYTERM} repeats")
+        else:
+            out[name] = value
+    return out
+
+
+def predates_opt_out(request: Mapping[str, Any]) -> bool:
+    """Whether a Deepgram request was made before 0.5.6 put `mip_opt_out`
+    in every request: its query has none."""
+    return request.get("provider") == "deepgram" and OPT_OUT not in (request.get("query") or {})
+
+
+def stale_reason(turn: Mapping[str, Any]) -> str:
+    """Why a turn that predates the opt-out key answers no request now."""
+    return (
+        f"the cassette's turn for these bytes predates the opt-out key: it was recorded on "
+        f"{turn.get('recorded')} for a request without {OPT_OUT}, and from {OPT_OUT_SINCE} every "
+        f"Deepgram request carries {OPT_OUT}=true; tools/bank/paid_replay.py records it again"
+    )
+
+
+def _differs(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[str]:
+    """The fields and query names in which two normalised requests differ."""
+    out = [name for name in ("provider", "model", "sample_rate") if a[name] != b[name]]
+    names = sorted(set(a["query"]) | set(b["query"]))
+    return out + [f"query {n}" for n in names if a["query"].get(n) != b["query"].get(n)]
 
 
 # --------------------------------------------------------------------- turn
@@ -233,8 +326,8 @@ def check_turn(turn: Any) -> dict[str, Any]:
     _exact(turn, TURN_FIELDS, "the turn")
     request = turn["request"]
     if isinstance(request, Mapping) and isinstance(request.get("query"), Mapping):
-        if not all(isinstance(v, str) for v in request["query"].values()):
-            raise CassetteError("the request's query maps text to text in a file")
+        if not all(isinstance(v, str) for k, v in request["query"].items() if k != KEYTERM):
+            raise CassetteError(f"the request's query maps text to text in a file, and {KEYTERM} to a list of text")
     out: dict[str, Any] = {"request": normalise_request(request)}
     out["fed_sha256"] = _hex64(turn["fed_sha256"], "fed_sha256")
     out["fed_bytes"] = fed = _count(turn["fed_bytes"], "fed_bytes")
@@ -418,11 +511,17 @@ def save(path: Path | str, turns: Iterable[Mapping[str, Any]]) -> Path:
 
 @dataclass(frozen=True)
 class Played:
-    """How one utterance ended: the turn it matched, or None for a miss."""
+    """How one utterance ended: the turn it matched, or None for a miss.
+
+    `reason` says why a miss missed when a turn for the same bytes was set
+    aside: it predates the opt-out key, or it was recorded for another
+    request (another keyterm list, say). None for a hit, and for bytes no
+    turn holds."""
 
     turn: dict[str, Any] | None
     fed_sha256: str
     fed_bytes: int
+    reason: str | None = None
 
     @property
     def hit(self) -> bool:
@@ -440,14 +539,34 @@ class Player:
     partials while it stays in, so two recordings of the same bytes are
     never mixed. `finish()` matches the whole utterance, and prefers the turn
     whose partials were given.
+
+    `stale` holds the turns set aside because they predate the opt-out key
+    while `request` carries it; their number is logged once, here.
     """
 
     def __init__(self, turns: Iterable[Mapping[str, Any]], request: Mapping[str, Any] | None = None) -> None:
         wanted = normalise_request(request) if request is not None else None
         self.request = wanted
-        self.turns: list[dict[str, Any]] = [
-            t for t in (check_turn(t) for t in turns) if wanted is None or t["request"] == wanted
-        ]
+        every = [check_turn(t) for t in turns]
+        self.turns: list[dict[str, Any]] = [t for t in every if wanted is None or t["request"] == wanted]
+        #: Turns of another request, by their bytes, for a miss's reason.
+        self._others: dict[tuple[str, int], dict[str, Any]] = {}
+        self.stale: list[dict[str, Any]] = []
+        if wanted is not None:
+            opted_out = wanted["query"].get(OPT_OUT) == "true"
+            for t in every:
+                if t["request"] == wanted:
+                    continue
+                if opted_out and predates_opt_out(t["request"]):
+                    self.stale.append(t)
+                self._others.setdefault((t["fed_sha256"], t["fed_bytes"]), t)
+        if self.stale:
+            log.warning(
+                "cassette: %d of %d turn(s) predate the opt-out key (recorded without %s, before %s sent it "
+                "with every Deepgram request), so they answer no request now; tools/bank/paid_replay.py "
+                "records them again",
+                len(self.stale), len(every), OPT_OUT, OPT_OUT_SINCE,
+            )
         self._partials_at: dict[int, list[tuple[int, dict[str, Any]]]] = {}
         self._finals: dict[tuple[str, int], list[int]] = {}
         for i, turn in enumerate(self.turns):
@@ -501,16 +620,30 @@ class Player:
         else:
             pick = matches[0] if matches else None
         self.begin()
-        return Played(self.turns[pick] if pick is not None else None, digest, total)
+        if pick is not None:
+            return Played(self.turns[pick], digest, total)
+        return Played(None, digest, total, self._reason(digest, total))
+
+    def _reason(self, digest: str, total: int) -> str | None:
+        other = self._others.get((digest, total))
+        if other is None or self.request is None:
+            return None
+        if other in self.stale:
+            return stale_reason(other)
+        return (
+            f"the cassette's turn for these bytes was recorded on {other['recorded']} for another request, "
+            f"which differs in {', '.join(_differs(other['request'], self.request))}"
+        )
 
 
 # ------------------------------------------------------------ live capture
 
 
 def safe_url(url: str) -> str:
-    """The URL without any query parameter named like a credential."""
+    """The URL without any query parameter named like a credential.
+    `keyterm` is kept, every one in its place (`is_credential`)."""
     parts = urlsplit(str(url))
-    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _CREDENTIAL.search(k)]
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not is_credential(k)]
     return urlunsplit(parts._replace(query=urlencode(query)))
 
 

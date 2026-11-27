@@ -3,6 +3,7 @@
 
     python tools/bank/paid_replay.py MISSES --ledger BANK/ledger.json --cassette OUT.json
                                      --keys FILE --expect-spent N [--query KEY=VALUE ...]
+                                     [--keyterm TERM ...]
     python tools/bank/paid_replay.py MISSES --ledger BANK/ledger.json --cassette OUT.json --dry-run
     python tools/bank/paid_replay.py --seed-ledger OLD.json --ledger BANK/ledger.json
 
@@ -18,15 +19,23 @@ it is refusal.
 
 **Refused before anything is spent:** a miss list that is not one, or a
 turn whose bytes are not its sha256 or its length; a query key the plugin
-fixes (`encoding`, `sample_rate`, `channels`, `model`), one that sends the
-transcript elsewhere (`callback`, `callback_method`), or one named like a
-credential; a request URL, built offline by a plugin that is never
-started, that is not `wss://api.deepgram.com/v1/listen` with exactly the
-query expected; a ledger that is missing or malformed; `--expect-spent`
-that is not what the ledger holds; more audio than the month's replay
-minutes have left; and a keys file with no Deepgram key, or no
-`websockets`, either of which would stop the plugin after the entry was
-spent.
+fixes (`encoding`, `sample_rate`, `channels`, `model`, `mip_opt_out`), one
+that sends the transcript elsewhere (`callback`, `callback_method`),
+`keyterm` (each term is its own `--keyterm`), or one named like a
+credential; keyterms the plugin refuses (a comma, a weight, too many, a
+model other than Nova-3); a request URL, built offline by a plugin that is
+never started, that is not `wss://api.deepgram.com/v1/listen` with exactly
+the query expected, `mip_opt_out=true` and the keyterms in order included;
+a ledger that is missing or malformed; `--expect-spent` that is not what
+the ledger holds; more audio than the month's replay minutes have left;
+and a keys file with no Deepgram key, or no `websockets`, either of which
+would stop the plugin after the entry was spent.
+
+**The request.** The plugin's own: `mip_opt_out=true` on every
+connection, the preflight's included (the maintainer, 2026-11-24), and one
+`keyterm` a `--keyterm`, in order. Each turn written is keyed by that
+request (`emet_providers.cassette`), so it answers a replay standing for
+the same request and no other.
 
 **The allowance** (the maintainer, 2026-11-24, replacing D6's 20 entries of
 at most 130 s): 1,000 minutes of replay audio a month, counted from each
@@ -50,8 +59,16 @@ connection opened must use the offline URL, or the run says so.
 **Keys** come from the file `--keys` names, read by the engine's own
 loader, which prints names and never values; this script never opens it.
 
-`--dry-run` spends nothing and connects nowhere: it runs every check above,
-prints the URL and the entry a real run would write, and writes nothing.
+`--dry-run` spends nothing, writes nothing and connects nowhere. It makes
+the checks above that need neither keys nor a count; the keys file and
+`websockets` only when `--keys` is given (the file read into a mapping of
+its own, its names printed, so no key enters the process's environment),
+and `--expect-spent` only when it is given. It names what it left
+unchecked, so a dry run with both makes every check a real run makes
+before it spends. It prints for each recording the turns and the minutes a
+real run would send, the URL, the total against the month's allowance, an
+estimate of the cost at the price read on Deepgram's page, and the entry a
+real run would write.
 
 The standard library and the four packages only.
 """
@@ -103,6 +120,25 @@ MONTHLY = {"replay_minutes": 1000, "canaries": 1}
 REFUSED_QUERY = frozenset({"encoding", "sample_rate", "channels", "model", "callback", "callback_method"})
 _CREDENTIAL = re.compile(r"key|token|auth|secret|pass", re.I)
 _DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
+
+#: The one query name holding "key" that is no credential, as the cassette
+#: module lets it through (`emet_providers.cassette.is_credential`).
+KEYTERM = "keyterm"
+
+#: For the dry run's estimate only; the bill is Deepgram's. Pay as you go,
+#: a minute of streaming audio, deepgram.com/pricing read 2026-11-26: Nova-3
+#: monolingual $0.0048 under "Speech-to-text (Promo pricing)", shown as
+#: "was $0.0077"; the Keyterm Prompting add-on $0.0013 under "Speech-to-text
+#: add-ons". Whether Deepgram rounds a short connection up is unverified.
+PRICE_A_MINUTE = {"nova-3": 0.0048}
+KEYTERM_A_MINUTE = 0.0013
+PRICE_READ = "deepgram.com/pricing, pay as you go, read 2026-11-26"
+
+
+def is_credential(name: str) -> bool:
+    """Whether a query name could carry a credential; `keyterm` is let
+    through, as in `emet_providers.cassette.is_credential`."""
+    return name != KEYTERM and bool(_CREDENTIAL.search(name))
 
 
 class Refusal(RuntimeError):
@@ -259,42 +295,84 @@ def parse_query(pairs: list[str]) -> dict[str, str]:
         key, sep, value = pair.partition("=")
         if not sep or not key:
             raise Refusal(f"--query {pair!r} is not KEY=VALUE")
+        if key == "mip_opt_out":
+            raise Refusal("--query mip_opt_out: the plugin sends mip_opt_out=true with every request "
+                          "(the maintainer, 2026-11-24), and a run does not change it")
+        if key in (KEYTERM, "keyterms"):
+            raise Refusal(f"--query {key}: give each term a --keyterm of its own, which the plugin checks "
+                          f"and sends in order")
         if key in REFUSED_QUERY:
             raise Refusal(f"--query {key}: the plugin fixes it, or it sends the transcript elsewhere")
-        if _CREDENTIAL.search(key):
+        if is_credential(key):
             raise Refusal(f"--query {key}: named like a credential, which a ledger or cassette never keeps")
         query[key] = value
     return query
 
 
-def selection(query: dict[str, str], model: str) -> dict[str, Any]:
+def selection(query: dict[str, str], model: str, keyterms: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
     """What a body taking the stage over would give the plugin."""
     from emet_providers.deepgram import DEFAULT_KEY_ENV
 
-    return {"provider": "deepgram", "model": model, "key_env": DEFAULT_KEY_ENV, "params": {"query": dict(query)}}
+    params: dict[str, Any] = {"query": dict(query)}
+    if keyterms:
+        params["keyterms"] = list(keyterms)
+    return {"provider": "deepgram", "model": model, "key_env": DEFAULT_KEY_ENV, "params": params}
 
 
 def offline_request(chosen: dict[str, Any], rate: int) -> dict[str, Any]:
     """The URL the plugin builds, asked of a plugin constructed and never
-    started, so nothing connects; and the problems with it."""
-    from emet_providers.deepgram import DEFAULT_URL, FIXED_QUERY, DeepgramTranscriber
+    started, so nothing connects; and the problems with it. Every name but
+    `keyterm` comes once; `keyterm` comes once a term, in order."""
+    from emet_providers.deepgram import DEFAULT_URL, FIXED_QUERY, OPT_OUT, DeepgramTranscriber
     from emet_sdk.types import AudioFormat
 
     plugin = DeepgramTranscriber(chosen, AudioFormat(sample_rate=rate))
+    if plugin.refusal:
+        return {"url": None, "query": None, "problems": [f"the plugin refuses the request: {plugin.refusal}"]}
     url = plugin.request_url()
     parts = urlparse(url)
-    got = dict(parse_qsl(parts.query))
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    got = {k: v for k, v in pairs if k != KEYTERM}
+    got_terms = [v for k, v in pairs if k == KEYTERM]
     want = {**FIXED_QUERY, **chosen["params"]["query"], "sample_rate": str(rate), "model": chosen["model"]}
+    want_terms = list(chosen["params"].get("keyterms") or [])
     problems = []
     if f"{parts.scheme}://{parts.netloc}{parts.path}" != DEFAULT_URL:
         problems.append(f"the plugin would request {parts.scheme}://{parts.netloc}{parts.path}, not {DEFAULT_URL}")
     if (parts.hostname or "").lower() != "api.deepgram.com":
         problems.append(f"the host is {parts.hostname!r}, not api.deepgram.com")
+    if len(got) + len(got_terms) != len(pairs):
+        problems.append("the URL names a parameter other than keyterm twice")
+    if got.get(OPT_OUT) != "true":
+        problems.append("the URL does not carry mip_opt_out=true, which every Deepgram request does "
+                        "(the maintainer, 2026-11-24)")
     if got != want:
         problems.append(f"the plugin's query is {got}, not {want}")
-    if any(_CREDENTIAL.search(k) for k in got):
+    if got_terms != want_terms:
+        problems.append(f"the plugin's keyterms are {got_terms}, not {want_terms} in that order")
+    if any(is_credential(k) for k in got):
         problems.append("the URL has a parameter named like a credential")
     return {"url": url, "query": plugin.query(), "problems": problems}
+
+
+def by_recording(turns: list[dict[str, Any]], rate: int) -> list[dict[str, Any]]:
+    """Turns and seconds of audio a recording, in the miss list's order."""
+    out: dict[str, dict[str, Any]] = {}
+    for t in turns:
+        row = out.setdefault(str(t.get("recording")), {"recording": str(t.get("recording")), "turns": 0, "audio_s": 0.0})
+        row["turns"] += 1
+        row["audio_s"] += t["fed_bytes"] / 2 / rate
+    return list(out.values())
+
+
+def estimate(seconds: float, model: str, keyterms: bool) -> str:
+    """The dry run's cost line, at the price read on Deepgram's page."""
+    price = PRICE_A_MINUTE.get(model)
+    if price is None:
+        return f"no price read for {model}; nova-3 is ${PRICE_A_MINUTE['nova-3']} a minute ({PRICE_READ})"
+    rate = price + (KEYTERM_A_MINUTE if keyterms else 0.0)
+    words = f"${price} a minute for {model}" + (f" and ${KEYTERM_A_MINUTE} a minute for keyterms" if keyterms else "")
+    return f"about ${seconds / 60.0 * rate:.4f} at {words} ({PRICE_READ}); the bill is Deepgram's"
 
 
 # ================================================================ the network
@@ -529,22 +607,56 @@ def plan(args: argparse.Namespace, today: datetime.date) -> dict[str, Any]:
     turns = read_misses(args.misses)
     rate = int(args.rate)
     seconds = round(audio_seconds(turns, rate), 3)
-    chosen = selection(query, args.model)
+    chosen = selection(query, args.model, args.keyterm)
     offline = offline_request(chosen, rate)
     if offline["problems"]:
         raise Refusal("; ".join(offline["problems"]))
     data = ledger_read(args.ledger)
-    left = check_spend(data, today, None if args.dry_run else args.expect_spent, seconds)
+    left = check_spend(data, today, args.expect_spent, seconds)
     if Path(args.cassette).exists():
         raise Refusal(f"{args.cassette} exists; a paid replay writes a cassette of its own")
     entry = {
         "time": None, "kind": "replay", "tool": "tools/bank/paid_replay.py",
         "misses": str(Path(args.misses).resolve()), "misses_sha256": bank_files.sha256_file(args.misses),
         "turns": [f"{t['recording']}/{t['turn']}" for t in turns], "audio_s": round(seconds, 3),
-        "request_url": offline["url"], "stt_query": query, "engine": engine_tree(),
+        "request_url": offline["url"], "stt_query": query, "keyterms": list(args.keyterm), "engine": engine_tree(),
         "cassette": str(Path(args.cassette).resolve()), "paced": not args.unpaced,
     }
-    return {"turns": turns, "rate": rate, "chosen": chosen, "offline": offline, "left": left, "entry": entry}
+    return {"turns": turns, "rate": rate, "chosen": chosen, "offline": offline, "left": left, "entry": entry,
+            "recordings": by_recording(turns, rate)}
+
+
+def read_keys(path: Path, environ: Any) -> None:
+    """The keys file, read by the engine's loader into `environ`, its names
+    printed and never its values. A `Refusal` for a file that is missing or
+    does not parse, or holds no Deepgram key: the plugin would stop on that
+    after the entry was spent."""
+    sys.modules["sounddevice"] = None  # type: ignore[assignment]  # no microphone, no speaker
+    from emet_engine.keys import load_keys
+    from emet_providers.deepgram import DEFAULT_KEY_ENV
+
+    try:
+        loaded_keys = load_keys(str(path), environ=environ)
+    except FileNotFoundError:
+        raise Refusal(f"no keys file at {path}") from None
+    except ValueError as exc:
+        # The loader names the line by its number and never quotes it; the number is enough here.
+        line = re.match(r"^.*:(\d+): ", str(exc))
+        raise Refusal(f"line {line.group(1) if line else '?'} of the keys file does not parse") from None
+    for loaded in loaded_keys:
+        print(f"  keys {', '.join(loaded.names) or 'nothing'} from {loaded.path}")
+    if not environ.get(DEFAULT_KEY_ENV):
+        raise Refusal(f"{path} holds no {DEFAULT_KEY_ENV}")
+
+
+def websockets_connect() -> Callable:
+    """The WebSocket client's `connect`, or a `Refusal` when the library is
+    not installed: the plugin would stop on that after the entry was spent."""
+    try:
+        from websockets.asyncio.client import connect
+    except ImportError:
+        raise Refusal("the websockets library is not installed (emet-providers[deepgram])") from None
+    return connect
 
 
 def main(argv: list[str] | None = None, *, today: datetime.date | None = None) -> int:
@@ -557,10 +669,14 @@ def main(argv: list[str] | None = None, *, today: datetime.date | None = None) -
     ap.add_argument("--keys", type=Path, help="the keys file, read by the engine's loader; values never printed")
     ap.add_argument("--expect-spent", type=int, metavar="N", help="to spend: the entries the ledger holds now")
     ap.add_argument("--query", action="append", default=[], metavar="KEY=VALUE", help="a Deepgram query parameter")
+    ap.add_argument("--keyterm", action="append", default=[], metavar="TERM",
+                    help="a term for Deepgram to listen for, one a flag, sent in this order (a Nova-3 model only)")
     ap.add_argument("--model", default="nova-3")
     ap.add_argument("--rate", default="16000")
     ap.add_argument("--unpaced", action="store_true", help="send as fast as the plugin takes it")
-    ap.add_argument("--dry-run", action="store_true", help="every check, and nothing spent, written or connected")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="nothing spent, written or connected; every check a real run makes before it spends, "
+                         "the keys file and websockets only with --keys, the entry count only with --expect-spent")
     ap.add_argument("--seed-ledger", type=Path, metavar="OLD", help="start the bank's ledger from the 0.5.3 one")
     args = ap.parse_args(argv)
     today = today or datetime.date.today()
@@ -584,39 +700,39 @@ def main(argv: list[str] | None = None, *, today: datetime.date | None = None) -
           f"{left['left_min']:.1f} left")
     print(f"  request {p['offline']['url']}")
     if args.dry_run:
+        for row in p["recordings"]:
+            print(f"  {row['recording']}: {row['turns']} turn(s), {row['audio_s']:.2f} s, "
+                  f"{row['audio_s'] / 60.0:.2f} min")
+        minutes = p["entry"]["audio_s"] / 60.0
+        print(f"  total {len(p['turns'])} turn(s), {minutes:.2f} min against {left['left_min']:.1f} left "
+              f"in {left['month']}; {left['left_min'] - minutes:.1f} left after")
+        print(f"  estimate {estimate(p['entry']['audio_s'], args.model, bool(args.keyterm))}")
+        if args.keys is not None:
+            try:
+                # Into a mapping of its own: a dry run puts no key into this
+                # process's environment.
+                read_keys(args.keys, {})
+                websockets_connect()
+            except Refusal as exc:
+                print(f"paid_replay: refused, nothing spent: {exc}", file=sys.stderr)
+                return 2
+        unchecked = (["the keys file and websockets (give --keys)"] if args.keys is None else []) + (
+            ["the ledger's entry count (give --expect-spent N)"] if args.expect_spent is None else [])
+        if unchecked:
+            print(f"  not checked, which a real run checks before it spends: {'; '.join(unchecked)}")
         print("  dry run: nothing spent, written or connected. A real run writes this entry:")
         print("  " + json.dumps({**p["entry"], "time": "(when it runs)"}, ensure_ascii=False))
         return 0
 
-    sys.modules["sounddevice"] = None  # type: ignore[assignment]  # no microphone, no speaker
-    from emet_engine.keys import load_keys
-    from emet_providers.deepgram import DEFAULT_KEY_ENV
-
     for name in [n for n in os.environ if n.startswith("EMET_")]:
         os.environ.pop(name)
-    try:
-        loaded_keys = load_keys(str(args.keys))
-    except FileNotFoundError:
-        print(f"paid_replay: refused, nothing spent: no keys file at {args.keys}", file=sys.stderr)
-        return 2
-    except ValueError as exc:
-        # The loader's message quotes the line, and the line may hold a key.
-        line = re.match(r"^.*:(\d+): ", str(exc))
-        print(f"paid_replay: refused, nothing spent: line {line.group(1) if line else '?'} of the keys "
-              f"file does not parse", file=sys.stderr)
-        return 2
-    for loaded in loaded_keys:
-        print(f"  keys {', '.join(loaded.names) or 'nothing'} from {loaded.path}")
     # Everything the plugin's start() would refuse for, refused before the
     # entry is spent: an entry spent on a run that cannot connect buys nothing.
-    if not os.environ.get(DEFAULT_KEY_ENV):
-        print(f"paid_replay: refused, nothing spent: {args.keys} holds no {DEFAULT_KEY_ENV}", file=sys.stderr)
-        return 2
     try:
-        from websockets.asyncio.client import connect
-    except ImportError:
-        print("paid_replay: refused, nothing spent: the websockets library is not installed "
-              "(emet-providers[deepgram])", file=sys.stderr)
+        read_keys(args.keys, os.environ)
+        connect = websockets_connect()
+    except Refusal as exc:
+        print(f"paid_replay: refused, nothing spent: {exc}", file=sys.stderr)
         return 2
     guard = Guard()
     guard.install()

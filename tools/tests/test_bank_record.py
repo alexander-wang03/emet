@@ -829,6 +829,29 @@ def test_consent_is_checked_before_a_real_run(tmp_path):
     assert "not listed" in record.check_consent(plan, other)[0]
 
 
+def test_a_generated_voice_is_never_recorded(tmp_path):
+    """A sitting records a person. A plan that names a generated voice
+    (`g` and digits, FORMAT.md) is refused in words that say so, where the
+    loader used to call the id a name; and a plan built without the loader
+    is refused by the consent check, which used to raise KeyError on the
+    voice record a generated bank lists in place of a consent file."""
+    doc = minimal_plan(["a"])
+    doc["speaker"] = "g01"
+    with pytest.raises(record.PlanError, match="a generated voice is never recorded") as refused:
+        record.parse_plan(doc)
+    assert "never a name" not in str(refused.value)
+
+    bank = make_bank(tmp_path / "generated")
+    index = json.loads((bank / "bank.json").read_text(encoding="utf-8"))
+    index["speakers"] = {"g01": {"voice": "voices/g01.json"}}
+    (bank / "bank.json").write_text(json.dumps(index), encoding="utf-8")
+    plan = record.load_plan(TRIAL)
+    plan.speaker = "g01"
+    problems = record.check_consent(plan, bank)
+    assert len(problems) == 1 and "a generated voice is never recorded" in problems[0]
+    assert "consent file" not in problems[0]
+
+
 def test_a_manifest_left_open_is_closed_from_its_file(tmp_path):
     bank = make_bank(tmp_path)
 

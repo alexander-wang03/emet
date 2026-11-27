@@ -1,0 +1,38 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g03-3m-noise-4",
+  "sha256": "bb1440a2be56a160fc87f195b0e960ea768eadd63285c7af195c5a0b97439d00",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1287,
+    "wakes": 1,
+    "turns": 1,
+    "name_cut": "0 of 1"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g03-3m-noise-4/05",
+      "wake_end_sample": 586240,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "b828c0f37f0e86725a7402b5355832c62847ed34b63ef1240b2844a2defafc30",
+      "fed_sha256": "ff83ead626f8b2dcfd09328786736409286d846f00ae6a12ba32314ca0985c43",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "format": "emet-generated-sets/1",
+  "note": "One rule makes both sets (tools/bank/generate.py, plan). The lists give voices x conditions x parts recordings; part k holds every phrase whose number, counted through phrases.json from 0, is k modulo parts. A take's speaking rate is length_scales[(phrase + voice + condition) modulo their count], Piper's phoneme length, so above 1 is slower. full is every recording. small is one recording a condition: condition j takes part j modulo parts from voice j modulo the voices, so with as many parts as conditions it says every phrase once, and each of its recordings is one of full's, byte for byte. version is the bank's date and every manifest's recorded date, fixed here so a rebuild on another day writes the same files.",
+  "version": "2026-11-26",
+  "seed": 56,
+  "parts": 5,
+  "lead_s": 5.0,
+  "length_scales": [1.0, 0.9, 1.12],
+  "sentence_silence_s": 0.2,
+  "sets": {
+    "small": {"rule": "one-a-condition", "for": "every pull request"},
+    "full": {"rule": "every-cell", "for": "the weekly run"}
+  }
+}

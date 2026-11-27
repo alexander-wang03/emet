@@ -1,0 +1,175 @@
+{
+  "format": "emet-generated-voices/1",
+  "read": "2026-11-26",
+  "note": "Each voice's licence, dataset and training are its MODEL_CARD's own words, read on the date above at the revision below. A voice is here only when piper1-gpl's COMMERCIAL_USE.md lists it and its card's Training section names the base that list gives; a card whose Training section says it is fine-tuned from lessac or ryan, the two bases COMMERCIAL_USE.md excludes, is out, and lessac is the base that kept Amy out of the reference soul. terms, when a voice has it, is a sentence its dataset's own licence file adds to the licence, with where it was read and the date. check.card_problems holds a downloaded card to these words.",
+  "engine": {
+    "name": "piper-tts",
+    "version": "1.8.0",
+    "licence": "GPL-3.0-or-later",
+    "source": "https://github.com/OHF-Voice/piper1-gpl",
+    "runtime": "onnxruntime 1.31.1, MIT"
+  },
+  "list": {
+    "url": "https://github.com/OHF-Voice/piper1-gpl/blob/badc92002421986fcb0aa34e34fc4d5cc4e8c601/docs/COMMERCIAL_USE.md",
+    "commit": "badc92002421986fcb0aa34e34fc4d5cc4e8c601",
+    "committed": "2026-11-23",
+    "sha256": "c3e7bf3ce0d8251ff5f7cd5d92d5965adecc7441aab77c5d7e05f7bac364a095"
+  },
+  "repository": "https://huggingface.co/rhasspy/piper-voices",
+  "revision": "5ec43b186ef915a195d3ddbcfd9916e76c503c3f",
+  "voices": [
+    {
+      "id": "g01",
+      "name": "en_US-ljspeech-medium",
+      "describes": "a woman, United States English",
+      "files": {
+        "model": {
+          "name": "en_US-ljspeech-medium.onnx",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx",
+          "sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+          "bytes": 63531379
+        },
+        "config": {
+          "name": "en_US-ljspeech-medium.onnx.json",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json",
+          "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+          "bytes": 4972
+        },
+        "card": {
+          "name": "en_US-ljspeech-medium.MODEL_CARD",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/ljspeech/medium/MODEL_CARD",
+          "sha256": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d",
+          "bytes": 517
+        }
+      },
+      "dataset": "https://keithito.com/LJ-Speech-Dataset/",
+      "licence": "public domain",
+      "training": "See: https://brycebeattie.com/files/tts/ US English female voice. Single speaker. Trained from scratch for 1000 epochs on medium quality settings using the LJ Speech dataset. I reencoded the recordings to a bit rate of 22500 Hz so it would match other voices released for Piper TTS.",
+      "base": null,
+      "listed": "Voices trained from scratch: Public domain",
+      "credit": "The LJ Speech Dataset, Keith Ito and Linda Johnson, https://keithito.com/LJ-Speech-Dataset/, public domain. The voice was trained by Bryce Beattie, https://brycebeattie.com/files/tts/."
+    },
+    {
+      "id": "g02",
+      "name": "en_US-norman-medium",
+      "describes": "a man, United States English",
+      "files": {
+        "model": {
+          "name": "en_US-norman-medium.onnx",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/norman/medium/en_US-norman-medium.onnx",
+          "sha256": "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71",
+          "bytes": 63531379
+        },
+        "config": {
+          "name": "en_US-norman-medium.onnx.json",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/norman/medium/en_US-norman-medium.onnx.json",
+          "sha256": "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d",
+          "bytes": 4968
+        },
+        "card": {
+          "name": "en_US-norman-medium.MODEL_CARD",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/norman/medium/MODEL_CARD",
+          "sha256": "60eaf4d10009d1bd4a1aa555d337dae00f60421d72fee415b9139a021e7cb5d0",
+          "bytes": 528
+        }
+      },
+      "dataset": "https://librivox.org",
+      "licence": "public domain",
+      "training": "See: https://brycebeattie.com/files/tts/ US English male voice. Single Speaker. Trained from scratch on medium quality settings for 1200 epochs. I put together the dataset, which ended up with about 15.5 hours of recordings. All recordings came from LibriVox.org. I forgot to save the ckpt file on this one, sorry.",
+      "base": null,
+      "listed": "Voices trained from scratch: Public domain",
+      "credit": "Recordings from LibriVox, https://librivox.org, public domain. The voice was trained by Bryce Beattie, https://brycebeattie.com/files/tts/."
+    },
+    {
+      "id": "g03",
+      "name": "en_GB-alba-medium",
+      "describes": "a woman, Scottish English",
+      "files": {
+        "model": {
+          "name": "en_GB-alba-medium.onnx",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_GB/alba/medium/en_GB-alba-medium.onnx",
+          "sha256": "1f9da809b6da1ef4190bb5dd6cce4f4af803274539e9cf9e0693085150bac3d7",
+          "bytes": 63221984
+        },
+        "config": {
+          "name": "en_GB-alba-medium.onnx.json",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json",
+          "sha256": "ed4b1f015a8aae5eb26d4bdeed7b712c660f5698a0dd954aa6df9c8be60b900b",
+          "bytes": 6295
+        },
+        "card": {
+          "name": "en_GB-alba-medium.MODEL_CARD",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_GB/alba/medium/MODEL_CARD",
+          "sha256": "0190e1016a03c46c23f8e920f395a83fc82705ed1b49ba1ded185d7d8357dd6a",
+          "bytes": 501
+        }
+      },
+      "dataset": "https://datashare.ed.ac.uk/handle/10283/3270",
+      "licence": "https://creativecommons.org/licenses/by/4.0/",
+      "terms": {
+        "text": "Any use derogatory to the voice talent is prohibited.",
+        "url": "https://datashare.ed.ac.uk/bitstream/handle/10283/3270/license_text.txt",
+        "read": "2026-11-26"
+      },
+      "training": "Finetuned from the U.S. English hifi_tts_92 base model (medium quality; the voice of Cori Samuel, Hi-Fi TTS reader 92), with MRD and SDP. Default inference settings are noise_scale 0.5 and noise_w 0.333. Requires Piper 1.5 or higher.",
+      "base": "hifi_tts_92",
+      "listed": "Voices fine-tuned from hifi_tts_92: CC BY 4.0",
+      "credit": "Alba speech corpus, Cassia Valentini-Botinhao and Junichi Yamagishi, University of Edinburgh, 2019, https://doi.org/10.7488/ds/2506, CC BY 4.0. Fine-tuned from a base trained on the Hi-Fi Multi-Speaker English TTS Dataset (see the base's credit)."
+    },
+    {
+      "id": "g04",
+      "name": "en_US-joe-medium",
+      "describes": "a man, United States English",
+      "files": {
+        "model": {
+          "name": "en_US-joe-medium.onnx",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/joe/medium/en_US-joe-medium.onnx",
+          "sha256": "abf4b998e34045cbd00eaf050de2de620f81ded6eb8b85a24b022a1c2b3f08d2",
+          "bytes": 63221984
+        },
+        "config": {
+          "name": "en_US-joe-medium.onnx.json",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/joe/medium/en_US-joe-medium.onnx.json",
+          "sha256": "9b91a652090ffa8a49e36569afa9acc8ead2b3a22a950e8e6ca11914f3e85d56",
+          "bytes": 6284
+        },
+        "card": {
+          "name": "en_US-joe-medium.MODEL_CARD",
+          "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/joe/medium/MODEL_CARD",
+          "sha256": "4b319248135916e8f5433ce7a9fe5271026b05cb598bab05807b22cb17fd129b",
+          "bytes": 423
+        }
+      },
+      "dataset": "https://github.com/OHF-Voice/voice-datasets",
+      "licence": "CC0",
+      "training": "Finetuned from the rdh base model (medium quality; nl_BE, one Flemish speaker, CC0), with MRD and SDP. Default inference settings are noise_scale 0.5 and noise_w 0.333. Requires Piper 1.5 or higher.",
+      "base": "rdh",
+      "listed": "Voices fine-tuned from rdh: CC0",
+      "credit": "Recordings from https://github.com/OHF-Voice/voice-datasets, CC0. Fine-tuned from the rdh base (see the base's credit)."
+    }
+  ],
+  "bases": {
+    "hifi_tts_92": {
+      "name": "en_US-hifi_tts_92-medium",
+      "card": {
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/en/en_US/hifi_tts_92/medium/MODEL_CARD",
+        "sha256": "62cafa98605100626d876aadcfd3dfa961cac263fa338b1fe17fe0989545e700"
+      },
+      "dataset": "https://www.openslr.org/109/",
+      "licence": "CC BY 4.0 (Hi-Fi Multi-Speaker English TTS Dataset, NVIDIA Corporation)",
+      "training": "Trained from scratch (MRD and SDP). Base model for finetuning, replacing lessac. Cori Samuel speaks British English, but this base was trained with U.S. English (`en-us`) phonemes, so on its own it gives American phoneme symbols British vowels (BATH words such as \"after\" and \"ask\" with a back \"ah\"). Finetuning removes this: an en_US voice finetuned from it on 0.9 hours matched its speaker's American vowels. For a British voice of the same reader, see en_GB-cori. English diphthongs are merged into single ids (`--data.vowel_clusters '[[\"a\",\"ɪ\"],[\"a\",\"ʊ\"],[\"e\",\"ɪ\"],[\"o\",\"ʊ\"],[\"ɔ\",\"ɪ\"]]'`); finetunes must use the same clusters. Requires Piper 1.5 or higher.",
+      "credit": "Hi-Fi Multi-Speaker English TTS Dataset, Bakhturina, Lavrukhin, Ginsburg and Zhang, Interspeech 2021, https://arxiv.org/abs/2104.01497, https://www.openslr.org/109/, CC BY 4.0. Reader 92 is Cori Samuel, a volunteer reader for LibriVox."
+    },
+    "rdh": {
+      "name": "nl_BE-rdh-medium",
+      "card": {
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/5ec43b186ef915a195d3ddbcfd9916e76c503c3f/nl/nl_BE/rdh/medium/MODEL_CARD",
+        "sha256": "f1d4eccf1292d42057550d5261e4d39959c02a7c509d8516da9f2ffd661ab8d6"
+      },
+      "dataset": "https://github.com/r-dh/dutch-vl-tts",
+      "licence": "CC0 1.0 Universal",
+      "training": "Trained from scratch, with MRD and SDP. The audio was filtered first with a 70 Hz high-pass and a 50 Hz notch to remove rumble and mains hum. Default inference settings are noise_scale 0.5 and noise_w 0.333. Requires Piper 1.5 or higher.",
+      "credit": "dutch-vl-tts, https://github.com/r-dh/dutch-vl-tts, CC0 1.0 Universal."
+    }
+  }
+}

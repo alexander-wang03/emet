@@ -1,4 +1,4 @@
-"""The monthly canary, against fakes: no network, no key, no vendor.
+"""The monthly canary against fakes, with no network, no key and no vendor.
 
 The live tests are a function that says how they went, Deepgram is a
 stand-in that answers CloseStream the way the 2026-10-05 replays recorded
@@ -68,12 +68,14 @@ class Deepgram:
         self.version = version
         self.sha256 = sha256
         self.connections = 0
+        self.urls: list[str] = []
 
     async def connect(self, url, **kwargs):
         if self.ledger is not None:
             spent = json.loads(self.ledger.read_text(encoding="utf-8"))["spent"]
             assert spent[-1]["kind"] == "canary", "a connection opened before the ledger entry"
         self.connections += 1
+        self.urls.append(url)
         return _Socket(self)
 
 
@@ -312,6 +314,76 @@ def test_a_turn_the_plugin_would_not_ask_for_today_is_refused(bank, capsys):
     code, server, _ = run(bank, "--spend")
     assert code == 2 and "the plugin would ask for" in capsys.readouterr().out
     assert server.connections == 0
+
+
+def test_a_turn_from_before_the_opt_out_key_is_refused_with_its_date(bank, capsys):
+    """Bank v0's cassettes were recorded without mip_opt_out. The plugin
+    sends it with every request from 0.5.6, so a live replay of such a turn
+    would ask Deepgram another question: refused, named with its day, and
+    nothing spent."""
+    request = todays_request()
+    request["query"].pop("mip_opt_out")
+    cassette.save(bank.root / "cassette.json", [dict(bank.turn, request=request)])
+    before = bank.ledger.read_bytes()
+    code, server, _ = run(bank, "--spend")
+    out = capsys.readouterr().out
+    assert code == 2 and "recorded on 2026-10-05 for a request without mip_opt_out" in out
+    assert "Pick a turn recorded from 0.5.6 on with --turn" in out
+    assert "None of the 1 turn(s) here carries mip_opt_out" in out
+    assert server.connections == 0 and bank.ledger.read_bytes() == before
+
+
+def test_a_directory_of_old_and_new_cassettes_names_the_first_turn_with_the_opt_out(bank, capsys):
+    """The bank's directory holds bank v0's files, which sort ahead of the
+    reseed's, so turn 1 is an old one. Its refusal names the turn to pick,
+    and that turn passes every check that needs no money."""
+    request = todays_request()
+    request["query"].pop("mip_opt_out")
+    old = dict(bank.turn, request=request, recorded="2026-10-01", source="dg02 wakes[0]")
+    folder = bank.root / "cassettes"
+    folder.mkdir()
+    cassette.save(folder / "dg02.json", [old, old])
+    cassette.save(folder / "paid-2026-11-26.json", [bank.turn])
+    args = argv(bank)
+    args[args.index("--cassette") + 1] = str(folder)
+    before = bank.ledger.read_bytes()
+    assert canary.main(args, run_tests=LiveTests(bank.ledger), now=lambda: NOW) == 2
+    out = capsys.readouterr().out
+    assert "refused: the turn was recorded on 2026-10-01 for a request without mip_opt_out" in out
+    assert "Of the 3 turn(s) here, 1 carries mip_opt_out, the first --turn 3" in out
+    args[args.index("--turn") + 1] = "3"
+    assert canary.main(args, run_tests=LiveTests(bank.ledger), now=lambda: NOW) == 2
+    out = capsys.readouterr().out
+    assert "canary: turn 3 of" in out and "sha256 matches" in out
+    assert "refused: the canary spends money. Run it again with --spend" in out
+    assert bank.ledger.read_bytes() == before
+
+
+def test_a_turn_whose_keyterms_the_plugin_refuses_is_refused_cleanly(bank, capsys):
+    """A cassette takes any non-empty text as a keyterm, so a turn holding a
+    comma-joined one loads. The plugin refuses it at construction, and the
+    canary says so and exits 2, before the ledger, the keys or a
+    connection."""
+    request = todays_request()
+    request["query"]["keyterm"] = ["Emet,Emmett"]
+    cassette.save(bank.root / "cassette.json", [dict(bank.turn, request=request)])
+    before = bank.ledger.read_bytes()
+    code, server, tests = run(bank, "--spend")
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "refused: the plugin refuses the turn's request: params.keyterms entry 1, 'Emet,Emmett', holds a comma" in out
+    assert server.connections == 0 and tests.envs == [] and bank.ledger.read_bytes() == before
+
+
+def test_every_connection_carries_the_opt_out_and_the_turns_keyterms_in_order(bank, capsys):
+    request = cassette.request_for("deepgram", DeepgramTranscriber(
+        {"provider": "deepgram", "params": {"keyterms": ["Emet", "Hey Emet"]}}, AudioFormat()).query())
+    cassette.save(bank.root / "cassette.json", [dict(bank.turn, request=request)])
+    code, server, _ = run(bank, "--spend")
+    assert code == 0 and capsys.readouterr().out.rstrip().splitlines()[-1] == "fresh"
+    assert len(server.urls) == 2, "the preflight and the turn"
+    for url in server.urls:
+        assert "&mip_opt_out=true&" in url and url.endswith("&keyterm=Emet&keyterm=Hey+Emet")
 
 
 def test_no_deepgram_key_is_refused_before_the_ledger(bank, capsys, monkeypatch):
