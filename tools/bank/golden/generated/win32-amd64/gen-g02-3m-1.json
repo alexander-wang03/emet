@@ -1,0 +1,150 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g02-3m-1",
+  "sha256": "37788b05fd64bccad535eb89ac146a989c56cd4029c096e0ace7df8741ae6b73",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1712,
+    "wakes": 9,
+    "turns": 9,
+    "name_cut": "0 of 9"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g02-3m-1/01",
+      "wake_end_sample": 102400,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "1c15fe3e4abd580c9227e09871efdb371ecd7f4ca8dec9c8218b04661a5f4c96",
+      "fed_sha256": "8d1acdfa219d662b41b1512f9f4d1b0210dedbc8c31922af27fd51a6246b71be",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g02-3m-1/02",
+      "wake_end_sample": 202240,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "e459100770371b47dd42b9294239e9e42769606a20a3ec4be25fcab101912fa7",
+      "fed_sha256": "28459068ebc42a3d5fc0d714cbc20c4a7a504df389d2ee9f89b669a39bee06dd",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g02-3m-1/03",
+      "wake_end_sample": 326400,
+      "lag_ms": 170.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 170.0,
+      "cut_short": false,
+      "handover_sha256": "e2f3f85fa2a7fb8515658a6a07f9286b82a2c4a3fb14c70bbb42faee4ab57845",
+      "fed_sha256": "9f01dbe7a651fefe717ab0215235f9ea423134e421f72ee73b375c1a213c8a83",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g02-3m-1/05",
+      "wake_end_sample": 552960,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "367d8338c8f91052c95aeedcb7e99f4eba6322222dd58abb95d13409935d796c",
+      "fed_sha256": "4157e9ea0eaa46a7dd2bc484da896ea18b15d641c8703d7755e4cd10cee2d388",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "gen-g02-3m-1/07",
+      "wake_end_sample": 743680,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "256d613f233220393712efff8ecc0489bf87de6c59fbc5b771060ab0c1a42f9d",
+      "fed_sha256": "4248553bb5e934449412d5cdc193b01ac63a09453dc3ae7a9e9c8244452eda3d",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "gen-g02-3m-1/08",
+      "wake_end_sample": 837120,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "d1a1be0dfd7f231693f3ebe509f76ea322efbb6ef6287dc084dee1a505893229",
+      "fed_sha256": "71f7cde993f4911a02d852ea30f8557a28a603db2ab31eaaebb80b190751a83a",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "gen-g02-3m-1/10",
+      "wake_end_sample": 1034240,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "285d86e0fbc484a939283f9f9d2868e4158687113c4b100521c15a201bbdf074",
+      "fed_sha256": "5f2ba4f6fc03520430d08c5b9c95a4ada5356a3d7c0d37579c6b07f6e7e3c53c",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "gen-g02-3m-1/11",
+      "wake_end_sample": 1130240,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "e7405faf87d608efdb454696be873dbbf6dcee15175c975a8ed9b809980a5669",
+      "fed_sha256": "fc787e2517b19d4f032c59020f27d28d807ae945c99b88a4081acf1ca4865936",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 9,
+      "take": "gen-g02-3m-1/13",
+      "wake_end_sample": 1932800,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "beb1dbd8b5aa13d67b9fe185f648b8d2a2e13b5e26347afd5ff95ef27c176401",
+      "fed_sha256": "7f3237c85c6661adc4a0ed6f57f2c7befda8d10ae0e37fe0a95e8c82e4da52c1",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

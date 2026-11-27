@@ -1,0 +1,10 @@
+$ emet-listen body.yaml soul.yaml --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+piper: <tmp>/voices/en_US-ljspeech-medium.onnx has no config beside it: expected <tmp>/voices/en_US-ljspeech-medium.onnx.json. Piper voices are two files, and the download command fetches both:
+    python -m piper.download_voices en_US-ljspeech-medium --data-dir <tmp>/voices
+
+the voice 'piper' cannot start, so the robot would answer and never be heard. It will not run. <tmp>/voices/en_US-ljspeech-medium.onnx has no config beside it: expected <tmp>/voices/en_US-ljspeech-medium.onnx.json. Piper voices are two files, and the download command fetches both:
+    python -m piper.download_voices en_US-ljspeech-medium --data-dir <tmp>/voices

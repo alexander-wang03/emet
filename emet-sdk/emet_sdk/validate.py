@@ -31,10 +31,12 @@ different class of problem from one missing an LED driver.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
+from urllib.parse import quote
 
 import json
 
@@ -760,14 +762,21 @@ _SOUL_TABLES = ("people", "memories", "episodes")
 
 
 def validate_memory_db(path: str | Path) -> ValidationReport:
-    """Assert that a bundle's memory database is not namespaced by body."""
+    """Validate that no soul table of a bundle's memory database is scoped to a body.
+
+    A file that is no SQLite database raises `sqlite3.DatabaseError`, which
+    `emet validate` reports as a `read_error`. The connection is closed on
+    every path: a connection's own `with` block only ends a transaction.
+    """
     report = ValidationReport()
     db = Path(path)
     if not db.exists():
         report.error("missing_file", f"no memory database at {db}")
         return report
 
-    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+    # Quoted, or a `#`, `?` or `%` cuts or rewrites the URI; `file://` stops POSIX `//x/` naming host x.
+    uri = ("file://" if str(db)[:1] == "/" else "file:") + quote(str(db), safe="/\\:") + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True)) as conn:
         tables = [
             row[0]
             for row in conn.execute(

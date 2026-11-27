@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml --transcribe
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+deepgram: the websockets library is not installed. It is an optional dependency: install `emet-providers[deepgram]`.
+
+the speech recognition provider 'deepgram' cannot start, so what people say would go nowhere. It will not run half-deaf. the websockets library is not installed. It is an optional dependency: install `emet-providers[deepgram]`.

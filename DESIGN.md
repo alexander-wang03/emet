@@ -1,8 +1,9 @@
-# Emet: Design Specification
+# The design of Emet
 
-**Emet** (Hebrew אמת, "truth") is a companion-robot engine. It installs onto a
-Raspberry Pi, discovers whatever body it finds itself in, and runs a portable
-personality: a *soul*: on top of it.
+**Emet** (Hebrew אמת, "truth") is an open engine that gives any small companion
+robot a portable soul. It installs onto a Raspberry Pi, reads the body its
+manifest describes, and runs the *soul*, a personality with its memories and
+its voice, on top of it.
 
 In the Golem tradition the word *emet* inscribed on the clay is what brings it
 to life; erasing the first letter leaves *met* ("death") and it returns to
@@ -49,9 +50,10 @@ bug.** It means the shape was settled early on purpose.
 
 ### 1.1 The product
 
-**Emet.** The engine. The open-source runtime that does personality synthesis,
-memory, arbitration, and safety. When someone says "I run Emet on my robot,"
-this is what they mean.
+**Emet.** An open engine that gives any small companion robot a portable
+soul. It is the open-source runtime that does personality synthesis,
+memory, arbitration, and safety. When someone says "I run Emet on my
+robot," this is what they mean.
 
 ### 1.2 The soul line (default personality presets)
 

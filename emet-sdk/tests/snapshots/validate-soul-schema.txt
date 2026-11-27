@@ -1,0 +1,8 @@
+$ emet validate soul.yaml
+exit 1
+--- stdout
+FAIL soul.yaml  (soul)
+     x schema /identity
+       'line' is a required property
+--- stderr
+(nothing)

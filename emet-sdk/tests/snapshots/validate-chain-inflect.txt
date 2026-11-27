@@ -1,0 +1,8 @@
+$ emet validate chains.yaml
+exit 1
+--- stdout
+FAIL chains.yaml  (chains)
+     x empty_inflect /express.curiosity/rungs/1/params/filler
+       chain 'express.curiosity' inflects with [], and the voice needs words to say for it. Give `params.filler` a word or a list of words, each one a word: a number or a null in the list would be read out as written.
+--- stderr
+(nothing)

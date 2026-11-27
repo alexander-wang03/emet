@@ -1,0 +1,38 @@
+# The tools that only CI and a tools venv run. None of them is imported by
+# the four packages, and none belongs in the repo's venv or on the body.
+#
+# This file names each tool and its exact version. requirements.txt beside
+# it is the lock made from it: every tool and everything a tool needs, each
+# with its hashes, which is what CI installs. README.md beside this file
+# says how to make the lock again and how to read the licences.
+#
+# A version enters this file once it is seven days old, the wait
+# .github/dependabot.yml also keeps. PyYAML, at the end, is the one
+# exception, and its block says why.
+
+# Checks the workflows and the Dependabot file (the layering job).
+zizmor==1.32.0
+
+# Mutation testing of the functions a pull request changes (the mutmut job,
+# advisory).
+mutmut==3.8.1
+
+# Dead code, for tools/check_health.py (the layering job).
+vulture==2.16
+
+# Coverage of the four suites, printed with no floor (the test job on 3.13).
+coverage==7.17.3
+
+# Known advisories in what the packages resolve to (the weekly run).
+pip-audit==2.10.1
+
+# Builds the four wheels (the wheel job).
+build==1.6.1
+
+# Not a tool. PyYAML reaches the lock through mutmut's libcst on Python 3.11
+# and 3.12, and a job may install this lock beside the four packages. This
+# line keeps the lock's PyYAML at or above emet-sdk's floor, so neither
+# install undoes the other. On 3.13 libcst takes pyyaml-ft and the lock holds
+# no PyYAML. 6.0.4 is let through at six days, since emet-sdk's floor is
+# 6.0.4; README.md says how.
+pyyaml>=6.0.4 ; python_full_version < '3.13'

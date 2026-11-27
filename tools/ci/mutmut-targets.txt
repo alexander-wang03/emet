@@ -1,0 +1,117 @@
+# The functions a merge gate or a floor rests on, for mutation testing (RP7).
+#
+# One `path::function` a line, a method as `path::Class.method`, the path
+# from the repository's root; a line starting with `#` is a comment, and
+# each group has one above it. `python tools/ci.py mutmut` reads this file
+# and mutates the listed functions a branch changes, on Linux, in WSL or on
+# the Pi (mutmut needs os.fork). A mutant no test kills is a change to a gate
+# that no test would have caught.
+#
+# A helper a listed function calls in its own file is listed too, since a
+# branch that changes only the helper would otherwise mutate nothing, or is
+# named with its reason in LEFT_OUT in tools/tests/test_mutmut_targets.py,
+# which holds the list to that rule.
+#
+# mutmut 3.8.1 makes no mutant of a decorated function (a property, a
+# function under lru_cache), except one whose one decorator is staticmethod
+# or classmethod (its mutation/file_mutation.py, read 2026-11-26), so no
+# other decorated function is listed: a gate that rests on a property is
+# tested directly. tools/tests/test_mutmut_targets.py holds every line to a
+# function that exists and that mutmut mutates.
+
+# The audit and planning/check_plan.py refuse a plan on what the plan-file parser reads.
+tools/plan_file.py::read_plan
+tools/plan_file.py::stage
+tools/plan_file.py::is_date
+tools/plan_file.py::tables_under
+tools/plan_file.py::table_under
+tools/plan_file.py::_shown
+tools/plan_file.py::_cells
+tools/plan_file.py::_table
+tools/plan_file.py::_heading_lines
+tools/plan_file.py::_heading_line
+tools/plan_file.py::_line_run_on
+tools/plan_file.py::_Problems.__init__
+tools/plan_file.py::_Problems.at
+tools/plan_file.py::_Problems.missing
+tools/plan_file.py::_Problems.in_file_order
+tools/plan_file.py::_first_word
+tools/plan_file.py::_first_line
+tools/plan_file.py::_kind
+tools/plan_file.py::_header
+tools/plan_file.py::_stages
+tools/plan_file.py::_ledger
+tools/plan_file.py::_flag_gaps
+tools/plan_file.py::_second_headings
+
+# The audit's evidence rules, E1 to E5 of the 0.5.6 contract's section 4, each refuse a merge.
+tools/release_audit.py::Audit.evidence
+tools/release_audit.py::Audit.plan
+tools/release_audit.py::Audit.stages
+tools/release_audit.py::Audit.ledger
+tools/release_audit.py::Audit.named
+tools/release_audit.py::Audit.body_run
+tools/release_audit.py::Audit.failed_since
+tools/release_audit.py::Audit.short_of_passing
+tools/release_audit.py::Audit.off_the_head
+tools/release_audit.py::Audit.flags
+tools/release_audit.py::Audit.flag_run
+tools/release_audit.py::Audit.outside_release
+tools/release_audit.py::Audit.problem
+tools/release_audit.py::Audit.default_folder
+tools/release_audit.py::BodyRun.step
+tools/release_audit.py::BodyRun.text
+tools/release_audit.py::read_runs
+tools/release_audit.py::body_flag_rows
+tools/release_audit.py::_flag_key
+tools/release_audit.py::_numbers
+tools/release_audit.py::_paged
+
+# The release check's floors hold one version in four packages and every first-party requirement at it.
+tools/release_check.py::declared_versions
+tools/release_check.py::check_versions_agree
+tools/release_check.py::check_floors
+tools/release_check.py::canonical
+tools/release_check.py::toml_code
+tools/release_check.py::line_of
+tools/release_check.py::problem
+
+# The resolver chooses which rung of each chain a body performs, and says why a part goes unused.
+emet-sdk/emet_sdk/resolve.py::resolve
+emet-sdk/emet_sdk/resolve.py::_why_not
+emet-sdk/emet_sdk/resolve.py::unused_reasons
+emet-sdk/emet_sdk/resolve.py::descriptors_from_manifest
+emet-sdk/emet_sdk/resolve.py::load_chain_files
+emet-sdk/emet_sdk/resolve.py::load_chains
+emet-sdk/emet_sdk/resolve.py::shipped_chain_files
+emet-sdk/emet_sdk/resolve.py::BindingTable.unused_capabilities
+emet-sdk/emet_sdk/chains.py::ActuatorSelector.__post_init__
+emet-sdk/emet_sdk/chains.py::ActuatorSelector.matches
+emet-sdk/emet_sdk/chains.py::Chain.__post_init__
+emet-sdk/emet_sdk/chains.py::parse_chain_set
+emet-sdk/emet_sdk/chains.py::_parse_selector
+emet-sdk/emet_sdk/chains.py::_parse_rung
+
+# The validator decides what `emet validate` refuses in a manifest, a soul, a pairing, a chain file, a motion pack or a memory database.
+emet-sdk/emet_sdk/validate.py::validate_manifest
+emet-sdk/emet_sdk/validate.py::validate_soul
+emet-sdk/emet_sdk/validate.py::validate_pairing
+emet-sdk/emet_sdk/validate.py::validate_chain_document
+emet-sdk/emet_sdk/validate.py::validate_motion_pack
+emet-sdk/emet_sdk/validate.py::validate_memory_db
+emet-sdk/emet_sdk/validate.py::_check_schema
+emet-sdk/emet_sdk/validate.py::_check_wake_engine
+emet-sdk/emet_sdk/validate.py::_check_audio_source
+emet-sdk/emet_sdk/validate.py::_check_audio_sink
+emet-sdk/emet_sdk/validate.py::_check_model_providers
+emet-sdk/emet_sdk/validate.py::_check_unique_ids
+emet-sdk/emet_sdk/validate.py::_check_joints
+emet-sdk/emet_sdk/validate.py::_check_single_drive
+emet-sdk/emet_sdk/validate.py::_check_mount_references
+emet-sdk/emet_sdk/validate.py::_check_plugins
+emet-sdk/emet_sdk/validate.py::_fillers_are_words
+emet-sdk/emet_sdk/validate.py::ValidationReport.add
+emet-sdk/emet_sdk/validate.py::ValidationReport.error
+emet-sdk/emet_sdk/validate.py::ValidationReport.warn
+emet-sdk/emet_sdk/validate.py::ValidationReport.raise_for_status
+emet-sdk/emet_sdk/validate.py::ValidationError.__init__

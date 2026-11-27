@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --echo --speak
+exit 2
+--- stdout
+(nothing)
+--- stderr
+usage: (argparse's usage lines, which differ by Python version)
+emet-listen: error: argument --speak: not allowed with argument --echo

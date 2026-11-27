@@ -1,0 +1,8 @@
+$ emet validate chains.yaml
+exit 1
+--- stdout
+FAIL chains.yaml  (chains)
+     x unknown_explain_topic /express.curiosity/rungs/1/params/topic
+       chain 'express.curiosity' explains 'weather', which the engine has no words for. Topics: cannot_move, cannot_turn, error, offline.
+--- stderr
+(nothing)

@@ -11,10 +11,10 @@ including a conversational control clip. "hey barnaby" fired straight from the
 bundled dictionary with no lexicon entry at all, which is the whole argument
 for a phonetic engine.
 
-Committing that audio would put binary blobs of uncertain provenance in the
-repository to support a handful of assertions, so the gap is recorded here
-rather than papered over. It closes when 0.3 has a real capture path and a
-recorded fixture worth keeping.
+That audio had no provenance worth committing, so the gap stayed open here
+until 0.5.6, when `test_wake_clip.py` began feeding a generated clip of known
+origin, recorded in `clips/hey-emet-ljspeech.json`, to this plugin at the
+shipped threshold (decision D8).
 """
 
 from __future__ import annotations

@@ -1,0 +1,10 @@
+$ emet-listen body.yaml soul.yaml
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+could not read body.yaml: while parsing a flow sequence
+  in "body.yaml", line 2, column 7
+expected ',' or ']', but got '<stream end>'
+  in "body.yaml", line 3, column 1

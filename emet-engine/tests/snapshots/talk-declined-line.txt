@@ -1,0 +1,39 @@
+$ emet-talk body.yaml soul.yaml
+exit 0
+--- stdout
+emet-talk: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+Emet is listening for 'hey emet'
+  wake     mock on wav, 16000 Hz
+  words    mock
+  answers  mock
+  voice    mock (16000 Hz)
+  patience 900 ms
+  body     a speakerphone on a desk (probe)
+  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+             voice  utter        speak
+             voice  inflect      express.affection express.amusement
+                                 express.boredom express.concern
+                                 express.confusion express.curiosity
+                                 express.delight express.surprise
+                                 express.thinking
+             voice  tone         signal.booting signal.listening signal.muted
+             voice  explain      move.approach move.retreat move.turn_to
+                                 signal.error signal.offline
+             voice  backchannel  acknowledge
+             voice  silence      attend.bearing attend.none attend.person
+                                 attend.speaker idle.doze idle.fidget
+                                 idle.look_around idle.settle move.stop
+                                 move.wander signal.speaking signal.thinking
+  state    <tmp>/user-state/probe.json, nothing carried in or out: a recording is not this body's room
+  self     12 sentence(s) about its body, 8 of them what it cannot do; tags offered: 9
+  (ctrl-c to stop)
+
+  (heard 'hey emet')
+  you:  hello there
+  emet: 
+  (the provider declined)
+  emet: I would rather not answer that.
+
+source ended. 1 exchange(s).
+--- stderr
+(nothing)

@@ -1,0 +1,8 @@
+$ emet validate chains.yaml
+exit 1
+--- stdout
+FAIL chains.yaml  (chains)
+     x unknown_voice_action /express.curiosity/rungs/1/action
+       chain 'express.curiosity' ends in the voice action 'sing', which no engine performs. Voice actions: backchannel, explain, inflect, silence, tone, utter.
+--- stderr
+(nothing)

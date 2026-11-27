@@ -132,10 +132,57 @@ def test_the_request_is_the_documented_one(monkeypatch):
         "encoding": "linear16",
         "container": "none",
         "sample_rate": str(DEFAULT_SAMPLE_RATE),
+        "mip_opt_out": "true",
     }
     assert request.headers["authorization"] == f"Token {KEY}"
     assert request.headers["content-type"] == "application/json"
     assert fake.bodies == ["Hello there."]
+
+
+def test_every_request_carries_mip_opt_out_the_preflight_included(monkeypatch):
+    """The maintainer, 2026-11-24: mip_opt_out=true with every Deepgram
+    request. The preflight's six characters, and each sentence."""
+    fake = FakeSpeak()
+    tts = started(fake, monkeypatch)
+    run(collect(tts.speak("First.")))
+    run(collect(tts.speak("Second.")))
+    assert fake.bodies == [PREFLIGHT_TEXT, "First.", "Second."]
+    for request in fake.requests:
+        assert request.url.params.get_list("mip_opt_out") == ["true"]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"query": {"mip_opt_out": True}}, {"query": {"mip_opt_out": "true"}}, {"mip_opt_out": True}],
+)
+def test_a_body_may_say_the_opt_out_is_true_which_changes_nothing(params):
+    tts = make(FakeSpeak(), **params)
+    assert tts.refusal is None
+    assert tts.query() == make(FakeSpeak()).query()
+
+
+@pytest.mark.parametrize(
+    "params, where",
+    [
+        ({"query": {"mip_opt_out": False}}, "params.query.mip_opt_out is False"),
+        ({"query": {"mip_opt_out": "no"}}, "params.query.mip_opt_out is 'no'"),
+        ({"mip_opt_out": False}, "params.mip_opt_out is False"),
+    ],
+)
+def test_a_body_cannot_turn_the_opt_out_off_and_nothing_is_sent(monkeypatch, params, where):
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    fake = FakeSpeak()
+    tts = make(fake, **params)
+    assert tts.refusal is not None and tts.refusal.startswith(where)
+    assert "a body cannot turn it off" in tts.refusal
+    assert "keeps it out of Deepgram's Model Improvement Program" in tts.refusal and "maintainer" not in tts.refusal
+    with pytest.raises(PluginError, match="cannot turn it off"):
+        tts.query()
+    run(tts.start())
+    assert not tts.describe().healthy
+    assert tts.health().detail == tts.refusal
+    assert fake.requests == [], "not even the preflight"
+    assert tts._key is None, "the key is not read for it either"
 
 
 def test_the_souls_voice_and_the_bodys_rate_are_sent_and_reported(monkeypatch):
@@ -348,3 +395,4 @@ def test_the_module_names_its_verification_and_prices():
     assert "2026-09-15" in doc
     assert "$0.030" in doc and "2000 characters" in doc
     assert "/v2/speak" in doc, "Flux TTS is named as the protocol this file does not speak"
+    assert "mip_opt_out=true" in doc and "read 2026-11-26" in doc

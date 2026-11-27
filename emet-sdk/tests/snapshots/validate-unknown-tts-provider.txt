@@ -1,0 +1,8 @@
+$ emet validate unknown-tts-provider.yaml
+exit 1
+--- stdout
+FAIL unknown-tts-provider.yaml  (manifest)
+     x missing_plugin /models/tts/provider
+       no speech synthesis provider provides 'gramophone'. Installed: deepgram, mock, piper. `models.tts.provider` is an open enum: this value is legal, the plugin simply is not installed. Omit it to let the soul's `models.tts` choose.
+--- stderr
+(nothing)

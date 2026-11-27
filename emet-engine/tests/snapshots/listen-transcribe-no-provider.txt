@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --transcribe
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+speech recognition was asked for and no provider is configured. Name one under `models.stt.provider` in the soul, or take it over with `models.stt.provider` in the body. Installed: deepgram, mock.

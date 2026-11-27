@@ -76,9 +76,9 @@ line starts with `name cut`.
 Keys are read from a file rather than exported in every shell: put
 `NAME=value` lines in `~/.config/emet/keys.env` (or `/etc/emet/keys.env` for
 an installed robot, or a file named with `--keys`), `chmod 600` it, and
-`emet-listen` loads them before any provider starts. An exported variable
-always wins over the file. The header prints which names were loaded and from
-where; values are never printed.
+`emet-listen` loads them before any provider starts. A variable exported
+with a value always wins over the file. The header prints which names were
+loaded and from where; values are never printed.
 
 `--reply` goes one step further and implies `--transcribe`: what was said
 goes to the language model the soul names under `models.chat`, with the
@@ -97,7 +97,7 @@ voice produces it. The reference soul names `piper`, the local voice, which need
 `emet-providers[piper]` and a voice model downloaded once:
 
 ```sh
-pip install -e "emet-providers[piper]"
+pip install -e "../emet-providers[piper]"
 python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
 ```
 
@@ -115,7 +115,7 @@ Before anything boots, both commands print which tree is running, as one
 line in a fixed shape for a script to read:
 
 ```
-emet-listen: emet-sdk 0.5.5, emet-hal 0.5.5, emet-providers 0.5.5, emet-engine 0.5.5; revision eb5574854148, working tree differs
+emet-listen: emet-sdk 0.5.6, emet-hal 0.5.6, emet-providers 0.5.6, emet-engine 0.5.6; revision 2cc6acb984d6, working tree differs
 ```
 
 Each version is what that package's installed metadata says, so a package

@@ -183,6 +183,11 @@ RECORDER = ("arecord", "-D", "{device}", "-f", "S16_LE", "-r", str(RATE), "-c", 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 #: A speaker is an id and never a name (FORMAT.md).
 SPEAKER_RE = re.compile(r"^s[0-9]{2}$")
+#: A generated voice's id (FORMAT.md, "A generated bank"). A sitting records
+#: a person, so a plan that names one is refused in words that say so.
+GENERATED_RE = re.compile(r"^g[0-9]{2,}$")
+GENERATED_REFUSAL = ("a generated voice: tools/bank/generate.py builds its audio, and a generated voice is "
+                     "never recorded")
 
 #: The line above each prompt, by the take's kind.
 INSTRUCTIONS = {
@@ -301,7 +306,9 @@ def parse_plan(doc: dict, path: Path | None = None) -> Plan:
     if not ID_RE.match(str(pid)):
         problems.append(f"plan id {pid!r} is not lowercase letters, digits and hyphens")
     speaker = doc.get("speaker", "")
-    if not SPEAKER_RE.match(str(speaker)):
+    if GENERATED_RE.match(str(speaker)):
+        problems.append(f"speaker {speaker!r} is {GENERATED_REFUSAL}")
+    elif not SPEAKER_RE.match(str(speaker)):
         problems.append(f"speaker {speaker!r} is not an id like s01: a speaker is an id and never a name")
     device = doc.get("device", DEFAULT_DEVICE)
     lead = float(doc.get("lead_s", MIN_LEAD_S))
@@ -898,6 +905,7 @@ def manifest_head(f: PlanFile, plan: Plan, device: str, level: str | None,
         "speaker": plan.speaker, "noise": w.get("noise"),
         "kind": f.kind,
         "lead_s": _num(f.lead_s), "prompt_every_s": _num(f.every_s),
+        # manifest.plan_of reads the plan back from this text, and replay.py takes a plan as one sitting.
         "made_with": f"tools/bank/record.py, plan {plan.id}" + (
             "; says again " + ", ".join(sorted({str(e.retake_of) for e in f.entries})) if f.entries else "") + (
             f"; again for {f.replaces}" if f.replaces else ""),
@@ -1314,6 +1322,9 @@ def check_consent(plan: Plan, bank: Path) -> list[str]:
     sp = doc["speakers"].get(plan.speaker)
     if not sp:
         return [f"{index}: speaker {plan.speaker} is not listed; nothing of theirs is recorded without consent"]
+    if GENERATED_RE.match(plan.speaker) or "consent" not in sp:
+        # bank.json gives a generated voice a voice record where a person has a consent file.
+        return [f"{index}: speaker {plan.speaker} is {GENERATED_REFUSAL}"]
     consent = bank / sp["consent"]
     if not consent.is_file() or not consent.read_text(encoding="utf-8").strip():
         return [f"speaker {plan.speaker}'s consent file {consent} is missing or empty"]

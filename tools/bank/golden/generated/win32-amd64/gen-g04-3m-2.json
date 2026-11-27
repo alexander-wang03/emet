@@ -1,0 +1,136 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g04-3m-2",
+  "sha256": "030d42f5242145df42a6593de264c941b1a864f89ccca1ed33b94192a4c5d74c",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1237,
+    "wakes": 8,
+    "turns": 8,
+    "name_cut": "1 of 8"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g04-3m-2/01",
+      "wake_end_sample": 107520,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "0c9a4aa0fcbdde31c59e02bb30cf0053ba89fcb8423f68911eb83e53df3dfda6",
+      "fed_sha256": "0864e130c07fd62d356df7497d1fe68655c0c90268ac525a8ac648423833deaa",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g04-3m-2/04",
+      "wake_end_sample": 455680,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "695309e526b2c222cc63c6204e89445a7428237cc743a38222543e9e5a12c1aa",
+      "fed_sha256": "90fcdeab807654f842356492f68748d9d0d19f508215981252d23ddcd3325b8f",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g04-3m-2/05",
+      "wake_end_sample": 552960,
+      "lag_ms": 210.0,
+      "name_ms": 170.0,
+      "level_ms": 170.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "508360ac4f3f4e541a69aa63e4167d51c0529a21acd2305e6c61746ce2392435",
+      "fed_sha256": "cf2c77124daebd84c6850ae5568407fa05e2ac7f635e71ef468baaeb7003e67e",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g04-3m-2/06",
+      "wake_end_sample": 651520,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "5e1d4cc1ebff0d5ece5c1c1ba3f0b991b0a9dd477341e0e86d82942dd1d6a0bc",
+      "fed_sha256": "6195889c75c58757d048a55197c004837660a07951caf3208ec2217ac6003b89",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "gen-g04-3m-2/07",
+      "wake_end_sample": 747520,
+      "lag_ms": 180.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "c461fd74260f57d94e6b8f554170350edafd739142947e3f8d5f118123508bdb",
+      "fed_sha256": "728983cd18b6300700ead43ccbbb086c4fa7f77c293a1569873d2880addeff84",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "gen-g04-3m-2/08",
+      "wake_end_sample": 842240,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "9a4cb5e932d0b347221b1e67b3733879bc673c983e60d7ee5c8693ec85fcd0b7",
+      "fed_sha256": "a930dfee433acc3330c6148e289bb8b4d9e8ffd44f37593f4be4b87886265664",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "gen-g04-3m-2/09",
+      "wake_end_sample": 942080,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "2d2afcff72f3c9026fef33b7de129433c2022d6048484eaef83174da742c3806",
+      "fed_sha256": "4dc36c83d523b09efa80fa88dfae8b90ccc389a08cd9e7e959588903e4943973",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "gen-g04-3m-2/11",
+      "wake_end_sample": 1131520,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "e82907ab389ca8488d4d99c07faeab2b1603a66614ae791435efa135d89bf16a",
+      "fed_sha256": "86ec3aa0370c19cf60850efbf1e2b0eb50e2a83f38352d62f6776d402f8ae775",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

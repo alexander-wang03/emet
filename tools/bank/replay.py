@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Replay the voice bank through emet-listen and compare with the goldens.
 
-    python tools/bank/replay.py BANK [--search DIR ...] [--only ID ...]
-                                [--update] [--start-mean carried|pi-manifest|default]
+    python tools/bank/replay.py BANK [--search DIR ...] [--by-hash] [--only ID ...]
+                                [--update] [--golden DIR] [--platform NAME]
+                                [--start-mean carried|pi-manifest|default]
                                 [--cassette PATH [--cassette-request JSON]]
                                 [--misses FILE] [--report FILE] [--work DIR --keep]
 
@@ -33,7 +34,22 @@ one line printed for each wake that changed, and the exit code is 1 on any
 difference or problem. A golden is compared only under the conditions it
 was made under (threshold, start mean, cassette); other conditions are
 refused, never compared. Timings are never golden: they depend on the
-machine and its load.
+machine and its load. A generated bank's goldens are in
+`tools/bank/golden/generated/<platform>/`, named by `--golden
+tools/bank/golden/generated`; a generated bank given bank v0's folder, or a
+recorded bank given the generated one, is refused before anything is
+replayed.
+
+**A sitting still being recorded.** A recording with no golden for the
+platform fails the compare, as `NO GOLDEN`. One case is named and held to
+nothing: a recording made under a plan (`made_with` reads
+`tools/bank/record.py, plan ID`) when no recording of that plan has a
+golden on any platform, which is a sitting whose goldens are still to be
+written. It is replayed all the same, printed as `UNRELEASED` with its
+counts, and listed in the total line and under `unreleased` in the report.
+A recording that names no plan, and one whose plan has a golden anywhere,
+keeps `NO GOLDEN`. A compare that held no recording to a golden checked
+nothing, and exits 1.
 
 **Guards**, from releases/v0.5.3/harness/cut_harness.py: `sounddevice`
 cannot be imported in the replay's process, so no microphone or speaker
@@ -60,10 +76,14 @@ directory of them (FORMAT.md), and the request the run stands for: the
 one `--cassette-request` names, or else the one the shipped Deepgram
 plugin makes. Only turns recorded under that request answer, so a turn
 recorded with another query (`smart_format=true` in 0.5.3's replays) never
-passes for today's. A turn that misses is listed, never failed;
-`--misses FILE` writes the list as JSON with each missed turn's bytes
-beside it, for `paid_replay.py`. The bytes are the speaker's voice, so the
-file belongs in the bank, never in the repository.
+passes for today's. Nor does a turn recorded before 0.5.6 put `mip_opt_out`
+in every Deepgram request, so a recording's line counts the misses whose
+bytes such a turn holds, with the days those turns were recorded; the
+run's `stderr.txt`, kept with `--keep`, gives each miss's own day. A turn
+that misses is listed, never failed; `--misses FILE` writes the list as
+JSON with each missed turn's bytes beside it, for `paid_replay.py`, which
+records them again. The bytes are the speaker's voice, so the file belongs
+in the bank, never in the repository.
 
 The standard library and the four packages only. Nothing is written into
 the bank. The work directory holds the turns' bytes and is deleted at the
@@ -532,6 +552,17 @@ def platform_name() -> str:
     return f"{sys.platform}-{_platform.machine().lower()}"
 
 
+def released_plans(plans: dict[str, str | None], golden: Path) -> set[str]:
+    """The plans with a golden for any of their recordings, on any platform.
+
+    `plans` maps every recording the bank lists to its plan, or to None. A
+    plan in this set has been released with goldens, so each of its
+    recordings is held to one. Any platform counts: goldens written on the
+    laptop alone must fail the body until the body's are written too."""
+    with_golden = {path.stem for path in golden.glob("*/*.json")} if golden.is_dir() else set()
+    return {plan for rid, plan in plans.items() if plan is not None and rid in with_golden}
+
+
 # ================================================================== the run
 
 
@@ -596,6 +627,33 @@ def shipped_request(rate: int) -> dict[str, Any]:
     return cassette.request_for("deepgram", plugin.query())
 
 
+def predating(path: str, request: dict[str, Any]) -> dict[tuple[str, int], set[str]]:
+    """The cassette's turns that predate the opt-out key while `request`
+    carries it, as the days they were recorded, by the bytes each holds.
+    They are `cassette.Player`'s `stale` turns, so the rule is the mock's
+    own, and the Player logs their number once, here as in the run."""
+    from emet_providers import cassette
+
+    days: dict[tuple[str, int], set[str]] = {}
+    for turn in cassette.Player(cassette.load(path), request).stale:
+        days.setdefault((turn["fed_sha256"], turn["fed_bytes"]), set()).add(turn["recorded"])
+    return days
+
+
+def predating_note(missed: list[dict], days: dict[tuple[str, int], set[str]]) -> str:
+    """The recording line's clause for its misses whose bytes a turn from
+    before the opt-out key holds: how many, and the days those turns were
+    recorded. Empty when there are none, so a miss that no turn holds, or
+    one held only by a turn of another request, is never put down to the key."""
+    found = [days[key] for m in missed if (key := (m["fed_sha256"], m["bytes"])) in days]
+    if not found:
+        return ""
+    when = sorted(set().union(*found))
+    span = f"on {when[0]}" if len(when) == 1 else f"from {when[0]} to {when[-1]}"
+    return (f"; the cassette's turns for {len(found)} of them predate the opt-out key, recorded {span}, "
+            "and answer no request that carries it")
+
+
 def write_misses(path: Path, misses: list[dict]) -> None:
     """The paid list: each missed turn's facts, and its bytes beside the list."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -605,6 +663,29 @@ def write_misses(path: Path, misses: list[dict]) -> None:
         (path.parent / raw_name).write_bytes(m.pop("raw"))
         out.append({**m, "raw": raw_name})
     path.write_text(json.dumps({"format": "emet-misses/1", "turns": out}, indent=1) + "\n", encoding="utf-8")
+
+
+#: Where a generated bank's goldens live, beside bank v0's (FORMAT.md).
+GENERATED_GOLDEN = GOLDEN / "generated"
+_GENERATED_SPEAKER = re.compile(r"^g\d{2,}$")
+
+
+def golden_mismatch(bank: dict, golden: Path) -> str | None:
+    """Why `golden` is the wrong folder for this bank, or None. A generated
+    bank (its speakers `g` ids, check.py's rule) is held in GENERATED_GOLDEN
+    and a recorded one in GOLDEN, so a replay against the other folder,
+    which would print NO GOLDEN for every recording or write a generated
+    bank's goldens among bank v0's, is refused first. Any other folder,
+    such as a scratch one CI writes into, is the caller's to name."""
+    generated = any(_GENERATED_SPEAKER.match(str(sid)) for sid in bank.get("speakers") or {})
+    where = Path(golden).resolve()
+    if generated and where == GOLDEN.resolve():
+        return (f"a generated bank's goldens are in {GENERATED_GOLDEN.relative_to(HERE.parent.parent).as_posix()}; "
+                f"give --golden {GENERATED_GOLDEN.relative_to(HERE.parent.parent).as_posix()}")
+    if not generated and where == GENERATED_GOLDEN.resolve():
+        return (f"{GENERATED_GOLDEN.relative_to(HERE.parent.parent).as_posix()} holds the generated bank's goldens, "
+                "and this bank is a recorded one: leave --golden out")
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -640,10 +721,18 @@ def main(argv: list[str] | None = None) -> int:
     root = args.bank.resolve()
     try:
         bank = bank_files.read(root / "bank.json", "bank")
-        ids = [bank_files.read(root / rel, "manifest")["id"] for rel in bank["files"]]
+        plans = {doc["id"]: bank_files.plan_of(doc)
+                 for doc in (bank_files.read(root / rel, "manifest") for rel in bank["files"])}
     except bank_files.BankError as exc:
         print(f"replay: {exc}", file=sys.stderr)
         return 1
+    ids = list(plans)
+    mismatch = golden_mismatch(bank, args.golden)
+    if mismatch:
+        print(f"replay: {mismatch}", file=sys.stderr)
+        return 1
+    # Read before anything is written, so --update sees the plans as they were.
+    released = released_plans(plans, args.golden)
     unknown = [i for i in args.only if i not in ids]
     if unknown:
         print(f"replay: no recording in the bank is called {', '.join(unknown)}; it holds {', '.join(ids)}",
@@ -655,6 +744,10 @@ def main(argv: list[str] | None = None) -> int:
     report: dict[str, Any] = {"platform": args.platform, "conditions": conditions, "cassette": args.cassette,
                               "recordings": {}}
     misses: list[dict] = []
+    held: list[str] = []        # compared with their golden
+    unreleased: list[str] = []  # named and held to nothing: their plan has no golden anywhere
+    new_plans: set[str] = set()
+    stale_days: dict[str, dict[tuple[str, int], set[str]]] = {}  # predating(), by the request
     try:
         for rel in bank["files"]:
             doc = bank_files.read(root / rel, "manifest")
@@ -675,7 +768,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{doc['id']}: PROBLEM {exc}")
                 problems += 1
                 continue
-            for m in record.pop("misses"):
+            missed = record.pop("misses")
+            for m in missed:
                 wake = record["wakes"][m["turn"] - 1]
                 misses.append({"recording": doc["id"], "recording_sha256": doc["sha256"], "turn": m["turn"],
                                "take": wake["take"], "fed_sha256": m["fed_sha256"], "fed_bytes": m["bytes"],
@@ -690,6 +784,12 @@ def main(argv: list[str] | None = None) -> int:
             hits = sum(1 for w in record["wakes"] if w["cassette"] == "hit")
             if args.cassette:
                 summary += f", cassette {hits} hit and {sum(1 for w in record['wakes'] if w['cassette'] == 'miss')} miss"
+                if missed:
+                    # The child loaded this cassette, or its run would have stopped above.
+                    key = json.dumps(wanted, sort_keys=True)
+                    if key not in stale_days:
+                        stale_days[key] = predating(args.cassette, wanted)
+                    summary += predating_note(missed, stale_days[key])
             old = None
             if path.is_file():
                 try:
@@ -704,8 +804,18 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{doc['id']}: wrote {path.name}, {summary}")
                 for line in diff:
                     print(f"  changed: {line}")
+                plan = plans[doc["id"]]
+                if plan is not None and plan not in released and plan not in new_plans:
+                    new_plans.add(plan)
+                    print(f"  plan {plan} had no golden until now: from here each of its recordings "
+                          "is held to one, on every platform")
                 continue
             if old is None:
+                plan = plans[doc["id"]]
+                if plan is not None and plan not in released:
+                    unreleased.append(doc["id"])
+                    print(f"{doc['id']}: UNRELEASED, plan {plan} has no golden on any platform; {summary}")
+                    continue
                 print(f"{doc['id']}: NO GOLDEN for {args.platform}; {summary}")
                 changed += 1
                 continue
@@ -718,6 +828,7 @@ def main(argv: list[str] | None = None) -> int:
                 # A cassette run is held to the golden's audio; its finals are reported.
                 new = {**new, "wakes": [{**w, "final": o.get("final"), "cassette": o.get("cassette")}
                                         for w, o in zip(new["wakes"], old["wakes"])] + new["wakes"][len(old["wakes"]):]}
+            held.append(doc["id"])
             diff = compare(old, new)
             if diff:
                 changed += 1
@@ -737,14 +848,23 @@ def main(argv: list[str] | None = None) -> int:
     else:
         for m in misses:
             m.pop("raw", None)
+    report["held"], report["unreleased"] = held, unreleased
     if args.report:
         report["misses"] = misses if not args.misses else len(misses)
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     replayed = len(report["recordings"])
-    print(f"total: {replayed} replayed on {args.platform} from the {args.start_mean} mean, "
-          f"{changed} changed or without a golden, {problems} problem(s)")
-    return 1 if problems or (changed and not args.update) else 0
+    total = f"total: {replayed} replayed on {args.platform} from the {args.start_mean} mean, "
+    if args.update:
+        print(total + f"{problems} problem(s)")
+        return 1 if problems else 0
+    if not held:
+        print("replay: no recording was held to a golden, so this run checked nothing")
+    total += f"{len(held)} held to a golden, {changed} changed or without a golden, {problems} problem(s)"
+    if unreleased:
+        total += f"; {len(unreleased)} unreleased and held to nothing: {', '.join(unreleased)}"
+    print(total)
+    return 1 if problems or changed or not held else 0
 
 
 if __name__ == "__main__":

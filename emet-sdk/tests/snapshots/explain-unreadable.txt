@@ -1,0 +1,11 @@
+$ emet explain broken.yaml
+exit 1
+--- stdout
+FAIL broken.yaml  (unreadable)
+     x read_error
+       ParserError: while parsing a flow sequence
+         in "broken.yaml", line 2, column 7
+       expected ',' or ']', but got '<stream end>'
+         in "broken.yaml", line 3, column 1
+--- stderr
+(nothing)

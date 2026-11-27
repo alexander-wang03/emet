@@ -1,0 +1,136 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g04-3m-3",
+  "sha256": "8cff6d5e0e6dec35d02d28304b045255efb7c9e73771c468724796cf90c98e7c",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1262,
+    "wakes": 8,
+    "turns": 8,
+    "name_cut": "0 of 8"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g04-3m-3/01",
+      "wake_end_sample": 107520,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "2931554176aaf5c9cdefcda851640fc769d1b8b8d25b674adb68416b03e57e15",
+      "fed_sha256": "ca9ef57ba6ab3fcb41dcd36b68ecf02894fb17be3da5da27f216489d1864e915",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g04-3m-3/03",
+      "wake_end_sample": 330240,
+      "lag_ms": 190.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 190.0,
+      "cut_short": false,
+      "handover_sha256": "9fdd8512f464ffc3e71119ce09c779fdd0efb2f3b952bf5b472b915f187d3595",
+      "fed_sha256": "b1be4f8badf7573b6c535d354b7c59d0d46b0bf44163bbb340c4fd2c2926b789",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g04-3m-3/04",
+      "wake_end_sample": 459520,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "bb00e7df0069288ea2a2bd35c365e6c942a3a39447e8da08d03cc8e2eae9458a",
+      "fed_sha256": "ca41e6a24182e4ca3523a375acc54a0a193b51e658cda55ab4fcc478d4152410",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g04-3m-3/05",
+      "wake_end_sample": 551680,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "287fb80d85b733fd3622f485d2aeeb5bc744203ddd7573dbeb1c3eb25cce077d",
+      "fed_sha256": "59418adb42ab0ed79528d8d5e883d3d5758ff1668ca8758e0e5145598a318031",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "gen-g04-3m-3/08",
+      "wake_end_sample": 846080,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "07a6469a32a8f9f4a190c146ccc0e60edc66f97cad779bf0dbaac50f7b79495e",
+      "fed_sha256": "8a67510acec6f6eabf284b35739d3558d505df293d9eea772d2c14d8f9315cbb",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "gen-g04-3m-3/09",
+      "wake_end_sample": 939520,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "b2ac968ac62de593265d2eab14fe84486c33884672d5e901032966c8da671446",
+      "fed_sha256": "ab3cb8eb39d6abc9576af4eb4ff0ee000cc8c9dbe8bd57c94c474b586a5b1823",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "gen-g04-3m-3/10",
+      "wake_end_sample": 1034240,
+      "lag_ms": 180.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "59b3fdd84790fcb44cf797c4a1eb0a53eea5fd5456b546c3e1f8efd5f34c34a4",
+      "fed_sha256": "7e90fe459d64b2439d29d4a09690e8b58358aaaafdc4a18b723ed66273f51919",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 8,
+      "take": "gen-g04-3m-3/11",
+      "wake_end_sample": 1128960,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "8576e22d92b4a415858f4f98dbdd2545c5f4f585077b91a3bfa0dc8bf8a390b1",
+      "fed_sha256": "0f31efaa492212609609af605fd10456908b08bc3ee90e53a84eed69a79aa7e3",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

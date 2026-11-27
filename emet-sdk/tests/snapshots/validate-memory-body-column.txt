@@ -1,0 +1,8 @@
+$ emet validate memory.db
+exit 1
+--- stdout
+FAIL memory.db  (memory)
+     x memory_body_column memories.body_id
+       table 'memories' has column 'body_id', which appears to scope memory to a body. Memories belong to the soul and must travel with the bundle; body-local state lives in /etc/emet/state/<body.id>.json.
+--- stderr
+(nothing)

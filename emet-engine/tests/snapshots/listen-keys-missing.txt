@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --keys absent.env
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+no keys file at absent.env. Create it with one NAME=value a line, or drop --keys to use the default places.

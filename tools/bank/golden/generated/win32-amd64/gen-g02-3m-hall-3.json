@@ -1,0 +1,52 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g02-3m-hall-3",
+  "sha256": "ffed81141be093dd664eaae4166462da2fbb17dcfe811552c43e1b6b88f71b0e",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1262,
+    "wakes": 2,
+    "turns": 2,
+    "name_cut": "0 of 2"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g02-3m-hall-3/08",
+      "wake_end_sample": 835840,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "516ce17a87b6d32f271038fe6f285d8db7ee22bacde66543bae45e47253926e7",
+      "fed_sha256": "bbf9d42c5bec57aab48faf6f71bf4bc7ca53d8a470afce5d64e7d7a01e38cd56",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g02-3m-hall-3/10",
+      "wake_end_sample": 1030400,
+      "lag_ms": 180.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 180.0,
+      "cut_short": false,
+      "handover_sha256": "534a40f8cc17667c72975805a4511d8d09c96e7146135f3fdb8e370efc7296be",
+      "fed_sha256": "e6cd55f79897a6e85fdd2114d7a8ea8b4e577dec0923ef5f6649ef41d567fe72",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

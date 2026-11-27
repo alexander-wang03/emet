@@ -845,7 +845,7 @@ class ListenSession:
                 f"{self.stt_descriptor.sample_rate} Hz and the wake engine fixed "
                 f"{self.format.sample_rate} Hz. One microphone feeds both, so they "
                 f"have to agree; a transcriber hearing speech at the wrong speed "
-                f"does not fail, it produces nonsense. It will not start."
+                f"raises no error and produces nonsense. It will not start."
             )
 
     async def _start_llm(self) -> None:

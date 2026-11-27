@@ -41,7 +41,10 @@ Params, all optional:
                     and on `finish()` the recorded final when every byte of
                     the utterance matches a turn. Anything else is a miss: an
                     empty final whose `error` reads "cassette miss", never an
-                    exception. A cassette that cannot be read leaves `start()`
+                    exception. A miss on bytes that a turn recorded for
+                    another request holds logs a warning saying why, with
+                    the day that turn was recorded (`cassette.Played`'s
+                    `reason`). A cassette that cannot be read leaves `start()`
                     unhealthy with the reason, as `fail_on_start` does. It
                     replaces reading the audio, so it excludes `transcript`.
     cassette_request
@@ -331,6 +334,11 @@ class MockTranscriber(TranscriberPlugin):
             played = self._player.finish()
             if played.turn is None:
                 outcome = "miss"
+                if played.reason:
+                    # Why a turn for these bytes was set aside, with the day
+                    # it was recorded, on the run's stderr (replay.py saves
+                    # it as the run's stderr.txt).
+                    log.warning("mock stt: %s: %s", _cassette.MISS, played.reason)
                 final = Transcript(text="", final=True, confidence=1.0, error=_cassette.MISS)
             else:
                 outcome = "hit"

@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml --reply
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+openai: the httpx library is not installed. It is an optional dependency: install `emet-providers[openai]`.
+
+the language model 'openai' cannot start, so the robot would hear questions it can never answer. It will not run. the httpx library is not installed. It is an optional dependency: install `emet-providers[openai]`.

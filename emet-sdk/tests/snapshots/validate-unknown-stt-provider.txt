@@ -1,0 +1,8 @@
+$ emet validate unknown-stt-provider.yaml
+exit 1
+--- stdout
+FAIL unknown-stt-provider.yaml  (manifest)
+     x missing_plugin /models/stt/provider
+       no speech recognition provider provides 'carrier_pigeon'. Installed: deepgram, mock. `models.stt.provider` is an open enum: this value is legal, the plugin simply is not installed. Omit it to let the soul's `models.stt` choose.
+--- stderr
+(nothing)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn the Deepgram replays already paid for into cassettes, for nothing.
 
-    python tools/bank/seed_cassettes.py BANK RUN --out CASSETTE [--regenerated DIR] [--provisional]
+    python tools/bank/seed_cassettes.py BANK RUN --out CASSETTE [--regenerated DIR] [--provisional] [--dry-run]
 
 RUN is one paid replay's folder in releases/v0.5.3/harness/runs/ (`dg02_*` to
 `dg10_*`): its deepgram.json holds, per turn, the sha256 and length of the
@@ -38,6 +38,25 @@ and the turns' bytes as the mock writes them, and `wakes.json`,
 A paid turn is matched to a regenerated one by its wake's frame end in the
 recording, and says why when it is not kept.
 
+**The request key.** Each turn is keyed by the request the paid run made,
+read from its URL with `cassette.query_of_url`, every `keyterm` in order.
+The runs of 0.5.3 asked without `mip_opt_out`, so every turn this tool
+writes from them predates the opt-out key of 0.5.6: it answers a replay
+that stands for that old request, or one that names no request (as this
+tool's own second pass does, so every provisional turn is a candidate),
+and no request the plugin makes now (`emet_providers.cassette`). The tool
+says so, with the seconds of audio a reseed of those turns would send, and
+`tools/bank/paid_replay.py` is what records them again under today's
+request. This tool sends nothing to anyone and writes no ledger line, so
+it has no allowance to reckon and prints no total against one.
+
+`--dry-run` judges every turn as a real run does and writes nothing to
+`--out`: it prints each turn kept or why not, the request the turns are
+keyed by, and, for turns that predate the opt-out key, the minutes of audio
+a reseed would send. Without `--regenerated` the second pass still needs
+the provisional cassette, so a dry run writes it, with both passes' files,
+into the work folder, which is removed afterwards unless `--work` names it.
+
 The standard library and the four packages only. The cassette holds what
 the maintainer said, so it goes in the bank, never in the repository.
 """
@@ -52,7 +71,6 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlparse
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -73,6 +91,8 @@ def rel(path: Path) -> str:
 
 def paid_turns(run: Path) -> list[dict[str, Any]]:
     """Each turn of a paid run, with what a cassette needs from it."""
+    from emet_providers import cassette
+
     dg = json.loads((run / "deepgram.json").read_text(encoding="utf-8"))
     record = json.loads((run / "record.json").read_text(encoding="utf-8"))
     entry = (dg.get("ledger") or {}).get("entry_number")
@@ -83,7 +103,10 @@ def paid_turns(run: Path) -> list[dict[str, Any]]:
         if wake.get("turn_index") != i:
             raise SystemExit(f"seed: {run.name}: record.json's wake {i + 1} is not turn {i + 1}")
         conn = by_wake.get(turn["wake"]) or {}
-        query = dict(parse_qsl(urlparse(conn.get("url") or "").query))
+        try:
+            query = cassette.query_of_url(conn.get("url") or "")
+        except cassette.CassetteError as exc:
+            raise SystemExit(f"seed: {run.name}: turn {i + 1}'s URL: {exc}") from None
         frame = turn["bytes_fed"] // turn["frames_fed"] if turn["frames_fed"] else 0
         out.append({
             "index": i, "wake": turn["wake"], "wake_end_sample": wake["wake_end_sample"],
@@ -130,6 +153,24 @@ def judge(paid: dict[str, Any], regenerated: dict[int, bytes]) -> tuple[bytes | 
     return None, "the same length and handover, other bytes after it"
 
 
+def key_lines(turns: list[dict[str, Any]], rate: int) -> list[str]:
+    """What the turns are keyed by, and how many predate the opt-out key,
+    with the audio a reseed of them would send."""
+    from emet_providers import cassette
+
+    lines = []
+    for request in sorted({json.dumps(t["request"], sort_keys=True) for t in turns}):
+        lines.append(f"  keyed by {request}")
+    stale = [t for t in turns if cassette.predates_opt_out(t["request"])]
+    if stale:
+        seconds = sum(t["fed_bytes"] for t in stale) / 2 / rate
+        lines.append(
+            f"  {len(stale)} of {len(turns)} turn(s) predate the opt-out key: recorded without mip_opt_out, they "
+            f"answer no request the plugin makes from 0.5.6 on. A reseed through tools/bank/paid_replay.py "
+            f"would send {seconds:.2f} s, {seconds / 60.0:.2f} min, of their audio")
+    return lines
+
+
 def regenerate_here(doc: dict, wav: Path, work: Path, mean: str, cassette_path: Path | None,
                     request: dict | None) -> dict[int, bytes]:
     """Replay the recording on this tree; each turn's bytes by its wake's frame end."""
@@ -158,7 +199,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--regenerated", type=Path, metavar="DIR", help="the bytes, from a regeneration made elsewhere")
     ap.add_argument("--provisional", action="store_true", help="write the first pass's cassette and stop")
     ap.add_argument("--work", type=Path, help="where the replays' files go (default: a new temporary folder)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="judge every turn and write nothing to --out; the passes' files go to the work folder")
     args = ap.parse_args(argv)
+    written = "" if args.dry_run else ", in {}"
+    nothing = "  dry run: no cassette written to --out. This tool sends nothing and writes no ledger line."
+    if args.dry_run and args.work and not (args.regenerated or args.provisional):
+        nothing += f" The second pass's provisional cassette stays in {args.work}, as --work asked."
 
     dg = json.loads((args.run / "deepgram.json").read_text(encoding="utf-8"))
     if "carried" not in str(dg.get("mean")):
@@ -191,8 +238,13 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
         if args.provisional:
-            cassette.save(args.out, provisional)
-            print(f"seed: {args.run.name}: a provisional cassette of {len(provisional)} turn(s) in {args.out}")
+            if not args.dry_run:
+                cassette.save(args.out, provisional)
+            print(f"seed: {args.run.name}: a provisional cassette of {len(provisional)} turn(s)"
+                  + written.format(args.out))
+            print("\n".join(key_lines(provisional, doc["sample_rate"])))
+            if args.dry_run:
+                print(nothing)
             return 0
         if args.regenerated:
             second = first
@@ -206,11 +258,13 @@ def main(argv: list[str] | None = None) -> int:
             lines.append(f"  turn {p['index'] + 1} (wake at {p['wake_end_sample'] / doc['sample_rate']:.2f} s): {why}")
             if raw is not None:
                 kept.append(cassette_turn(p, raw))
-        if kept:
+        if kept and not args.dry_run:
             cassette.save(args.out, kept)
         print(f"seed: {args.run.name}: {len(kept)} of {len(paid)} turn(s) kept"
-              + (f", in {args.out}" if kept else ", no cassette written"))
-        print("\n".join(lines))
+              + (written.format(args.out) if kept else ", no cassette written"))
+        print("\n".join(lines + key_lines(kept, doc["sample_rate"])))
+        if args.dry_run:
+            print(nothing)
     finally:
         if not args.work:
             shutil.rmtree(work, ignore_errors=True)

@@ -1,0 +1,108 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g04-3m-4",
+  "sha256": "d3fb612266512749a6f86f0865058e46bb9549df914e582b12e6a3eeebe830ba",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1287,
+    "wakes": 6,
+    "turns": 6,
+    "name_cut": "0 of 6"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g04-3m-4/05",
+      "wake_end_sample": 582400,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "3b41c96fb4c4926c988971ed5d5224338371c8062d6735172ddd4de6f3158e8c",
+      "fed_sha256": "7b006de5c6ded0d5f0daae38139b231f7445f68112b25325e3423a5bdb6901e6",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g04-3m-4/07",
+      "wake_end_sample": 774400,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "924948a82946c589ae4b3bd933013a559172f5652c2c83d3160934ba4bdd57d8",
+      "fed_sha256": "d621acb8923a399b68a52d76c7287844a3750aa9b9bf96f0cbaa096f08f12de9",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g04-3m-4/08",
+      "wake_end_sample": 875520,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "e7abbf49692a2bf3e7061aa34317f45dce17bd62f81be1c50ab558e650eafa65",
+      "fed_sha256": "bfc78e563c873db5dabfa3394ea11812019476cbf6f216bd67c4857bd40306d5",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g04-3m-4/09",
+      "wake_end_sample": 970240,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "13e2fcb37774d8bb24dc86e01211d473ca0e5e6d9b0ce38afd1079200e2d3663",
+      "fed_sha256": "72397401fd8a36ccf142bdf004103f6caab918cf58afbad69f70d81de0fc2335",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "gen-g04-3m-4/10",
+      "wake_end_sample": 1062400,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "9bc5d44e69043c4ef309880cc9a3767d0a34c37015eeb223e47f1db83abf863c",
+      "fed_sha256": "13210380588108417765878a44f4f99427bcfb358aff4de06fc66e636b267a9d",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "gen-g04-3m-4/11",
+      "wake_end_sample": 1166080,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "fee31cfa6ea7f860fce3cbbffc7520fe6491b14591d888e3b6f11b5fc684c9c5",
+      "fed_sha256": "67d2a60c7e17930a780a37f79af17c6d094480abae04f66167a934aca5641d07",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

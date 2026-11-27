@@ -1,0 +1,14 @@
+{
+  "format": "emet-genbank-store/1",
+  "note": "Where CI takes the generated bank from: each set's release asset and the sha256 of that archive. The store is emet-testaudio (decision D8, named 2026-11-26 in 0.5.6-D4), and both fields stay empty until it publishes a set; until then `python tools/ci.py bank` and `bank-full` say they were not run and exit 0. The pull request after the release fills in both fields of each set it publishes, from the asset and its .sha256 line; no test has to change with them. Cassettes travel inside the asset, in the bank's cassettes/ folder, so the one hash pins them too.",
+  "sets": {
+    "small": {
+      "url": "",
+      "sha256": ""
+    },
+    "full": {
+      "url": "",
+      "sha256": ""
+    }
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "format": "emet-golden/1",
+  "recording": "gen-g04-5m-hall-4",
+  "sha256": "205e44cd14fcbc84663c9981d48204743bb1a2770c7074d77982d06931cb8c6a",
+  "platform": "win32-amd64",
+  "conditions": {
+    "threshold": "1e-15",
+    "start_mean": "carried",
+    "cmninit": "37.7991,-4.37088,0.731673,6.52026,-8.2342,-2.66036,-4.19786,-1.12147,3.13388,-2.69826,0.0248197,-2.71238,-0.93077",
+    "flags": [
+      "--replay",
+      "--transcribe",
+      "--stats"
+    ]
+  },
+  "footer": {
+    "frames": 1287,
+    "wakes": 7,
+    "turns": 7,
+    "name_cut": "0 of 7"
+  },
+  "wakes": [
+    {
+      "n": 1,
+      "take": "gen-g04-5m-hall-4/01",
+      "wake_end_sample": 104960,
+      "lag_ms": 150.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 150.0,
+      "cut_short": false,
+      "handover_sha256": "896c16698c544a57b1c50ea2038e09b562259d803c5aef41024e5d28d1afb299",
+      "fed_sha256": "c66f486af45db8236b7ab45b35c05d7aafb24659d9828ccf4a8b1bf466360055",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 2,
+      "take": "gen-g04-5m-hall-4/02",
+      "wake_end_sample": 231680,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "86777a2d9f7209294c9d9b05b015294fd26330da446106612c393c400d498004",
+      "fed_sha256": "af2e66849db6c873bc99dee8bb256088e93a9c95edcdf52041b00253845d0d38",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 3,
+      "take": "gen-g04-5m-hall-4/04",
+      "wake_end_sample": 490240,
+      "lag_ms": 200.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 200.0,
+      "cut_short": false,
+      "handover_sha256": "1727c39fcaa2f8cc4f913847c67020f318a1c84c100e4723de5dbe73f658fc6d",
+      "fed_sha256": "fcdb9438b10a3110005b2af27412b07f927716f3386e315979de016ce028df9c",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 4,
+      "take": "gen-g04-5m-hall-4/08",
+      "wake_end_sample": 872960,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "851e71c83fd76eca977f107b15632cd1e2da4dc051ac7089888ad0860dbdeed0",
+      "fed_sha256": "5dce14cbc4126a7884af4694ca505c1f5e8cdce81af5a0948abf9bfaa40bdfc7",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 5,
+      "take": "gen-g04-5m-hall-4/10",
+      "wake_end_sample": 1067520,
+      "lag_ms": 220.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 220.0,
+      "cut_short": false,
+      "handover_sha256": "aaf1cb01e27d1a4de0505ff6b8ceab5e122e5146a3cdba3a453d3acdb6f269b5",
+      "fed_sha256": "ef7c7b22e66f2343281210334d07d107894bd357a17ecf0da5e129350a1bfac3",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 6,
+      "take": "gen-g04-5m-hall-4/11",
+      "wake_end_sample": 1157120,
+      "lag_ms": 160.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 160.0,
+      "cut_short": false,
+      "handover_sha256": "b23e83609432b48d8d768dbb0b2909e380b25dfa14406058b249f554aa4b1d0b",
+      "fed_sha256": "473d5c15283664fe6d405d2d1c8606c7e1fadccf08b9f67491e5e6a22d10d6e7",
+      "final": "",
+      "cassette": null
+    },
+    {
+      "n": 7,
+      "take": "gen-g04-5m-hall-4/12",
+      "wake_end_sample": 1290240,
+      "lag_ms": 210.0,
+      "name_ms": 0.0,
+      "level_ms": 0.0,
+      "heard_ms": 210.0,
+      "cut_short": false,
+      "handover_sha256": "b86ca367cbfdf2ca4fe97865c7fbaa323e4ca8f61a5dd96d48730c55ab1d13c5",
+      "fed_sha256": "9e8973738a80a1b5e1e25ff57db1e1b4b2747965d56ce92e2dcadea1f47c0d42",
+      "final": "",
+      "cassette": null
+    }
+  ]
+}

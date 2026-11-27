@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-sdk"
-version = "0.5.5"
-description = "Emet SDK: types, schemas, and contracts shared by the engine and all plugins."
+version = "0.5.6"
+description = "The types, schemas and contracts that Emet's engine and every plugin share."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -13,13 +13,13 @@ authors = [{ name = "The Emet Authors" }]
 keywords = ["emet", "robotics", "companion", "hal"]
 
 dependencies = [
-    "jsonschema>=4.21",
-    "pyyaml>=6.0",
+    "jsonschema>=4.26.0",
+    "pyyaml>=6.0.4",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.2.0",
 ]
 
 [project.scripts]
@@ -33,3 +33,12 @@ packages = ["emet_sdk"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Every warning is an error. One raised while a test runs, such as a
+# deprecated call, fails that test. One raised when an object is freed,
+# such as an unclosed file or connection or a coroutine never awaited,
+# fails whichever test is running then, which can be a later one, and one
+# raised while the test files are imported fails the collection. A warning
+# from inside somebody else's package that Emet cannot fix gets one narrow
+# `ignore` line below `error`, naming its category, the start of its
+# message and its module, with the package and version that raise it.
+filterwarnings = ["error"]

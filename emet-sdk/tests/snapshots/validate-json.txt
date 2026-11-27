@@ -1,0 +1,26 @@
+$ emet validate --json duplicate-id.yaml
+exit 1
+--- stdout
+[
+  {
+    "path": "duplicate-id.yaml",
+    "kind": "manifest",
+    "ok": false,
+    "findings": [
+      {
+        "severity": "error",
+        "code": "duplicate_id",
+        "message": "capability id 'head' is used by both capability 0 and 1; ids must be unique across the manifest",
+        "path": "/capabilities/1/id"
+      },
+      {
+        "severity": "warning",
+        "code": "driver_not_installed",
+        "message": "1 driver plugin(s) named here are not installed (emet_hal.pca9685). Legal in a manifest, since describing hardware you have not wired yet is normal, but the engine will refuse to boot against it. Run with --verify-drivers to treat this as an error.",
+        "path": "/capabilities"
+      }
+    ]
+  }
+]
+--- stderr
+(nothing)

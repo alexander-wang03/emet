@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-providers"
-version = "0.5.5"
-description = "Emet providers: speech recognition, language model and voice plugins that reach a service, or a model on disk."
+version = "0.5.6"
+description = "Emet's speech recognition, language model and voice plugins, which reach a service or a model on disk."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -16,21 +16,34 @@ keywords = ["emet", "robotics", "stt", "llm", "tts", "providers"]
 # instead of a chip; the contract it satisfies is the same kind of thing and
 # lives in the same place. The engine never imports this package either: a
 # transcriber reaches it by name through the `emet.stt` entry-point group.
-dependencies = ["emet-sdk>=0.5.1"]
+dependencies = ["emet-sdk>=0.5.6"]
 
 [project.optional-dependencies]
+# The certifi floor in the three vendor extras. Emet never imports certifi:
+# httpx requires it and verifies every HTTPS call to a vendor against its
+# bundle of roots, unless SSL_CERT_FILE or SSL_CERT_DIR says otherwise (the
+# websockets client asks the operating system's store instead). Versions
+# before 2026.10.18 carry the emSign ECC Root CA - G3, eight of whose
+# intermediates have compromised keys, so a floor is the one way this package
+# can keep an old bundle out of a resolve (PYSEC-2026-4320, alias
+# GHSA-6q48-6c7w-9gw2, fixed in 2026.10.18: osv.dev, verified 2026-11-26).
+# certifi is MPL-2.0, taken unmodified and never bundled. See CITATIONS.md.
+#
 # The Deepgram transcriber speaks the wire protocol itself and needs only a
 # WebSocket client; the Deepgram voice streams audio over HTTPS through the
 # same client the language models use. Optional because a body with no key,
 # or no network, has no use for either. websockets is BSD-3-Clause and ships
 # cp311 to cp313 wheels for aarch64 Linux (PyPI, 2026-09-12); 13 is where its
 # asyncio client took `additional_headers`.
-deepgram = ["websockets>=13", "httpx>=0.27"]
+# Emet never imports certifi; its floor guards the voice's HTTPS calls (PYSEC-2026-4320).
+deepgram = ["websockets>=13", "httpx>=0.27", "certifi>=2026.10.18"]
 # The two language model providers speak JSON over HTTPS and stream
 # Server-Sent Events, so one HTTP client serves both. httpx is BSD-3-Clause,
 # pure Python, and ships one wheel for every platform (PyPI, 2026-09-15).
-anthropic = ["httpx>=0.27"]
-openai = ["httpx>=0.27"]
+# Emet never imports certifi; its floor guards the model's HTTPS calls (PYSEC-2026-4320).
+anthropic = ["httpx>=0.27", "certifi>=2026.10.18"]
+# Emet never imports certifi; its floor guards the model's HTTPS calls (PYSEC-2026-4320).
+openai = ["httpx>=0.27", "certifi>=2026.10.18"]
 # The local voice. piper-tts 1.8.0 ships cp39-abi3 wheels for manylinux
 # aarch64 and x86_64, macOS and Windows, one wheel for Python 3.9 to 3.13,
 # and depends on onnxruntime (MIT, cp313 aarch64 wheels) and pathvalidate
@@ -38,7 +51,7 @@ openai = ["httpx>=0.27"]
 # into it: Emet imports it through this extra and never bundles it, so a body
 # without the extra carries no GPL code. See CITATIONS.md.
 piper = ["piper-tts>=1.8"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=9.2.0"]
 
 # Installing a package is what makes a provider exist. The entry-point name is
 # the string a soul puts in `models.stt.provider`, or a body puts in its own
@@ -64,3 +77,12 @@ packages = ["emet_providers"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Every warning is an error. One raised while a test runs, such as a
+# deprecated call, fails that test. One raised when an object is freed,
+# such as an unclosed file or connection or a coroutine never awaited,
+# fails whichever test is running then, which can be a later one, and one
+# raised while the test files are imported fails the collection. A warning
+# from inside somebody else's package that Emet cannot fix gets one narrow
+# `ignore` line below `error`, naming its category, the start of its
+# message and its module, with the package and version that raise it.
+filterwarnings = ["error"]

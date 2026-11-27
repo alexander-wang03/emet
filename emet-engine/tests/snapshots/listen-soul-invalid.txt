@@ -1,0 +1,9 @@
+$ emet-listen body.yaml soul.yaml
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+  x schema /identity
+    'line' is a required property
+
+soul.yaml is not a valid soul

@@ -1,0 +1,6 @@
+$ emet explain absent.yaml
+exit 2
+--- stdout
+(nothing)
+--- stderr
+no such file: absent.yaml

@@ -1,4 +1,4 @@
-"""Cassettes: how they are written, read, checked and played back.
+"""How cassettes are written, read, checked and played back.
 
 No audio anybody said: the bytes are counted patterns, and the answers are
 made up. What is tested is the key (every byte and the request), the rule
@@ -85,11 +85,19 @@ def test_a_query_parameter_named_like_a_credential_is_refused(name):
         normalise_request({**REQUEST, "query": {name: "x"}})
 
 
-def test_keyterm_is_refused_too_by_the_rule_the_bank_checker_shares():
-    """The substring rule of cut_deepgram.py and tools/bank/manifest.py: a
-    body that takes `keyterm` up changes both rules together."""
-    with pytest.raises(CassetteError, match="keyterm"):
-        normalise_request({**REQUEST, "query": {"keyterm": "Emet"}})
+def test_keyterm_is_let_through_as_the_list_of_terms_in_the_order_sent():
+    """The one name holding "key" that is no credential: the words a body
+    asks Deepgram to listen for. Its order is kept, the other keys sorted."""
+    got = normalise_request({**REQUEST, "query": {"keyterm": ("Hey Emet", "Emet"), "punctuate": True}})
+    assert got["query"] == {"keyterm": ["Hey Emet", "Emet"], "punctuate": "true"}
+    assert cassette.is_credential("api_key") and cassette.is_credential("keyterms")
+    assert not cassette.is_credential("keyterm")
+
+
+@pytest.mark.parametrize("value", ["Emet", [], ["Emet", ""], ["Emet", 3], None])
+def test_a_keyterm_that_is_not_a_list_of_terms_is_refused(value):
+    with pytest.raises(CassetteError, match="keyterm is the list of terms sent, in order"):
+        normalise_request({**REQUEST, "query": {"keyterm": value}})
 
 
 @pytest.mark.parametrize(
@@ -118,6 +126,44 @@ def test_the_request_is_the_one_the_deepgram_plugin_would_make():
     assert "model" not in request["query"] and "sample_rate" not in request["query"]
     assert request["query"]["smart_format"] == "false" and request["query"]["language"] == "en-GB"
     assert request["query"]["interim_results"] == "true"
+    assert request["query"]["mip_opt_out"] == "true" and "keyterm" not in request["query"]
+
+
+def plugin_request(**params) -> dict:
+    """The request key of a Deepgram plugin built offline with these params."""
+    from emet_sdk.types import AudioFormat
+
+    from emet_providers.deepgram import DeepgramTranscriber
+
+    stt = DeepgramTranscriber({"provider": "deepgram", "params": params}, AudioFormat())
+    return cassette.request_for("deepgram", stt.query())
+
+
+def test_the_request_key_holds_the_opt_out_and_the_keyterms_once():
+    """With keyterms and without: the key holds mip_opt_out either way, and
+    the keyterm list only when the body has one, in the body's order."""
+    without = plugin_request()
+    with_terms = plugin_request(keyterms=["Emet", "Hey Emet"])
+    assert without["query"] == {"channels": "1", "encoding": "linear16", "interim_results": "true",
+                                "mip_opt_out": "true", "punctuate": "true", "smart_format": "false"}
+    assert with_terms["query"] == {**without["query"], "keyterm": ["Emet", "Hey Emet"]}
+    assert list(with_terms["query"]) == sorted(with_terms["query"])
+    assert plugin_request(keyterms=["Hey Emet", "Emet"]) != with_terms, "another order is another request"
+
+
+def test_the_key_read_back_from_a_url_is_the_key_the_plugin_made():
+    """`query_of_url` is how a writer reads a recorded URL back: every
+    keyterm in order, the opt-out kept."""
+    from emet_sdk.types import AudioFormat
+
+    from emet_providers.deepgram import DeepgramTranscriber
+
+    stt = DeepgramTranscriber({"provider": "deepgram", "params": {"keyterms": ["Emet", "Hey Emet"]}}, AudioFormat())
+    assert cassette.request_for("deepgram", cassette.query_of_url(stt.request_url())) == cassette.request_for(
+        "deepgram", stt.query()
+    )
+    with pytest.raises(CassetteError, match="names 'model' twice"):
+        cassette.query_of_url("wss://h/p?model=a&model=b")
 
 
 def test_a_request_without_a_provider_is_refused():
@@ -354,6 +400,157 @@ def test_a_player_with_no_candidates_misses_everything():
     assert not player.finish().hit
 
 
+# ------------------------------------------------- the key of 0.5.6
+
+
+#: The request dg08 and dg09 of bank v0 were recorded for, 0.5.5's, with
+#: smart_format false, from before the opt-out joined the key. The other
+#: seven of bank v0's nine were recorded with smart_format true.
+BEFORE = {"provider": "deepgram", "model": "nova-3", "sample_rate": 16000, "query": {
+    "channels": "1", "encoding": "linear16", "interim_results": "true", "punctuate": "true", "smart_format": "false"}}
+
+
+def test_an_old_cassette_misses_with_the_dated_reason_and_is_never_played(caplog):
+    """A turn recorded before 0.5.6 put mip_opt_out in the key, played to a
+    run standing for today's request: a miss that says why and when, logged
+    once, and no partial or final from the old answer."""
+    frames = [chunk(1), chunk(2)]
+    old = recorded(frames, {1: "What's", 2: "What's two plus two?"}, "What's two plus two?", request=BEFORE)
+    assert cassette.predates_opt_out(old["request"])
+    with caplog.at_level("WARNING", logger="emet_providers.cassette"):
+        player = Player([old], request=plugin_request())
+    assert player.turns == [] and player.stale == [old]
+    assert [r.getMessage() for r in caplog.records] == [
+        "cassette: 1 of 1 turn(s) predate the opt-out key (recorded without mip_opt_out, before 0.5.6 sent it "
+        "with every Deepgram request), so they answer no request now; tools/bank/paid_replay.py records them again"
+    ]
+    assert [player.feed(f) for f in frames] == [None, None], "no partial from the old answer"
+    played = player.finish()
+    assert not played.hit and played.turn is None
+    assert played.reason is not None and played.reason.startswith(
+        "the cassette's turn for these bytes predates the opt-out key: it was recorded on 2026-10-27"
+    )
+    assert "mip_opt_out=true" in played.reason and "0.5.6" in played.reason
+
+
+def test_other_bytes_miss_with_no_reason_beside_an_old_cassette():
+    old = recorded([chunk(1)], {}, "x", request=BEFORE)
+    player = Player([old], request=plugin_request())
+    player.feed(chunk(9))
+    assert player.finish() == cassette.Played(None, sha256_of(chunk(9)), 2560, None)
+
+
+def sha256_of(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_an_old_cassette_still_answers_the_old_request_it_was_recorded_for():
+    """Nothing about a file changed: a run that stands for the request of
+    0.5.5 still gets its turns, and so does one that names no request, as
+    seed_cassettes.py's second pass does, since then every turn is a
+    candidate."""
+    old = recorded([chunk(1)], {}, "What's two plus two?", request=BEFORE)
+    player = Player([old], request=BEFORE)
+    player.feed(chunk(1))
+    assert player.finish().turn["final"]["text"] == "What's two plus two?" and player.stale == []
+    every = Player([old])
+    every.feed(chunk(1))
+    assert every.finish().hit, "without a request every turn is a candidate, as before"
+
+
+def test_old_turns_are_stale_only_while_the_request_carries_the_opt_out(caplog):
+    """A run standing for 0.5.5's request holds an old turn of another
+    request to that request: it is not stale, nothing is logged, and its
+    miss names the real difference."""
+    formatted = recorded([chunk(1)], {}, "What's 22", request={**BEFORE, "query": {**BEFORE["query"], "smart_format": "true"}})
+    with caplog.at_level("WARNING", logger="emet_providers.cassette"):
+        player = Player([formatted], request=BEFORE)
+    assert player.stale == [] and caplog.records == []
+    player.feed(chunk(1))
+    played = player.finish()
+    assert not played.hit and played.reason is not None
+    assert played.reason.endswith("which differs in query smart_format"), played.reason
+
+
+def test_only_a_deepgram_request_predates_the_opt_out():
+    """The opt-out is Deepgram's: another provider's turn without it is a
+    turn of another request, never one that predates the key."""
+    assert cassette.predates_opt_out(BEFORE)
+    assert not cassette.predates_opt_out({**BEFORE, "provider": "mock"})
+    from_mock = recorded([chunk(1)], {}, "from the mock", request={**REQUEST, "provider": "mock"})
+    player = Player([from_mock], request=plugin_request())
+    assert player.stale == []
+    player.feed(chunk(1))
+    reason = player.finish().reason or ""
+    assert "for another request, which differs in provider" in reason and "opt-out" not in reason
+
+
+def test_a_turn_recorded_with_keyterms_emet_misses_for_emmett_and_for_none():
+    """Keyterms change what Deepgram returns, so one list's answer never
+    stands for another's, or for no list."""
+    frames = [chunk(1)]
+    emet = recorded(frames, {}, "Hey Emet, what's the time?", request=plugin_request(keyterms=["Emet"]))
+    for wanted in (plugin_request(keyterms=["Emmett"]), plugin_request()):
+        player = Player([emet], request=wanted)
+        assert player.turns == [] and player.stale == []
+        player.feed(frames[0])
+        played = player.finish()
+        assert not played.hit
+        assert played.reason == "the cassette's turn for these bytes was recorded on 2026-10-27 for another request, which differs in query keyterm"
+    player = Player([emet], request=plugin_request(keyterms=["Emet"]))
+    player.feed(frames[0])
+    assert player.finish().turn["final"]["text"] == "Hey Emet, what's the time?"
+
+
+def test_a_cassette_with_keyterms_round_trips_through_its_file(tmp_path):
+    turn = recorded([chunk(1)], {1: "Emet"}, "Emet.", request=plugin_request(keyterms=["Emet", "Hey Emet"]))
+    path = save(tmp_path / "k.json", [turn])
+    assert json.loads(path.read_text(encoding="utf-8"))["turns"][0]["request"]["query"]["keyterm"] == ["Emet", "Hey Emet"]
+    assert load(path) == [turn]
+
+
+@pytest.mark.parametrize("value", ["Emet", ["Emet", 1], {"a": "b"}])
+def test_a_file_holds_a_keyterm_as_a_list_of_text_and_every_other_value_as_text(value):
+    turn = _bad()
+    turn["request"] = {**REQUEST, "query": {"punctuate": "true", "keyterm": value}}
+    with pytest.raises(CassetteError, match="keyterm"):
+        check_turn(turn)
+    turn["request"] = {**REQUEST, "query": {"punctuate": "true", "language": ["en"]}}
+    with pytest.raises(CassetteError, match="maps text to text in a file"):
+        check_turn(turn)
+
+
+def test_the_mock_misses_an_old_cassette_under_todays_request_and_logs_the_dated_reason(tmp_path, caplog):
+    """The mock's cassette path follows the key: given the request the
+    plugin makes today, a cassette of bank v0's shape gives no word. The
+    miss says why on the run's stderr, with the day the turn was recorded,
+    so a replay's own record carries it."""
+    from emet_sdk.types import AudioFormat
+
+    from emet_providers.mock import MockTranscriber
+
+    frames = [chunk(1), chunk(2)]
+    path = save(tmp_path / "old.json", [recorded(frames, {1: "What's"}, "What's two plus two?", request=BEFORE)])
+    mock = MockTranscriber({"provider": "mock", "params": {"cassette": str(path), "cassette_request": plugin_request()}},
+                           AudioFormat())
+
+    async def scenario():
+        await mock.start()
+        partials = [await mock.feed(f) for f in frames]
+        return partials, await mock.finish()
+
+    with caplog.at_level("WARNING", logger="emet_providers.mock"):
+        partials, final = asyncio.run(scenario())
+    assert mock.describe().healthy
+    assert partials == [None, None]
+    assert final.text == "" and final.error == cassette.MISS
+    said = [r.getMessage() for r in caplog.records if r.name == "emet_providers.mock"]
+    assert said[0].startswith("mock stt: no turn in"), "the load's own warning comes first"
+    assert said[1:] == ["mock stt: cassette miss: the cassette's turn for these bytes predates the opt-out key: it "
+                        "was recorded on 2026-10-27 for a request without mip_opt_out, and from 0.5.6 every Deepgram "
+                        "request carries mip_opt_out=true; tools/bank/paid_replay.py records it again"]
+
+
 # -------------------------------------------------------------- live capture
 
 
@@ -462,6 +659,11 @@ def test_the_model_version_is_read_from_results_and_metadata():
 
 def test_safe_url_keeps_the_query_and_drops_credentials():
     assert safe_url("wss://h/p?a=1&api_key=s&model=nova-3") == "wss://h/p?a=1&model=nova-3"
+
+
+def test_safe_url_keeps_every_keyterm_in_its_place():
+    url = "wss://h/p?model=nova-3&keyterm=Emet&token=s&keyterm=Hey+Emet&mip_opt_out=true"
+    assert safe_url(url) == "wss://h/p?model=nova-3&keyterm=Emet&keyterm=Hey+Emet&mip_opt_out=true"
 
 
 def test_the_module_exports_what_a_writer_needs():

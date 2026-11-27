@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The monthly canary: do the cassettes still say what the vendor says?
+"""Check once a month that the cassettes still say what the vendor says.
 
 A cassette is what Deepgram's model said on the day it was recorded. Once a
 month this runs the four live-vendor tests with their recording mode on
@@ -14,9 +14,18 @@ checks that need no network, says what it would spend (the cassette and the
 turn, the audio found by its sha256, the request the plugin would make, the
 live tests, and the ledger's count for the month), and spends nothing.
 
+**The request** is the plugin's own, so every Deepgram connection the
+canary and its live tests open carries `mip_opt_out=true` (the maintainer,
+2026-11-24), and a turn recorded with keyterms is replayed with the same
+list in the same order. The language-model tests call Anthropic and
+OpenAI, which take no such parameter.
+
 **Refused before anything is spent:** a cassette that does not load; a turn
 that is not Deepgram's; audio whose sha256 or length is not the turn's; a
-turn whose request the plugin would not make today; an output directory
+turn whose request the plugin would not make today, a turn recorded before
+0.5.6 without `mip_opt_out` among them, named with its date and with the
+first turn of the cassette that carries it; a turn whose keyterms the
+plugin refuses; an output directory
 that already holds something; a missing Deepgram key (other vendors' keys
 only make their tests skip, which the result reports); a ledger that is
 missing, malformed, or holds an entry whose month cannot be read; and a
@@ -41,12 +50,18 @@ model are compared. Deepgram's Metadata message carries the sha256 of the
 audio it received (seen in `dg09`, 2026-10-05), and a replay whose sha256
 is not the turn's is a failure, never a verdict.
 
-Usage (Git Bash, from emet/):
+Usage (Git Bash, from emet/), once 0.5.6's reseed has run. `--cassette`
+names the reseed's cassette, and `--audio` the folder of the miss list it
+was recorded from, whose raw files are the bytes each turn was fed. Bank
+v0's nine cassettes, `dg02.json` to `dg10.json`, predate the opt-out key
+and are refused. A directory numbers its turns across every file in name
+order, so `--turn 1` of `$BANK/cassettes` is a turn of `dg02.json`; the
+refusal names the first turn there that carries the opt-out.
 
     PY=emet-sdk/.venv/Scripts/python.exe
     BANK="../voicebank"
-    "$PY" tools/bank/canary.py --ledger "$BANK/ledger.json" --cassette "$BANK/cassettes" \\
-        --turn 1 --audio "$BANK/turns" --keys ~/.config/emet/keys.env --out "$BANK/canary/2026-11"
+    "$PY" tools/bank/canary.py --ledger "$BANK/ledger.json" --cassette "$BANK/cassettes/paid-2026-11-26.json" \\
+        --turn 1 --audio "$BANK/misses/2026-11-26" --keys ~/.config/emet/keys.env --out "$BANK/canary/2026-11"
     # then the same line with --spend
 
 Writes `<out>/canary.json` (the verdict, the live turn's messages, each live
@@ -287,6 +302,16 @@ def pick_turn(turns: list[dict[str, Any]], selector: str) -> tuple[int, dict[str
     return found[0]
 
 
+def with_opt_out(turns: list[dict[str, Any]]) -> str:
+    """Which of the cassette's turns carry the opt-out, for the refusal of
+    one that does not: how many, and the first by its `--turn` number."""
+    numbers = [n for n, t in enumerate(turns, 1) if not cassette.predates_opt_out(t["request"])]
+    if not numbers:
+        return f"None of the {len(turns)} turn(s) here carries mip_opt_out"
+    verb = "carries" if len(numbers) == 1 else "carry"
+    return f"Of the {len(turns)} turn(s) here, {len(numbers)} {verb} mip_opt_out, the first --turn {numbers[0]}"
+
+
 def read_audio(path: Path, rate: int) -> bytes | None:
     """A file's samples: a .wav's frames, mono 16-bit at `rate`, or a raw
     file's bytes. None for a .wav of another shape."""
@@ -320,17 +345,34 @@ def find_audio(path: Path, turn: dict[str, Any]) -> tuple[Path, bytes]:
     raise Refusal(f"--audio {path}: no .raw or .wav there holds the turn's {size} bytes, sha256 {want[:12]}")
 
 
-def plugin_for(request: dict[str, Any], connect: Any) -> DeepgramTranscriber:
+def plugin_for(request: dict[str, Any], connect: Any, *, recorded: str | None = None) -> DeepgramTranscriber:
     """The real Deepgram plugin, set up to make the turn's request, or a
-    `Refusal` when it would make another one today."""
+    `Refusal` when it would make another one today.
+
+    The turn's `keyterm` list becomes the plugin's `params.keyterms`, and
+    `mip_opt_out` is the plugin's own, sent with every request: a turn
+    recorded without it predates the opt-out key, and replaying it live
+    would ask Deepgram another question, so it is refused with the day it
+    was recorded."""
     if request["provider"] != "deepgram":
         raise Refusal(f"the turn was recorded from {request['provider']!r}; the canary replays Deepgram's")
-    query = {k: v for k, v in request["query"].items() if k not in FORMAT_KEYS}
+    if cassette.predates_opt_out(request):
+        raise Refusal(
+            f"the turn was recorded on {recorded or 'a day before 0.5.6'} for a request without mip_opt_out, and the "
+            f"plugin sends mip_opt_out=true with every request from 0.5.6 on, so a live replay would ask Deepgram "
+            f"another question. Pick a turn recorded from 0.5.6 on with --turn; tools/bank/paid_replay.py writes "
+            f"them")
+    skip = FORMAT_KEYS | {cassette.KEYTERM, cassette.OPT_OUT}
+    params: dict[str, Any] = {"query": {k: v for k, v in request["query"].items() if k not in skip}}
+    if cassette.KEYTERM in request["query"]:
+        params["keyterms"] = list(request["query"][cassette.KEYTERM])
     stt = DeepgramTranscriber(
-        {"provider": "deepgram", "model": request["model"], "params": {"query": query}},
+        {"provider": "deepgram", "model": request["model"], "params": params},
         AudioFormat(sample_rate=request["sample_rate"]),
         connect=connect,
     )
+    if stt.refusal:
+        raise Refusal(f"the plugin refuses the turn's request: {stt.refusal}")
     asked = cassette.request_for("deepgram", stt.query())
     if asked != request:
         raise Refusal(f"the plugin would ask for {asked}, and the turn was recorded for {request}")
@@ -360,7 +402,7 @@ async def replay(
     """Feed the turn's bytes through the real plugin. Never raises for a
     vendor failure: the reason is in `error`."""
     connections: list[dict[str, Any]] = []
-    stt = plugin_for(turn["request"], cassette.recording_connect(connect, connections))
+    stt = plugin_for(turn["request"], cassette.recording_connect(connect, connections), recorded=turn.get("recorded"))
     fmt = AudioFormat(sample_rate=turn["request"]["sample_rate"])
     out: dict[str, Any] = {"error": None, "final": None, "partials": [], "model": None,
                            "sent_sha256": None, "deepgram_sha256": None, "connections": connections}
@@ -482,8 +524,13 @@ def main(
         except cassette.CassetteError as exc:
             raise Refusal(f"--cassette: {exc}") from None
         number, turn = pick_turn(turns, args.turn)
+        try:
+            plugin_for(turn["request"], None, recorded=turn["recorded"])
+        except Refusal as exc:
+            if not cassette.predates_opt_out(turn["request"]):
+                raise
+            raise Refusal(f"{exc}. {with_opt_out(turns)}") from None
         audio_path, audio = find_audio(args.audio, turn)
-        plugin_for(turn["request"], None)
         if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
             raise Refusal(f"--out {args.out}: already holds something; give each canary a directory of its own")
         started = now()
@@ -507,8 +554,8 @@ def main(
         except FileNotFoundError as exc:
             raise Refusal(f"--keys: {exc}") from None
         except ValueError as exc:
-            # The loader's message quotes the line, and a line that does not
-            # parse may be a bare key. Its place only.
+            # The loader names the line by its number and never quotes it;
+            # its place is enough here.
             where = re.match(r"^(.*:\d+):", str(exc))
             raise Refusal(f"--keys: {where.group(1) if where else 'the keys file'}: a line that does not parse") from None
         for keys in loaded:

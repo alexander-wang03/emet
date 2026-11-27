@@ -98,9 +98,9 @@ are cheaper to get wrong.
   written before the engine existed.
 - **Capability types.**
 
-The ordering is by *reversibility*, not importance. A driver that
-turns out to be wrong is reverted in a minute. A schema field that turns out to
-be wrong is with us for years.
+The ordering is by *reversibility*. A driver that turns out to be wrong is
+reverted in a minute. A schema field that turns out to be wrong is with us
+for years.
 
 ## Installing plugins
 
@@ -112,8 +112,8 @@ install plugins from people you trust.
 
 ## Ground rules that are not negotiable
 
-These are design invariants, not preferences. A change that breaks one is
-wrong even if it works:
+These are design invariants. A change that breaks one is wrong even if it
+works:
 
 1. **The soul never names hardware.** No servo channel, GPIO pin, I2C address,
    or driver name may appear in the soul layer. It emits intents.
@@ -137,7 +137,7 @@ If a change takes something from a paper, a repository, a dataset, or anyone
 else's writing, credit it **in this repository**: a citation at the point of
 use and an entry in [CITATIONS.md](CITATIONS.md).
 
-**Ideas count, not only copied code.** Using a paper's measurement to choose a
+**Ideas count, as copied code does.** Using a paper's measurement to choose a
 default, or a project's data format for a file Emet writes, is taking
 something even when not a line is copied. The default `patience_ms` is a live
 example: the constant is ours, the evidence that it is the right shape of
@@ -175,18 +175,24 @@ Every merge to master is one version, one signed tag and one entry in
 - **The pull request** bumps the four `pyproject.toml` files and writes the
   entry: a heading `## [X.Y.Z] - YYYY-MM-DD`, one line saying what the
   version does, then Added, Changed and Fixed, one line per change, each
-  naming its pull request. `tools/release_check.py` fails a pull request
-  that bumps the version without the entry.
+  naming its pull request. A fix for a vulnerability, or a dependency's
+  floor raised past a version an advisory names, goes under Security, and
+  each of its lines names that advisory's id: a GitHub Security Advisory's
+  (GHSA), a CVE's, or a PYSEC id from the Python Packaging Advisory
+  Database. `tools/release_check.py` fails a pull request that bumps
+  the version without the entry, or with a Security line that names no id.
 - **The evidence** stays in the pull request: what was run, on which
   machine, and the numbers. The changelog carries the headline and the link.
 - **The tag** is signed, and its message is the entry. A minor or a major
   gets a GitHub release page as well; a patch's tag is its release.
 
-Two scripts do the mechanical half of a release, and both run in CI:
+Three checks hold the mechanical half of a release, and `tools/ci.py` runs
+them with the rest of CI:
 
 ```sh
 python tools/check_layering.py .
 python tools/release_check.py .
+python tools/check_style.py .
 ```
 
 [RELEASING.md](RELEASING.md) is the checklist for what a script cannot check.
@@ -195,37 +201,71 @@ python tools/release_check.py .
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-providers[dev]" -e "emet-engine[dev]"
-.venv/bin/pip install -e "emet-hal[audio,wake]"   # optional: microphone, speaker, wake engine
+source .venv/bin/activate   # Windows: source .venv/Scripts/activate
+pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-providers[dev]" -e "emet-engine[dev]"
+pip install -e "emet-hal[audio,wake]"   # optional: microphone, speaker, wake engine
 ```
+
+Or, from the repository's root, one command makes `emet-sdk/.venv`, installs
+the four packages editable with their `dev` extras and `emet-hal`'s `audio`
+and `wake` (on Python 3.12 `audio` alone, since pocketsphinx, the wake
+engine, publishes no cp312 wheel), and checks the install with the venv's
+Python. After `setup`, activate that venv, so the `python` of every later
+line is the venv's:
+
+```sh
+python tools/dev.py setup     # --extras adds the vendors' extras; --dry-run prints only
+source emet-sdk/.venv/bin/activate   # Windows: source emet-sdk/.venv/Scripts/activate
+python tools/dev.py check     # a stale editable install, a missing PortAudio, an unsupported Python
+python tools/dev.py update    # after a pull that changes a pyproject.toml
+```
+
+`check` holds the Python that runs it to the tree, so run it from the
+activated venv; run with another Python, it says so and prints the line
+that checks the venv. `update` installs again and then checks, as `setup`
+does.
 
 Install **all four** packages even if you are only touching one. Plugin
 discovery reads entry points, so several SDK and engine tests are meaningless
 unless something is registered to be discovered. The suites pass with the
 optional extras absent; the tests that need them skip.
 
-Before opening a PR, run what CI runs:
+Before opening a PR, run what CI runs. One command runs every job this
+machine can, and names each job it could not run and why:
 
 ```sh
-python tools/check_layering.py .
-python tools/release_check.py .
-python tools/check_style.py .
+python tools/ci.py --all
+```
+
+The three checks and the four suites alone, for a quick look:
+
+```sh
+python tools/check_layering.py . && python tools/release_check.py . && python tools/check_style.py .
 cd emet-sdk && python -m pytest -q
 cd ../emet-hal && python -m pytest -q
 cd ../emet-providers && python -m pytest -q
 cd ../emet-engine && python -m pytest -q
 ```
 
+Each CI job's steps are in `tools/ci.py`, which the workflows call, and its
+`--list` names each job, its check on GitHub, and whether it blocks. Two
+kinds of step stay in the workflows, and [RELEASING.md](RELEASING.md) item
+4 names them.
+
 ## House style
 
 Plain declarative sentences, in code comments and docs alike. No em-dashes:
 a comma, a colon, or two sentences. None of the six words that read as a
-press release; `tools/check_style.py` lists them, enforces both rules, and
-runs in CI, so a stray dash fails the build rather than a review.
+press release. No email address but four forms: the project's, one at
+GitHub's noreply domain, and placeholders at `example.com` or
+`example.invalid`. `tools/check_style.py` lists the words and the four
+forms, enforces the dash, word and address rules, and runs in CI, so a
+stray dash or a pasted address fails the build before a review sees it.
+The check reads the files in the tree. A sign-off address is commit
+metadata, and yours to choose.
 
 CI also builds the four wheels and installs them outside the source tree, so a
-packaging mistake that an editable install hides still fails the pipeline. The
-exact steps are in `.github/workflows/ci.yml`.
+packaging mistake that an editable install hides still fails the pipeline.
 
 To see what your driver actually binds to, without a robot:
 
@@ -235,9 +275,10 @@ cd emet-sdk && emet explain examples/mock-scout.yaml --why
 
 ## Reporting a security issue
 
-Do not open a public issue. Emet listens continuously and remembers what it
-hears, so a vulnerability here is a vulnerability in someone's home.
+Do not open a public issue. Emet listens continuously, and from 0.6 it will
+remember what it hears, so a vulnerability here is a vulnerability in
+someone's home.
 
 Use [GitHub's private vulnerability reporting](https://github.com/alexander-wang03/emet/security/advisories/new),
 or email <wake.up.emet@gmail.com>. See [SECURITY.md](SECURITY.md) for what
-counts and what does not.
+counts, what does not, and what follows a report.

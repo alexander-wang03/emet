@@ -1,0 +1,7 @@
+$ emet validate
+exit 2
+--- stdout
+(nothing)
+--- stderr
+usage: (argparse's usage lines, which differ by Python version)
+emet validate: error: the following arguments are required: PATH

@@ -1,11 +1,12 @@
 # Emet
 
-**A companion-robot engine that discovers whatever body it finds itself in.**
+**An open engine that gives any small companion robot a portable soul.**
 
-Write a personality once. Run it on a robot with a head, wheels, and glowing
-eyes, or on a Raspberry Pi with nothing but a speaker. The same personality,
-the same memories, and a robot that *knows the difference* and will tell you
-about it.
+A soul (a personality, its voice, and from 0.6 its memories) is written
+once and runs unchanged on any body its manifest describes, from a
+speakerphone to a treaded scout. Emet is open source and runs on a Pi-class
+computer, each body's parts are plugins, and the robot says plainly what its
+body cannot do. Parts driven by a microcontroller are planned.
 
 *Emet* (Hebrew אמת, "truth") is the word inscribed on the golem's forehead to
 bring it to life; erase the first letter and it reads *met*, "death". The name
@@ -33,6 +34,7 @@ persona. And it acts through that body: an intent the reply carries,
 own voice where there is not.
 
 ```sh
+$ cd emet-sdk
 $ emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml
 Emet is listening for 'hey emet'
   wake     pocketsphinx on microphone, 16000 Hz
@@ -63,6 +65,7 @@ And it answers the question the whole design rests on: **given a robot, what
 would each intent mean on it?**
 
 ```sh
+$ cd emet-sdk
 $ emet explain examples/bodiless.yaml
 BINDING TABLE  examples/bodiless.yaml   (body: bodiless, 'a speakerphone on a desk')
 0 capabilities, 31 intents, 0 bound to hardware, 31 to voice
@@ -110,13 +113,16 @@ from a promise someone has to remember into something the software enforces.
 
 ## Try it
 
+Every block here runs from the repository's root, in the venv the first one
+makes and activates.
+
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-providers[dev]" -e "emet-engine[dev]"   # Windows: .venv\Scripts\pip
+source .venv/bin/activate   # Windows: source .venv/Scripts/activate
+pip install -e "emet-sdk[dev]" -e "emet-hal[dev]" -e "emet-providers[dev]" -e "emet-engine[dev]"
 
-cd emet-sdk
-emet validate examples/mock-scout.yaml --verify-drivers
-emet explain  examples/scout-01.yaml --why
+emet validate emet-sdk/examples/mock-scout.yaml --verify-drivers
+emet explain  emet-sdk/examples/scout-01.yaml --why
 ```
 
 To hear it wake, add the optional microphone and wake-engine extras and run the
@@ -125,7 +131,7 @@ listen loop. On Linux the `audio` extra needs the system PortAudio
 
 ```sh
 pip install -e "emet-hal[audio,wake]"
-emet-listen examples/pi-speakerphone.yaml examples/emet-soul.yaml
+emet-listen emet-sdk/examples/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml
 ```
 
 A manifest that names a driver nobody has installed does not boot: the engine
@@ -142,7 +148,7 @@ loop with no flags. `emet-providers/README.md` has the details.
 ```sh
 pip install -e "emet-providers[deepgram,openai,piper]"
 python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices
-emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml
+emet-talk emet-sdk/examples/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml
 ```
 
 `--why` is the one to remember. When a robot is not doing what you expected, it

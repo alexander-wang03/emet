@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --reply
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+a reply was asked for and no language model is configured. Name one under `models.chat.provider` in the soul, or take it over with `models.chat.provider` in the body. Installed: anthropic, mock, openai.

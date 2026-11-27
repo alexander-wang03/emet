@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+piper: the piper-tts library is not installed. It is an optional dependency: install `emet-providers[piper]`. Piper is GPL-3.0; Emet imports it and does not bundle it.
+
+the voice 'piper' cannot start, so the robot would answer and never be heard. It will not run. the piper-tts library is not installed. It is an optional dependency: install `emet-providers[piper]`. Piper is GPL-3.0; Emet imports it and does not bundle it.

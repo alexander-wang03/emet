@@ -1,0 +1,10 @@
+$ emet explain soul.yaml
+exit 1
+--- stdout
+FAIL soul.yaml  (not a manifest)
+     x unknown_document
+       `emet explain` needs a body manifest, a document with a
+       top-level `manifest_version` key. For soul bundles and
+       motion packs, use `emet validate`.
+--- stderr
+(nothing)

@@ -1,0 +1,102 @@
+{
+  "format": "emet-body-run/2",
+  "started": "2026-11-30T10:02:11",
+  "ended": "2026-11-30T10:06:40",
+  "host": "emet-pi",
+  "release": "0.9.1",
+  "window": null,
+  "allow_night": false,
+  "preflight": {
+    "date": "2026-11-30T10:02:12-08:00",
+    "throttled": "throttled=0x0",
+    "lock": "free",
+    "busy": []
+  },
+  "source": {
+    "kind": "pushed commit",
+    "ref": "teach-it-to-count",
+    "head": "1a2b3c4000000000000000000000000000000000",
+    "subject": "Count to ten",
+    "upstream": "https://github.com/example/emet",
+    "digest": "8d8fe0b4b2769005658a82c4381380af7efa55d68fb8218245cdaae27fd9e326"
+  },
+  "body": {
+    "manifest": "~/pi-speakerphone.yaml",
+    "manifest_sha256": "5f1e0c3a9b7d2e4f6a8c0b1d3e5f7a9c1b3d5e7f9a0c2e4f6a8b0d1c3e5f7a9b",
+    "state": "~/.local/state/emet/pi_speakerphone.json",
+    "state_sha256": "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9",
+    "note": ""
+  },
+  "flags_run": [],
+  "steps": [
+    {
+      "name": "preflight",
+      "status": "passed",
+      "reason": "load 0.08 0.02 0.01; throttled 0x0 (none)",
+      "seconds": 0.0,
+      "details": {}
+    },
+    {
+      "name": "sync",
+      "status": "passed",
+      "reason": "all files, digest 8d8fe0b4b276 on both machines",
+      "seconds": 4.2,
+      "details": {}
+    },
+    {
+      "name": "install",
+      "status": "passed",
+      "reason": "installed; versions 0.9.1 0.9.1 0.9.1 0.9.1",
+      "seconds": 25.6,
+      "details": {}
+    },
+    {
+      "name": "suites",
+      "status": "passed",
+      "reason": "sdk 226 collected, 226 passed, 0 skipped",
+      "seconds": 48.2,
+      "details": {}
+    },
+    {
+      "name": "checks",
+      "status": "passed",
+      "reason": "layering ok; release_check ok; style ok",
+      "seconds": 0.8,
+      "details": {}
+    },
+    {
+      "name": "bank",
+      "status": "passed",
+      "reason": "13 replayed on linux-aarch64, each the same as its golden",
+      "seconds": 84.7,
+      "details": {
+        "code": "0",
+        "replayed": 13,
+        "unreleased": []
+      }
+    },
+    {
+      "name": "speaker",
+      "status": "not run",
+      "reason": "no --window named",
+      "seconds": 0.0,
+      "details": {}
+    },
+    {
+      "name": "live",
+      "status": "not run",
+      "reason": "no --window named",
+      "seconds": 0.0,
+      "details": {}
+    },
+    {
+      "name": "collect",
+      "status": "passed",
+      "reason": "15 file(s)",
+      "seconds": 0.7,
+      "details": {}
+    }
+  ],
+  "flags": [],
+  "verdict": "body run done: 7 step(s) passed, 0 failed or refused, 2 not run"
+}

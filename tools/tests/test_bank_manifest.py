@@ -107,6 +107,66 @@ def test_every_problem_is_listed_not_only_the_first():
     assert len(bank_files.problems(doc, "manifest")) == 3
 
 
+# ------------------------------------------------------ a generated voice
+
+
+def a_generated_manifest() -> dict:
+    """A recording a generated voice made: a "g" speaker, and what made it."""
+    doc = a_manifest()
+    doc.update(speaker="g01", generated={"voice": "voices/g01.json"})
+    return doc
+
+
+def test_a_generated_voice_names_its_voice_record_and_its_recording_says_what_made_it():
+    """A "g" speaker in the index names a voice record where a person names
+    a consent file, and its recording carries `generated`. manifest.py's
+    index accepts both kinds of speaker id; check.py refuses a bank that
+    holds both (test_a_generated_bank_holds_no_recorded_voice)."""
+    bank = a_bank()
+    bank["speakers"] = {"g01": {"voice": "voices/g01.json"}}
+    assert bank_files.problems(bank, "bank") == []
+    bank["speakers"]["s01"] = {"consent": "consent/s01.txt"}
+    assert bank_files.problems(bank, "bank") == []
+    assert bank_files.problems(a_generated_manifest(), "manifest") == []
+
+
+@pytest.mark.parametrize("speakers, expect", [
+    ({"g01": {"consent": "consent/g01.txt"}}, ["bank: speaker 'g01' names its voice record, and nothing else"]),
+    ({"g01": {"voice": "voices/g01.json", "consent": "consent/g01.txt"}},
+     ["bank: speaker 'g01' names its voice record, and nothing else"]),
+    ({"g01": {"voice": "C:/voices/g01.json"}}, ["bank: speaker 'g01' names its voice record, and nothing else"]),
+    ({"s01": {"voice": "voices/s01.json"}}, ["bank: speaker 's01' names its consent file, and nothing else"]),
+    ({"g1": {"voice": "voices/g1.json"}}, ["bank: speaker 'g1' is not an id like s01; a speaker is never a name"]),
+])
+def test_a_speaker_is_held_to_the_file_of_its_own_kind(speakers, expect):
+    bank = a_bank()
+    bank["speakers"] = speakers
+    assert bank_files.problems(bank, "bank") == expect
+
+
+GENERATED_RULE = ("manifest: a generated voice's recording says what made it under generated, an object, "
+                  "and no other recording has one")
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d.update(speaker="s01"),       # says what made it, under a person's id
+    lambda d: d.pop("generated"),            # a generated voice, and nothing says what made it
+    lambda d: d.update(generated="piper"),   # what made it is an object
+    lambda d: d.update(generated=None),
+], ids=["a-persons-recording-with-generated", "a-generated-voice-without-it", "text", "null"])
+def test_a_recording_carries_generated_exactly_when_a_generated_voice_made_it(change):
+    doc = a_generated_manifest()
+    change(doc)
+    assert bank_files.problems(doc, "manifest") == [GENERATED_RULE]
+
+
+def test_generated_is_the_one_optional_field_and_a_misspelling_of_it_is_still_unknown():
+    doc = a_generated_manifest()
+    doc["generatd"] = doc.pop("generated")
+    assert bank_files.problems(doc, "manifest") == ["manifest: unknown field 'generatd'", GENERATED_RULE]
+    assert bank_files.problems(a_manifest(), "manifest") == [], "a person's recording needs no such field"
+
+
 def test_write_refuses_an_unsound_document_and_writes_nothing(tmp_path):
     doc = a_manifest()
     doc["speaker"] = "alex"
@@ -153,6 +213,22 @@ def test_a_cassette_is_checked_down_to_its_partials():
     keyed = copy.deepcopy(good)
     keyed["turns"][0]["request"]["query"]["api_key"] = "x"
     assert any("credential" in p for p in bank_files.problems(keyed, "cassette"))
+
+
+def test_a_cassette_turn_keeps_its_keyterms_as_a_list():
+    """`keyterm` is the one query value that is a list, and the one name
+    holding "key" a cassette keeps (`emet_providers.cassette.is_credential`).
+    `keyterms`, plural, is still named like a credential."""
+    doc = {"format": "emet-cassette/1", "turns": [a_cassette_turn()]}
+    query = doc["turns"][0]["request"]["query"]
+    query["keyterm"] = ["Emet", "Hey Emet"]
+    assert bank_files.problems(doc, "cassette") == []
+    for bad in ("Emet", [], ["Emet", ""]):
+        query["keyterm"] = bad
+        assert any("keyterm to a list of text" in p for p in bank_files.problems(doc, "cassette"))
+    query["keyterm"] = ["Emet"]
+    query["keyterms"] = "x"
+    assert any("credential" in p for p in bank_files.problems(doc, "cassette"))
 
 
 # --------------------------------------------------------- finding audio

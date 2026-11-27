@@ -1,0 +1,8 @@
+$ emet validate unknown-llm-provider.yaml
+exit 1
+--- stdout
+FAIL unknown-llm-provider.yaml  (manifest)
+     x missing_plugin /models/chat/provider
+       no language model provider provides 'abacus'. Installed: anthropic, mock, openai. `models.chat.provider` is an open enum: this value is legal, the plugin simply is not installed. Omit it to let the soul's `models.chat` choose.
+--- stderr
+(nothing)

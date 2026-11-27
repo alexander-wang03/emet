@@ -1,0 +1,8 @@
+$ emet-listen body.yaml soul.yaml --reply
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+anthropic: no key: the environment variable EMET_SNAPSHOT_KEY is not set. Anthropic keys come from console.anthropic.com; export it in the shell that runs the robot. The key is never written into a soul or a manifest.
+
+the language model 'anthropic' cannot start, so the robot would hear questions it can never answer. It will not run. no key: the environment variable EMET_SNAPSHOT_KEY is not set. Anthropic keys come from console.anthropic.com; export it in the shell that runs the robot. The key is never written into a soul or a manifest.

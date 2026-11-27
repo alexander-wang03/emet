@@ -1,0 +1,10 @@
+$ emet validate chains.yaml
+exit 1
+--- stdout
+FAIL chains.yaml  (chains)
+     x unknown_intent /express.glee
+       unknown argument 'glee' for intent 'express'. Allowed: affection, amusement, boredom, concern, confusion, curiosity, delight, surprise, thinking
+     x unknown_voice_action /express.glee/rungs/1/action
+       chain 'express.glee' ends in the voice action 'say', which no engine performs. Voice actions: backchannel, explain, inflect, silence, tone, utter.
+--- stderr
+(nothing)

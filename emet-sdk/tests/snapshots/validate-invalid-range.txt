@@ -1,0 +1,8 @@
+$ emet validate narrow.yaml
+exit 1
+--- stdout
+FAIL narrow.yaml  (manifest)
+     x invalid_range /capabilities/0/joints/0/range_deg
+       joint 'pan': range_deg is [10, 10]; the first value must be less than the second
+--- stderr
+(nothing)

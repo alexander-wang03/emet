@@ -1,0 +1,543 @@
+{
+  "format": "emet-generated-phrases/1",
+  "note": "What the generated bank says. Every text is already in this repository, at the source its group names, under the same id where the source has ids; none comes from a private recording. A text is split at ' ... ' into pieces said apart, with the phrase's pause_s, or its group's, between them. Each piece is given to the voice with a capital first letter and an end mark: the phrase's ends, or else a question mark when the question starts with a question word and a full stop otherwise (tools/bank/generate.py, spoken). say_as respells a word for the voice alone; the take's text keeps the spelling here.",
+  "wake": "hey emet",
+  "say_as": {},
+  "groups": [
+    {
+      "id": "wake",
+      "kind": "wake_pause",
+      "slot_s": 6.0,
+      "source": "emet-sdk/examples/emet-soul.yaml, identity.wake_word",
+      "note": "the wake phrase alone, as a wake_pause take with no question, said three ways",
+      "phrases": [
+        {
+          "id": "wa01",
+          "text": "hey emet",
+          "question": null,
+          "first_sound": null,
+          "ends": "."
+        },
+        {
+          "id": "wa02",
+          "text": "hey emet",
+          "question": null,
+          "first_sound": null,
+          "ends": "!"
+        },
+        {
+          "id": "wa03",
+          "text": "hey emet",
+          "question": null,
+          "first_sound": null,
+          "ends": "?"
+        }
+      ]
+    },
+    {
+      "id": "wake-pause",
+      "kind": "wake_pause",
+      "slot_s": 8.0,
+      "pause_s": 0.7,
+      "source": "tools/bank/plans/v1-sitting-1.json",
+      "note": "the name, a pause, then the question",
+      "phrases": [
+        {
+          "id": "wp01",
+          "text": "hey emet ... what time is it",
+          "question": "what time is it",
+          "first_sound": "w"
+        },
+        {
+          "id": "wp03",
+          "text": "hey emet ... how far away is the moon",
+          "question": "how far away is the moon",
+          "first_sound": "hh"
+        },
+        {
+          "id": "wp04",
+          "text": "hey emet ... I think the kitchen tap is dripping again",
+          "question": "I think the kitchen tap is dripping again",
+          "first_sound": "ay"
+        },
+        {
+          "id": "wp05",
+          "text": "hey emet ... play something quiet",
+          "question": "play something quiet",
+          "first_sound": "p"
+        },
+        {
+          "id": "wp06",
+          "text": "hey emet ... did anyone come to the door while I was out",
+          "question": "did anyone come to the door while I was out",
+          "first_sound": "d"
+        },
+        {
+          "id": "wp09",
+          "text": "hey emet ... tell me a fact about octopuses",
+          "question": "tell me a fact about octopuses",
+          "first_sound": "t"
+        },
+        {
+          "id": "wp10",
+          "text": "hey emet ... the meeting moved to three o'clock on Thursday",
+          "question": "the meeting moved to three o'clock on Thursday",
+          "first_sound": "dh"
+        },
+        {
+          "id": "wp12",
+          "text": "hey emet ... how do you spell necessary",
+          "question": "how do you spell necessary",
+          "first_sound": "hh"
+        },
+        {
+          "id": "wp13",
+          "text": "hey emet ... never mind",
+          "question": "never mind",
+          "first_sound": "n"
+        },
+        {
+          "id": "wp16",
+          "text": "hey emet ... set a reminder for lunch",
+          "question": "set a reminder for lunch",
+          "first_sound": "s"
+        },
+        {
+          "id": "wp17",
+          "text": "hey emet ... who wrote this song",
+          "question": "who wrote this song",
+          "first_sound": "hh"
+        },
+        {
+          "id": "wp18",
+          "text": "hey emet ... is the oven still on",
+          "question": "is the oven still on",
+          "first_sound": "ih"
+        }
+      ]
+    },
+    {
+      "id": "one-breath",
+      "kind": "one_breath",
+      "slot_s": 6.0,
+      "source": "tools/bank/plans/v1-sitting-1.json",
+      "note": "the name and the question in one breath, on many first sounds",
+      "phrases": [
+        {
+          "id": "ob01",
+          "text": "hey emet, is it going to rain today",
+          "question": "is it going to rain today",
+          "first_sound": "ih"
+        },
+        {
+          "id": "ob02",
+          "text": "hey emet, are you awake",
+          "question": "are you awake",
+          "first_sound": "aa"
+        },
+        {
+          "id": "ob03",
+          "text": "hey emet, open the curtains",
+          "question": "open the curtains",
+          "first_sound": "ow"
+        },
+        {
+          "id": "ob04",
+          "text": "hey emet, every day or every week",
+          "question": "every day or every week",
+          "first_sound": "eh"
+        },
+        {
+          "id": "ob06",
+          "text": "hey emet, how far away is the moon",
+          "question": "how far away is the moon",
+          "first_sound": "hh"
+        },
+        {
+          "id": "ob10",
+          "text": "hey emet, find my phone",
+          "question": "find my phone",
+          "first_sound": "f"
+        },
+        {
+          "id": "ob12",
+          "text": "hey emet, very quietly, tell me a story",
+          "question": "very quietly, tell me a story",
+          "first_sound": "v"
+        },
+        {
+          "id": "ob13",
+          "text": "hey emet, thank you",
+          "question": "thank you",
+          "first_sound": "th"
+        },
+        {
+          "id": "ob15",
+          "text": "hey emet, that was funny",
+          "question": "that was funny",
+          "first_sound": "dh"
+        },
+        {
+          "id": "ob17",
+          "text": "hey emet, set an alarm for seven",
+          "question": "set an alarm for seven",
+          "first_sound": "s"
+        },
+        {
+          "id": "ob20",
+          "text": "hey emet, zebras have stripes, don't they",
+          "question": "zebras have stripes, don't they",
+          "first_sound": "z"
+        },
+        {
+          "id": "ob21",
+          "text": "hey emet, should I bring an umbrella",
+          "question": "should I bring an umbrella",
+          "first_sound": "sh"
+        },
+        {
+          "id": "ob22",
+          "text": "hey emet, check the time",
+          "question": "check the time",
+          "first_sound": "ch"
+        },
+        {
+          "id": "ob23",
+          "text": "hey emet, just a moment",
+          "question": "just a moment",
+          "first_sound": "jh"
+        },
+        {
+          "id": "ob24",
+          "text": "hey emet, play something quiet",
+          "question": "play something quiet",
+          "first_sound": "p"
+        },
+        {
+          "id": "ob25",
+          "text": "hey emet, be quiet for a minute",
+          "question": "be quiet for a minute",
+          "first_sound": "b"
+        },
+        {
+          "id": "ob26",
+          "text": "hey emet, tell me a joke",
+          "question": "tell me a joke",
+          "first_sound": "t"
+        },
+        {
+          "id": "ob27",
+          "text": "hey emet, do you remember me",
+          "question": "do you remember me",
+          "first_sound": "d"
+        },
+        {
+          "id": "ob28",
+          "text": "hey emet, can you hear me",
+          "question": "can you hear me",
+          "first_sound": "k"
+        },
+        {
+          "id": "ob29",
+          "text": "hey emet, give me a fact about octopuses",
+          "question": "give me a fact about octopuses",
+          "first_sound": "g"
+        },
+        {
+          "id": "ob30",
+          "text": "hey emet, make it louder",
+          "question": "make it louder",
+          "first_sound": "m"
+        },
+        {
+          "id": "ob31",
+          "text": "hey emet, next song please",
+          "question": "next song please",
+          "first_sound": "n"
+        },
+        {
+          "id": "ob32",
+          "text": "hey emet, look at me",
+          "question": "look at me",
+          "first_sound": "l"
+        },
+        {
+          "id": "ob34",
+          "text": "hey emet, what time is it",
+          "question": "what time is it",
+          "first_sound": "w"
+        },
+        {
+          "id": "ob39",
+          "text": "hey emet, yes please",
+          "question": "yes please",
+          "first_sound": "y"
+        }
+      ]
+    },
+    {
+      "id": "number",
+      "kind": "number",
+      "slot_s": 6.0,
+      "source": "tools/bank/plans/v1-sitting-2.json",
+      "phrases": [
+        {
+          "id": "nu01",
+          "text": "hey emet, what's seven times eight",
+          "question": "what's seven times eight",
+          "first_sound": "w"
+        },
+        {
+          "id": "nu02",
+          "text": "hey emet, set a timer for fifteen minutes",
+          "question": "set a timer for fifteen minutes",
+          "first_sound": "s"
+        },
+        {
+          "id": "nu03",
+          "text": "hey emet, wake me at six thirty",
+          "question": "wake me at six thirty",
+          "first_sound": "w"
+        },
+        {
+          "id": "nu04",
+          "text": "hey emet, is it twenty two degrees",
+          "question": "is it twenty two degrees",
+          "first_sound": "ih"
+        },
+        {
+          "id": "nu06",
+          "text": "hey emet, what's a hundred minus one",
+          "question": "what's a hundred minus one",
+          "first_sound": "w"
+        },
+        {
+          "id": "nu08",
+          "text": "hey emet, how many days until the twenty first",
+          "question": "how many days until the twenty first",
+          "first_sound": "hh"
+        }
+      ]
+    },
+    {
+      "id": "short",
+      "kind": "short",
+      "slot_s": 6.0,
+      "source": "tools/bank/plans/v1-sitting-2.json",
+      "phrases": [
+        {
+          "id": "sh01",
+          "text": "hey emet, yes",
+          "question": "yes",
+          "first_sound": "y"
+        },
+        {
+          "id": "sh02",
+          "text": "hey emet, no",
+          "question": "no",
+          "first_sound": "n"
+        },
+        {
+          "id": "sh03",
+          "text": "hey emet, stop",
+          "question": "stop",
+          "first_sound": "s"
+        },
+        {
+          "id": "sh04",
+          "text": "hey emet, okay",
+          "question": "okay",
+          "first_sound": "ow"
+        },
+        {
+          "id": "sh05",
+          "text": "hey emet, thanks",
+          "question": "thanks",
+          "first_sound": "th"
+        },
+        {
+          "id": "sh06",
+          "text": "hey emet, wait",
+          "question": "wait",
+          "first_sound": "w"
+        }
+      ]
+    },
+    {
+      "id": "pause",
+      "kind": "pause",
+      "slot_s": 8.0,
+      "source": "tools/bank/plans/v1-sitting-2.json",
+      "note": "a pause inside the question, of the length each phrase gives",
+      "phrases": [
+        {
+          "id": "pa05",
+          "text": "hey emet, I want to ... go to the shops",
+          "question": "I want to go to the shops",
+          "first_sound": "ay",
+          "pause_s": 0.5
+        },
+        {
+          "id": "pa10",
+          "text": "hey emet, I want to ... go to the shops",
+          "question": "I want to go to the shops",
+          "first_sound": "ay",
+          "pause_s": 1.0
+        },
+        {
+          "id": "pa20",
+          "text": "hey emet, I want to ... go to the shops",
+          "question": "I want to go to the shops",
+          "first_sound": "ay",
+          "pause_s": 2.0
+        }
+      ]
+    },
+    {
+      "id": "long",
+      "kind": "long",
+      "slot_s": 44.0,
+      "source": "tools/bank/plans/v1-sitting-2.json",
+      "phrases": [
+        {
+          "id": "lo01",
+          "text": "hey emet, I want to tell you about my day. I woke up early, made coffee, and walked to the station in the rain. The train was late again, so I read for a while and watched the people on the platform. At work we planned the new garden by the car park, and after lunch I fixed the printer twice. What do you think I should cook tonight?",
+          "question": "I want to tell you about my day. I woke up early, made coffee, and walked to the station in the rain. The train was late again, so I read for a while and watched the people on the platform. At work we planned the new garden by the car park, and after lunch I fixed the printer twice. What do you think I should cook tonight?",
+          "first_sound": "ay"
+        }
+      ]
+    },
+    {
+      "id": "decoy",
+      "kind": "decoy",
+      "slot_s": 6.0,
+      "source": "tools/bank/plans/v1-sitting-1.json",
+      "note": "sentences that should not wake it, near misses among them",
+      "phrases": [
+        {
+          "id": "de01",
+          "text": "hey emma, are you still there",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de02",
+          "text": "hey everyone, dinner is ready",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de03",
+          "text": "hey, meet me outside in five minutes",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de04",
+          "text": "there is a mess of cables on the desk",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de05",
+          "text": "hey Emmett, how was school",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de06",
+          "text": "the weather is meant to turn tomorrow",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de07",
+          "text": "hey, met any interesting people today",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de09",
+          "text": "hey Emily, pass me the salt",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de10",
+          "text": "hey Emmett",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de12",
+          "text": "a met",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de13",
+          "text": "helmet",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de14",
+          "text": "hemmed in",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de16",
+          "text": "hey mate",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "de18",
+          "text": "emet",
+          "question": null,
+          "first_sound": null
+        }
+      ]
+    },
+    {
+      "id": "talk",
+      "kind": "talk",
+      "slot_s": 6.0,
+      "source": "tools/soak_prompts.sh, SENTENCES",
+      "note": "ordinary sentences with no name in them",
+      "phrases": [
+        {
+          "id": "ta01",
+          "text": "remind me to call my sister tomorrow morning",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "ta02",
+          "text": "I think the kitchen tap is dripping again",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "ta03",
+          "text": "did anyone come to the door while I was out",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "ta04",
+          "text": "I am going to bed early tonight",
+          "question": null,
+          "first_sound": null
+        },
+        {
+          "id": "ta05",
+          "text": "the meeting moved to three o'clock on Thursday",
+          "question": null,
+          "first_sound": null
+        }
+      ]
+    }
+  ]
+}

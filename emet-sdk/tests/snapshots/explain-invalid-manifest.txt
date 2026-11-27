@@ -1,0 +1,10 @@
+$ emet explain two-drives.yaml
+exit 1
+--- stdout
+FAIL two-drives.yaml  (manifest)
+     x multiple_drives /capabilities/1
+       found 2 drive capabilities (at indices [0, 1]); P0 permits at most one. Hybrid locomotion is V1.
+
+Cannot resolve chains against a manifest that does not validate.
+--- stderr
+(nothing)

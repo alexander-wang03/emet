@@ -1,13 +1,36 @@
 # Dependabot configuration.
 #
-# github-actions matters most here. Every action in ci.yml is pinned to a full
-# commit SHA so that the code running with our token cannot change under us.
-# The cost of pinning is that pins rot silently, and this is what stops that.
+# github-actions matters most here. Every action in the workflows is pinned
+# to a full commit SHA so that the code running with our token cannot change
+# under us. One pin holds less: ossf/scorecard-action's action.yaml runs a
+# Docker image named by a tag, and no pin in this repository can fix that
+# (weekly.yml's scorecard job says why). The cost of pinning is that pins
+# rot silently, and this is what stops that.
 #
-# pip is deliberately monthly. emet-sdk is a library and its dependencies are
-# floors rather than pins, so raising them narrows what users may install
-# alongside us. Security updates arrive separately and immediately regardless
-# of this schedule.
+# pip is deliberately monthly for the four packages. emet-sdk is a library
+# and its dependencies are floors rather than pins, so raising them narrows
+# what users may install alongside us. Security updates arrive separately
+# and immediately regardless of this schedule.
+#
+# The two tools lists are exact pins, imported by none of the four packages:
+# tools/ci (what CI itself runs, a lock with hashes that `uv pip compile`
+# writes, so Dependabot's uv ecosystem regenerates it with --universal,
+# --generate-hashes and --python-version read from the file, and without
+# --exclude-newer, whose job the cooldown below does) and tools/bank (the
+# voice bank's tools venv, a pinned list). Monthly as well, so the pins do
+# not rot.
+#
+# Every entry waits seven days after a release before proposing it, the
+# wait tools/ci/requirements.in also keeps. Seven is zizmor's recommended
+# floor: a compromised release is often taken down within days, so a week's
+# wait lets that happen first (zizmor's audit documentation, read
+# 2026-11-26). tools/ci/check_workflows.py holds the wait on every entry.
+# zizmor's `dependabot-cooldown` audit holds it too, but 1.32.0 read the
+# first entry alone in the review of 2026-11-26 (with the entries reordered,
+# the finding moved to whichever came first; whether zizmor means it so is
+# unverified). Dependabot's own default is three days, and the cooldown
+# holds version updates only, never security updates (GitHub Docs,
+# Dependabot options reference, `cooldown`, verified 2026-11-26).
 
 version: 2
 updates:
@@ -15,6 +38,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -25,6 +50,8 @@ updates:
     directory: /emet-sdk
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       python:
         patterns: ["*"]
@@ -35,6 +62,8 @@ updates:
     directory: /emet-hal
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       python:
         patterns: ["*"]
@@ -45,8 +74,46 @@ updates:
     directory: /emet-providers
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: pip
+    directory: /emet-engine
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: uv
+    directory: /tools/ci
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      ci-tools:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: pip
+    directory: /tools/bank
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      bank-tools:
         patterns: ["*"]
     commit-message:
       prefix: "build"
