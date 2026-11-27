@@ -23,18 +23,16 @@
 #   python tools/check_licences.py --requirements tools/bank/requirements.txt --python <tools-venv>/Scripts/python.exe --table   (Windows)
 #   python tools/check_licences.py --requirements tools/bank/requirements.txt --python <tools-venv>/bin/python --table           (Linux)
 #
-# and put each line of the table behind "# " here. The command exits 1
-# today, on two pins. numpy's expression names 0BSD, Zlib and CC0-1.0 beside
-# BSD-3-Clause and MIT, and the allowed list names none of those three.
-# tokenizers declares only the Apache classifier, which names no version.
-# Its wheel carries no licence file; its SBOM
+# and put each line of the table behind "# " here. numpy's expression
+# names 0BSD, Zlib and CC0-1.0 beside BSD-3-Clause and MIT, and the
+# maintainer counted those three permissive on 2026-11-27. tokenizers
+# declares only the Apache classifier, which names no version, and its
+# wheel carries no licence file; its SBOM
 # (tokenizers-0.23.3.dist-info/sboms/tokenizers-python.cyclonedx.json, read
-# 2026-11-26) names Apache-2.0 for tokenizers and an expression of its own
-# for each Rust crate compiled into it. pocketsphinx and colorama declare
-# only the BSD classifier too, and pass by the licence files read in their
-# wheels (the read list of tools/licences.json). Whether numpy's three
-# licences count as permissive, and whether tokenizers' SBOM counts as the
-# licence read, are the maintainer's questions, open.
+# 2026-11-26) names Apache-2.0 for tokenizers, which the maintainer took as
+# the licence read on the same day. pocketsphinx and colorama declare only
+# the BSD classifier too, and pass by the licence files read in their
+# wheels (the read list of tools/licences.json).
 #
 # | Package | Version | Licence | Brought by | Verdict |
 # |---|---|---|---|---|
@@ -42,7 +40,7 @@
 # | ctranslate2 | 4.8.3 | MIT | faster-whisper | allowed |
 # | pocketsphinx | 5.1.1 | BSD-2-Clause AND BSD-3-Clause AND MIT (read by hand; its metadata: BSD (classifier, no variant)) | the list | allowed: BSD-2-Clause AND BSD-3-Clause AND MIT as read in pocketsphinx 5.1.1's wheel, dist-info/licenses/LICENSE, read 2026-11-26: two-clause and three-clause BSD texts and two MIT texts, none with an advertising clause |
 # | huggingface_hub | 2.3.0 | Apache-2.0 | faster-whisper | allowed |
-# | numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | faster-whisper (through ctranslate2) | REFUSED: 0BSD, CC0-1.0 and Zlib are outside the allowed list, and no exception in tools/licences.json names numpy |
+# | numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | faster-whisper (through ctranslate2) | allowed (0BSD, Zlib and CC0-1.0 counted permissive on 2026-11-27; this row by hand, not regenerated) |
 # | anyio | 4.15.1 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
 # | av | 19.0.2 | BSD-3-Clause | faster-whisper | allowed |
 # | cffi | 2.1.1 | MIT-0 | pocketsphinx (through sounddevice) | allowed |
@@ -62,7 +60,7 @@
 # | pycparser | 3.12 | BSD-3-Clause | pocketsphinx (through sounddevice, cffi) | allowed |
 # | PyYAML | 6.0.3 | MIT | faster-whisper (through ctranslate2) | allowed |
 # | sounddevice | 0.5.6 | MIT | pocketsphinx | allowed |
-# | tokenizers | 0.23.3 | Apache (classifier, no version) | faster-whisper | REFUSED: it says no more than a family, and no `read` entry in tools/licences.json gives the licence a person read |
+# | tokenizers | 0.23.3 | Apache (classifier, no version) | faster-whisper | allowed: Apache-2.0 as read in its SBOM (the `read` list, 2026-11-27; this row by hand, not regenerated) |
 # | tqdm | 4.70.1 | MPL-2.0 AND MIT | faster-whisper | allowed |
 # | truststore | 0.10.5 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
 # | typing_extensions | 4.16.0 | PSF-2.0 | faster-whisper (through huggingface_hub) | allowed |

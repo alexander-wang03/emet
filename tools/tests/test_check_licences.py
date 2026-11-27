@@ -23,6 +23,10 @@ if str(TOOLS) not in sys.path:
 import check_licences as cl  # noqa: E402
 
 E55 = {"Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "PSF-2.0", "MIT-0"}
+#: The real policy: E55's list (2026-11-26) with the three licences numpy names beside it, counted
+#: permissive by the maintainer on 2026-11-27 (0.5.6-D5). The other tests keep E55 alone, and use 0BSD
+#: and Zlib as licences outside it.
+ALLOWED = E55 | {"0BSD", "Zlib", "CC0-1.0"}
 
 
 class Meta:
@@ -639,7 +643,7 @@ def test_a_lock_split_on_a_wildcard_marker_judges_the_pin_for_this_python(tmp_pa
 
 def test_the_real_policy_holds_e55s_list_and_names_its_exceptions():
     policy = cl.load_policy()
-    assert set(policy.allowed) == E55
+    assert set(policy.allowed) == ALLOWED
     assert set(policy.tools_allowed) == {"MPL-2.0"}
     assert set(policy.exceptions) == {"certifi", "piper-tts"}
     assert policy.exceptions["certifi"].licence == "MPL-2.0"
@@ -649,7 +653,8 @@ def test_the_real_policy_holds_e55s_list_and_names_its_exceptions():
     assert policy.tools_exceptions == {}
     assert {k: (e.declares, e.licence) for k, e in policy.read.items()} == {
         "pocketsphinx": ("BSD", "BSD-2-Clause AND BSD-3-Clause AND MIT"), "colorama": ("BSD", "BSD-3-Clause"),
-        "pip-api": ("Apache", "Apache-2.0"), "pip-audit": ("Apache", "Apache-2.0")}
+        "pip-api": ("Apache", "Apache-2.0"), "pip-audit": ("Apache", "Apache-2.0"),
+        "tokenizers": ("Apache", "Apache-2.0")}
 
 
 def bad_policy(tmp_path: Path, **change) -> Path:
