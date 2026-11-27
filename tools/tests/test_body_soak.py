@@ -1217,13 +1217,21 @@ def test_the_nightly_keeps_its_newest_thirty_reports_and_writes_one_the_runner_r
     for day in days:
         (folder / f"{day}.txt").write_text("verdict=passed\n")
         (folder / str(day)).mkdir()
+    # A night that gave way is a report too, and sorts before its day's.
+    for day in (days[0], days[5]):
+        (folder / f"{day}.gave-way.txt").write_text("verdict=gave way\n")
+    strays = ("README.txt", f"{days[1]}.txt.bak", f".{days[2]}.txt.part")
+    for name in strays:
+        (folder / name).write_text("not a report\n")
     done = nightly(home, 'REPORT="$NIGHTLY/2026-11-03.txt"; PART="$NIGHTLY/.part"; say format emet-nightly/1; '
                          'say started 2026-11-03T03:17:01-08:00; say suite_emet-sdk "code 0; 226 passed"; '
                          'finish passed ""')
     assert done.returncode == 0, done.stderr.decode()
-    kept = sorted(p.name for p in folder.glob("*.txt"))
-    assert len(kept) == 30 and kept[0] == f"{days[4]}.txt" and kept[-1] == "2026-11-03.txt"
-    assert not (folder / str(days[0])).exists() and (folder / str(days[4])).exists()
+    kept = sorted(p.name for p in folder.glob("*.txt") if p.name != "README.txt")
+    assert len(kept) == 30 and kept[0] == f"{days[5]}.gave-way.txt" and kept[-1] == "2026-11-03.txt", kept
+    assert not (folder / f"{days[0]}.gave-way.txt").exists() and not (folder / f"{days[4]}.txt").exists()
+    assert not (folder / str(days[0])).exists() and (folder / str(days[5])).exists()
+    assert all((folder / name).exists() for name in strays), "a file that is no report stays"
     report = run.parse_nightly((folder / "2026-11-03.txt").read_text())
     assert report["verdict"] == "passed" and report["suites"] == {"emet-sdk": "code 0; 226 passed"}
     assert report["format"] == "emet-nightly/1" and "ended" in report

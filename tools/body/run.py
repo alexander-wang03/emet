@@ -2710,8 +2710,18 @@ echo "during=$({PROBE})"
         tail = ["--keys", keys, "--state", state]
         listen, talk = f"{bin_dir}/emet-listen", f"{bin_dir}/emet-talk"
 
+        # `--foreground` sends SIGINT, and SIGKILL 30 s later, to the program
+        # alone, which stays in the terminal's foreground group as it does
+        # when typed at a prompt. Without it a timeout signals its own
+        # process group too. GNU's then waits the 30 s, but uutils' timeout
+        # 0.10.0, which Ubuntu 26.04 and so GitHub's ubuntu-latest ship as
+        # `timeout`, sends SIGKILL a moment after the SIGINT: the program
+        # exits 137 before its end line (tried under WSL with uutils' own
+        # build and read in its timeout.rs, 2026-11-26). The only children
+        # either program starts, git at boot and vcgencmd under --stats, end
+        # by their own 2 s timeouts.
         def bounded(seconds: int, *command: str) -> list[str]:
-            return ["timeout", "-s", "INT", "-k", "30", "--preserve-status", str(seconds), *command]
+            return ["timeout", "--foreground", "-s", "INT", "-k", "30", "--preserve-status", str(seconds), *command]
 
         plan = []
         if "speaker" in self.wanted:

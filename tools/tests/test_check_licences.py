@@ -245,6 +245,18 @@ def test_an_allowed_licence_passes_and_first_party_is_skipped(tmp_path):
     assert found["jsonschema"].brought == ["emet-sdk"]
 
 
+def test_an_installer_the_interpreter_brings_is_skipped_unless_a_first_party_package_brings_it(tmp_path):
+    """GitHub's Python 3.11 carries setuptools 79.0.1 with no licence in its
+    metadata. Nothing first-party asks for it, so it is the machine's and is
+    skipped; once emet-sdk asks for it, it is judged and refused."""
+    alone = verdicts(tree(Dist("setuptools", "79.0.1")), write_policy(tmp_path))
+    assert "setuptools" not in alone
+    asked = verdicts(with_sdk_requiring(tree(Dist("setuptools", "79.0.1")), "setuptools"), write_policy(tmp_path))
+    assert not asked["setuptools"].allowed
+    other = verdicts(tree(Dist("notaninstaller", "1.0")), write_policy(tmp_path))
+    assert not other["notaninstaller"].allowed
+
+
 def test_a_refused_licence_names_the_distribution_its_licence_and_what_brings_it(tmp_path):
     dists = with_sdk_requiring(tree(Dist("gplthing", "2.0", expression="GPL-3.0-or-later")), "gplthing")
     v = verdicts(dists, write_policy(tmp_path))["gplthing"]

@@ -214,10 +214,14 @@ model stage), the reference soul from the synced tree, `--keys` naming an
 empty file, and `--state` naming a fresh copy of the carried state.
 
 The three live steps run with nobody speaking, and each bound is the 60 s
-or the ten minutes of listening and 20 s to boot. `timeout -s INT` stops
-them, which is Ctrl-C to both programs: `emet-listen` prints `stopped.
-heard it N time(s).` and `emet-talk` prints `stopped. N exchange(s).`, and
-a step with no such line in its typescript fails. `live-talk` is there
+or the ten minutes of listening and 20 s to boot.
+`timeout --foreground -s INT` stops them, which is Ctrl-C to both
+programs: `emet-listen` prints `stopped. heard it N time(s).` and
+`emet-talk` prints `stopped. N exchange(s).`, and a step with no such line
+in its typescript fails. A program still running 30 s later is killed.
+`--foreground` signals the program alone: uutils' `timeout`, Ubuntu
+26.04's, signals its own group too and then kills the program at once,
+before its end line. `live-talk` is there
 because `emet-talk` with no flags is a row of the flag table that no other
 step shows: `speaker-talk` reads a file. If the microphone hears its name
 by mistake during it, the mock models answer and the speaker makes a short

@@ -903,7 +903,7 @@ def test_inside_a_window_each_hardware_step_runs_with_mocks_an_empty_keys_file_a
         assert "Documents/emet" not in body.script(name)
         assert f'COPY="$RUN/state/pi_speakerphone.json"' in body.script(name)
     assert "--stats" in steps["live-stats"]["details"]["command"]
-    assert "timeout -s INT -k 30 --preserve-status 620" in steps["live-stats"]["details"]["command"]
+    assert "timeout --foreground -s INT -k 30 --preserve-status 620" in steps["live-stats"]["details"]["command"]
     call = next(line for line in body.script("prepare").splitlines() if "<<'EMET_PY'" in line)
     models = json.loads(shlex.split(call.split("<<'EMET_PY'")[0])[-1])
     assert models == run.MODELS
@@ -964,7 +964,7 @@ def test_the_live_step_runs_emet_talk_with_no_flags_for_a_minute(tmp_path, lapto
     run_dir = f"{HOME}/emet-ci/runs/20261028-140000"
     assert (run.PLAIN_S, run.BOOT_S) == (60, 20)
     assert shlex.split(step["details"]["command"]) == [
-        "timeout", "-s", "INT", "-k", "30", "--preserve-status", "80",
+        "timeout", "--foreground", "-s", "INT", "-k", "30", "--preserve-status", "80",
         f"{HOME}/emet-ci/.venv/bin/emet-talk", f"{run_dir}/body.yaml",
         f"{HOME}/emet-ci/emet/emet-sdk/examples/emet-soul.yaml",
         "--keys", f"{run_dir}/empty-keys.env", "--state", f"{run_dir}/state"]
@@ -1072,7 +1072,12 @@ def test_the_hardware_steps_own_shell_stops_a_live_program_and_keeps_its_typescr
     A live step's bound here is 3 s, and the stand-in must have started
     within it: a SIGINT that lands while Python is still importing ends the
     program with no end line (seen 2026-11-26, with imports slowed to 2 s).
-    On the body the bound holds 20 s for the boot."""
+    On the body the bound holds 20 s for the boot.
+
+    It runs on the machine's own `timeout`: GNU's on the body and in WSL,
+    uutils' on GitHub's ubuntu-latest (Ubuntu 26.04), where a live step
+    exited 137 with no end line until the command took `--foreground`
+    (2026-11-26)."""
     for constant, seconds in (("PLAIN_S", 2), ("STATS_S", 2), ("BOOT_S", 1), ("REPLAY_LIMIT_S", 20)):
         monkeypatch.setattr(run, constant, seconds)
     home = tmp_path / "home"

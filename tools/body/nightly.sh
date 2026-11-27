@@ -76,9 +76,14 @@ say() {
 }
 
 prune() {
-  # The newest KEEP reports stay, with the folder of each.
-  local old
-  ls -1 "$NIGHTLY" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(\.gave-way)?\.txt$' | sort | head -n "-$KEEP" |
+  # The newest KEEP reports stay, with the folder of each. A report is
+  # YYYY-MM-DD.txt or YYYY-MM-DD.gave-way.txt, which the two globs name, so
+  # any other file in the folder stays.
+  local f old
+  for f in "$NIGHTLY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].txt \
+           "$NIGHTLY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].gave-way.txt; do
+    [ -e "$f" ] && printf '%s\n' "${f##*/}"
+  done | sort | head -n "-$KEEP" |
     while IFS= read -r old; do
       rm -f "$NIGHTLY/$old"
       rm -rf "${NIGHTLY:?}/${old%.txt}"
@@ -93,6 +98,8 @@ gate() {
   if [ -n "$busy" ]; then echo "the robot is in use: $busy"; return; fi
   pcm=$(pcm_open | head -n 3 | tr '\n' ';')
   if [ -n "$pcm" ]; then echo "a sound card is open: $pcm"; return; fi
+  # The tilde is text for a person, in run.py's own words for a held lock.
+  # shellcheck disable=SC2088
   if [ -e "$CI/lock" ]; then echo "~/emet-ci/lock is held: $(tr '\n' ' ' < "$CI/lock")"; return; fi
 }
 
@@ -206,6 +213,8 @@ main() {
   day=$(date +%Y-%m-%d)
   began=$(date -Iseconds)
   why=$(gate)
+  # As in gate(), the tilde is text for a person.
+  # shellcheck disable=SC2088
   if [ -z "$why" ] && ! take_lock; then why="~/emet-ci/lock was taken as the nightly began"; fi
   if [ -n "$why" ]; then
     # Without the lock nothing of the day's run is touched: another nightly

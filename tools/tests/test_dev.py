@@ -164,7 +164,15 @@ def test_a_copy_or_another_checkout_is_named(tmp_path):
     ]
 
 
-LINE = "-m pip install -e emet-sdk[dev] -e emet-hal[dev,audio,wake] -e emet-providers[dev] -e emet-engine[dev]"
+def spec(text: str) -> str:
+    """An extra as the line prints it. A POSIX shell expands brackets as a
+    glob, so there each one is quoted; cmd and Git Bash on Windows take it
+    bare (`dev.shown`)."""
+    return text if sys.platform == "win32" else f"'{text}'"
+
+
+LINE = ("-m pip install " + " ".join(f"-e {spec(s)}" for s in (
+    "emet-sdk[dev]", "emet-hal[dev,audio,wake]", "emet-providers[dev]", "emet-engine[dev]")))
 
 
 def test_a_package_not_installed(tmp_path):
@@ -259,7 +267,7 @@ def test_on_312_the_install_line_leaves_the_wake_extra_out(tmp_path):
     del dists["emet-sdk"]
     rep = run_check(root, dists, version=(3, 12, 3))
     assert rep.notes == [dev.no_wake_note((3, 12))]
-    assert "-e emet-hal[dev,audio] -e" in rep.fixes[0]
+    assert f"-e {spec('emet-hal[dev,audio]')} -e" in rep.fixes[0]
 
 
 def test_the_four_pyproject_toml_declaring_different_versions_is_named(tmp_path):

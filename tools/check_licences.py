@@ -184,6 +184,11 @@ FAMILY_NAMES = {
 FAMILY_SOURCES = {"classifiers": "classifier", "License": "License field"}
 
 UNDECLARED = "undeclared"
+#: The installers a Python interpreter brings with it. GitHub's Python 3.11
+#: carries setuptools 79.0.1, whose metadata declares no licence, though no
+#: Emet package asks for it. One of these is the machine's and is skipped,
+#: unless a first-party package brings it, when it is judged like any other.
+INSTALLERS = frozenset({"pip", "setuptools", "wheel"})
 #: A `read` entry's `declares` for a distribution whose metadata names nothing.
 NOTHING = "nothing"
 
@@ -981,6 +986,8 @@ def judge_installed(records: dict[str, Record], policy: Policy, env: dict[str, s
         if key in policy.first_party:
             continue
         labels, chains = brought_by(records, graph, key, set(policy.first_party))
+        if not labels and key in INSTALLERS:
+            continue
         if not labels:
             users = direct_dependents(records, graph, key)
             chains = [f"required by {', '.join(users)}, which no first-party package brings"] if users else \
@@ -1241,8 +1248,13 @@ def main(argv: list[str] | None = None) -> int:
         records = installed()
         verdicts = judge_installed(records, policy, marker_environment())
         skipped = sorted(records[k].name for k in records if k in policy.first_party)
+        judged = {v.record.key for v in verdicts}
+        machine = sorted(records[k].name for k in records if k in INSTALLERS and k not in judged)
         print(f"licences: {len(verdicts)} distribution(s) installed for {sys.executable}; "
               f"first party, skipped: {', '.join(skipped) or 'none installed'}")
+        if machine:
+            print(f"  note: the interpreter's own installers, which no first-party package brings, skipped: "
+                  f"{', '.join(machine)}")
         for note in unused(policy.exceptions, policy.read, set(records)):
             print(f"  note: {note}")
         return report(verdicts, show_table=args.table)
