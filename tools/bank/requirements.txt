@@ -76,26 +76,26 @@
 
 # What label.py imports
 faster-whisper==1.2.1
-ctranslate2==4.8.3           # 4.8.4 (2026-10-25) was two days old, so the one before it
+ctranslate2==4.9.0           # 4.8.4 (2026-10-25) was two days old, so the one before it
 pocketsphinx==5.1.1          # the same version as the repo venv's wake extra
-huggingface_hub==2.3.0       # fetches the model at its pinned revision
-numpy==2.5.4
+huggingface_hub==2.4.0       # fetches the model at its pinned revision
+numpy==2.5.5
 
 # What they pull in
-anyio==4.15.1
+anyio==4.16.0
 av==19.0.2                   # label.py hands whisper samples, so av decodes nothing
 cffi==2.1.1
-click==8.5.0
+click==8.5.1
 colorama==0.4.6              # pulled in on Windows only
-filelock==4.2.4
+filelock==4.2.12
 flatbuffers==25.12.19
 fsspec==2026.9.0
 h11==0.16.0
-hf-xet==1.7.0
-httpcore2==2.16.0
-httpx2==2.16.0
+hf-xet==1.8.0
+httpcore2==2.16.2
+httpx2==2.16.2
 idna==3.20
-onnxruntime==1.31.1          # faster-whisper's voice filter, which label.py leaves off
+onnxruntime==1.32.0          # faster-whisper's voice filter, which label.py leaves off
 packaging==26.3
 protobuf==7.36.2
 pycparser==3.12
@@ -107,7 +107,7 @@ truststore==0.10.5
 typing_extensions==4.16.0
 
 # For the label tests that need faster-whisper
-pytest==9.1.1
+pytest==9.2.0
 iniconfig==2.3.1
 pluggy==1.7.0
 Pygments==2.21.0
