@@ -12,7 +12,7 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
-## [0.5.6] - 2026-11-26
+## [0.5.6] - 2026-11-27
 
 Run every release by one playbook.
 
@@ -131,6 +131,13 @@ Run every release by one playbook.
 ### Security
 - The `deepgram`, `anthropic` and `openai` extras require `certifi`
   2026.10.18 or later (PYSEC-2026-4320, GHSA-6q48-6c7w-9gw2) (#19)
+
+Verified on the laptop and, over SSH, on the reference body, a Raspberry
+Pi 5: the suites, the checks and the bank on c1ec3f2 on 2026-11-27; the
+two-hour soak and the budget table on 8e618b3 on 2026-11-26, and every
+body flag on 8e618b3 on 2026-11-27, a head that differs from c1ec3f2
+only in the licence gate's list. No release sitting: the release changes
+nothing a person judges in conversation. Measurements in #19.
 
 ## [0.5.5] - 2026-11-26
 
