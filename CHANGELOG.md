@@ -48,6 +48,9 @@ Say plainly what failed, what it spent, and how long you waited.
   marks are removed is refused with exit 2 (#21)
 - `emet-say --to FILE` writes what is said to a mono 16-bit WAV at the
   voice's rate, whatever sink the manifest names (#21)
+- `emet-say --keys FILE` reads provider keys from a file as `emet-talk`
+  does, and `--chains FILE`, which may be repeated, lays a chain file over
+  the SDK's as `emet explain --chains` does (#21)
 - Each provider's boot line in `emet-listen` and `emet-talk` says where its
   stage runs (`at` the host; `on this body` for Emet's own plugins that
   send nothing; `where it sends is not stated` for another package's plugin
