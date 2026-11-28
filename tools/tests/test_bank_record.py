@@ -24,8 +24,8 @@ import pytest
 BANK_TOOLS = Path(__file__).resolve().parents[1] / "bank"
 sys.path.insert(0, str(BANK_TOOLS))
 
-import check  # noqa: E402
-import record  # noqa: E402
+import check  # noqa: E402  a bank tool, imported by its bare name from tools/bank/
+import record  # noqa: E402  a bank tool, imported by its bare name from tools/bank/
 
 PLANS = BANK_TOOLS / "plans"
 TRIAL = PLANS / "trial-30s.json"
@@ -199,7 +199,7 @@ def test_the_two_sittings_hold_the_bank_v1_table():
 
 
 def test_no_second_voice_without_consent():
-    """D7: the second voice's class waits for written consent."""
+    """The second voice's class waits for written consent (D7)."""
     for plan in plans() + [record.load_plan(TRIAL)]:
         assert plan.speaker == "s01"
 
@@ -258,13 +258,16 @@ def test_every_take_with_a_pause_has_8_seconds():
     assert seen == {"wake_pause", "pause"}
 
 
-def test_no_plan_asks_for_a_room_response():
+def test_only_the_block_with_the_gain_control_off_asks_for_a_room_response():
     """The microphone's automatic gain control is on (amixer -c 3, read
     2026-10-28), and a swept-sine response assumes a gain that holds still
-    through the sweep, so a sitting holds no take the robot cannot measure
-    as asked."""
+    through the sweep, so a room response is taken only inside sitting 2's
+    block with the gain control off (E13 (a)), whose files end `-gain-off`.
+    tools/tests/test_bank_sweep.py holds the block."""
     for plan in plans() + [record.load_plan(TRIAL)]:
-        assert all(t.kind != "room_response" for f in plan.files for t in f.takes), plan.id
+        for f in plan.files:
+            if any(t.kind == "room_response" for t in f.takes):
+                assert plan.id == "v1-sitting-2" and f.id.endswith("-gain-off"), f.id
 
 
 def test_each_sitting_fits_in_about_45_minutes():

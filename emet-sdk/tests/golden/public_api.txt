@@ -6,6 +6,8 @@ emet_sdk
     BodyFact = emet_sdk.types.BodyFact
     CapabilityDescriptor = emet_sdk.types.CapabilityDescriptor
     CapabilityPlugin = emet_sdk.plugin.CapabilityPlugin
+    FAULT_KINDS: frozenset = frozenset({'health', 'locomotion', 'model_unavailable', 'no_key', 'no_library', 'no_model', 'out_of_credit', 'start_failed', 'unhealthy', 'unpronounceable_phrase'})
+    FAULT_PREFIX: str = 'x_'
     Health = emet_sdk.types.Health
     Intent = emet_sdk.types.Intent
     LanguageModelDescriptor = emet_sdk.types.LanguageModelDescriptor
@@ -61,7 +63,7 @@ emet_sdk.chains
         attribute ALL = 'all'
         attribute FIRST = 'first'
         attribute VALUES = frozenset({'all', 'first'})
-    EXPLAIN_TOPICS: frozenset = frozenset({'cannot_move', 'cannot_turn', 'error', 'offline'})
+    EXPLAIN_TOPICS: frozenset = frozenset({'cannot_move', 'cannot_turn', 'error', 'offline', 'unavailable'})
     class Rung  [dataclass, frozen, slots]
         field actuator: ActuatorSelector
         field action: str
@@ -82,8 +84,16 @@ emet_sdk.discovery
     GROUP_STT: str = 'emet.stt'
     GROUP_TTS: str = 'emet.tts'
     GROUP_WAKE: str = 'emet.wake'
+    class PluginOrigin  [dataclass, frozen, slots]
+        field group: str
+        field name: str
+        field value: str
+        field distribution: str | None = None
+        field version: str | None = None
+        property label -> str | None
     class PluginRegistry
         classmethod discover(cls) -> 'PluginRegistry'
+        classmethod from_entry_points(cls, eps: Iterable[EntryPoint], *, verify_drivers: bool = False) -> 'PluginRegistry'
         def __bool__(self) -> bool
         def __init__(self, actuators: Mapping[str, EntryPoint] | None = None, sensors: Mapping[str, EntryPoint] | None = None, locomotion: Mapping[str, EntryPoint] | None = None, wake: Mapping[str, EntryPoint] | None = None, audio: Mapping[str, EntryPoint] | None = None, audio_out: Mapping[str, EntryPoint] | None = None, stt: Mapping[str, EntryPoint] | None = None, llm: Mapping[str, EntryPoint] | None = None, tts: Mapping[str, EntryPoint] | None = None, *, verify_drivers: bool = False) -> None
         def __iter__(self) -> Iterator[tuple[str, str]]
@@ -103,6 +113,7 @@ emet_sdk.discovery
         def load_stt(self, provider: str) -> type
         def load_tts(self, provider: str) -> type
         def load_wake(self, engine: str) -> type
+        def origin(self, group: str, name: str) -> PluginOrigin | None
         def with_verification(self, verify_drivers: bool) -> 'PluginRegistry'
         property audio_names -> list[str]
         property audio_out_names -> list[str]
@@ -115,10 +126,10 @@ emet_sdk.discovery
     def discover() -> PluginRegistry
 
 emet_sdk.intents
-    ALL_INTENTS: mappingproxy = {'acknowledge': frozenset(), 'attend': frozenset({'bearing', 'none', 'person', 'speaker'}), 'attend_joint': frozenset({'*'}), 'express': frozenset({'affection', 'amusement', 'boredom', 'concern', 'confusion', 'curiosity', 'delight', 'surprise', 'thinking'}), 'gesture': frozenset({'*'}), 'idle': frozenset({'doze', 'fidget', 'look_around', 'settle'}), 'manipulate': frozenset({'grasp', 'offer', 'release'}), 'move': frozenset({'approach', 'retreat', 'stop', 'turn_to', 'wander'}), 'navigate': frozenset({'*'}), 'signal': frozenset({'booting', 'error', 'listening', 'muted', 'offline', 'speaking', 'thinking'}), 'speak': frozenset({'*'})}
+    ALL_INTENTS: mappingproxy = {'acknowledge': frozenset(), 'attend': frozenset({'bearing', 'none', 'person', 'speaker'}), 'attend_joint': frozenset({'*'}), 'express': frozenset({'affection', 'amusement', 'boredom', 'concern', 'confusion', 'curiosity', 'delight', 'surprise', 'thinking'}), 'gesture': frozenset({'*'}), 'idle': frozenset({'doze', 'fidget', 'look_around', 'settle'}), 'manipulate': frozenset({'grasp', 'offer', 'release'}), 'move': frozenset({'approach', 'retreat', 'stop', 'turn_to', 'wander'}), 'navigate': frozenset({'*'}), 'signal': frozenset({'booting', 'error', 'listening', 'muted', 'offline', 'speaking', 'thinking', 'unavailable'}), 'speak': frozenset({'*'})}
     DEFAULT_PRIORITY: mappingproxy = {'acknowledge': Priority.SPEECH, 'attend': Priority.ATTENTION, 'attend_joint': Priority.ATTENTION, 'express': Priority.EXPRESSIVE, 'gesture': Priority.EXPRESSIVE, 'idle': Priority.IDLE, 'manipulate': Priority.LOCOMOTION, 'move': Priority.LOCOMOTION, 'navigate': Priority.LOCOMOTION, 'signal': Priority.SIGNAL, 'speak': Priority.SPEECH}
     FREE_ARGUMENT: frozenset = frozenset({'*'})
-    P0_INTENTS: mappingproxy = {'acknowledge': frozenset(), 'attend': frozenset({'bearing', 'none', 'person', 'speaker'}), 'express': frozenset({'affection', 'amusement', 'boredom', 'concern', 'confusion', 'curiosity', 'delight', 'surprise', 'thinking'}), 'idle': frozenset({'doze', 'fidget', 'look_around', 'settle'}), 'move': frozenset({'approach', 'retreat', 'stop', 'turn_to', 'wander'}), 'signal': frozenset({'booting', 'error', 'listening', 'muted', 'offline', 'speaking', 'thinking'}), 'speak': frozenset({'*'})}
+    P0_INTENTS: mappingproxy = {'acknowledge': frozenset(), 'attend': frozenset({'bearing', 'none', 'person', 'speaker'}), 'express': frozenset({'affection', 'amusement', 'boredom', 'concern', 'confusion', 'curiosity', 'delight', 'surprise', 'thinking'}), 'idle': frozenset({'doze', 'fidget', 'look_around', 'settle'}), 'move': frozenset({'approach', 'retreat', 'stop', 'turn_to', 'wander'}), 'signal': frozenset({'booting', 'error', 'listening', 'muted', 'offline', 'speaking', 'thinking', 'unavailable'}), 'speak': frozenset({'*'})}
     RESERVED_INTENTS: mappingproxy = {'attend_joint': frozenset({'*'}), 'gesture': frozenset({'*'}), 'manipulate': frozenset({'grasp', 'offer', 'release'}), 'navigate': frozenset({'*'})}
     class UnknownIntentError(ValueError)
     def is_reserved(kind: str) -> bool
@@ -246,10 +257,13 @@ emet_sdk.types
         field axes: frozenset[str] = frozenset()
         field joints: tuple[str, ...] = ()
         field healthy: bool = True
+    FAULT_KINDS: frozenset = frozenset({'health', 'locomotion', 'model_unavailable', 'no_key', 'no_library', 'no_model', 'out_of_credit', 'start_failed', 'unhealthy', 'unpronounceable_phrase'})
+    FAULT_PREFIX: str = 'x_'
     class Health  [dataclass, frozen, slots]
         field ok: bool = True
         field detail: str | None = None
         field faults: tuple[str, ...] = ()
+        def __post_init__(self) -> None
     class Intent  [dataclass, frozen, slots]
         field kind: str
         field argument: str | None = None
@@ -266,6 +280,9 @@ emet_sdk.types
         field streaming: bool = True
         field tools: bool = True
         field healthy: bool = True
+        field endpoint: str | None = None
+        field key_env: str | None = None
+        property host -> str | None
     class LocomotionDescriptor  [dataclass, frozen, slots]
         field kinematics: str
         field max_linear_mps: float
@@ -356,6 +373,9 @@ emet_sdk.types
         field streaming: bool = False
         field sample_rate: int = 16000
         field healthy: bool = True
+        field endpoint: str | None = None
+        field key_env: str | None = None
+        property host -> str | None
     class Transcript  [dataclass, frozen, slots]
         field text: str
         field final: bool = False
@@ -372,6 +392,9 @@ emet_sdk.types
         field sample_rate: int = 22050
         field streaming: bool = False
         field healthy: bool = True
+        field endpoint: str | None = None
+        field key_env: str | None = None
+        property host -> str | None
     class WakeDescriptor  [dataclass, frozen, slots]
         field engine: str
         field phrases: frozenset[str] = frozenset()
@@ -397,6 +420,7 @@ emet_sdk.validate
     DEFAULT_AUDIO_SINK: str = 'speaker'
     DEFAULT_AUDIO_SOURCE: str = 'microphone'
     DEFAULT_WAKE_ENGINE: str = 'pocketsphinx'
+    class DuplicatePluginError(emet_sdk.validate.ValidationError)
     class Finding  [dataclass, frozen, slots]
         field severity: Severity
         field code: str

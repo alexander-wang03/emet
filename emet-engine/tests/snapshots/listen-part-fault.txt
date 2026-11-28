@@ -8,7 +8,7 @@ listening for 'hey emet'
   audio    16000 Hz, 80 ms frames
   patience 900 ms
   body     a speakerphone on a desk (probe)
-  chains   31 resolved at boot against 1 part(s): 0 to hardware, 31 to voice
+  chains   32 resolved at boot against 1 part(s): 0 to hardware, 32 to voice
              voice  utter        speak
              voice  inflect      express.affection express.amusement
                                  express.boredom express.concern
@@ -18,6 +18,7 @@ listening for 'hey emet'
              voice  tone         signal.booting signal.listening signal.muted
              voice  explain      move.approach move.retreat move.turn_to
                                  signal.error signal.offline
+                                 signal.unavailable
              voice  backchannel  acknowledge
              voice  silence      attend.bearing attend.none attend.person
                                  attend.speaker idle.doze idle.fidget
@@ -30,4 +31,4 @@ listening for 'hey emet'
 
 source ended. heard it 0 time(s).
 --- stderr
-mock ring: simulated hardware fault
+(nothing)

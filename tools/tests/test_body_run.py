@@ -10,6 +10,7 @@ asks anything else.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.util
 import io
 import json
@@ -81,6 +82,16 @@ FINGERPRINT_OK = f"manifest_hash={MANIFEST_SHA}\nstate={STATE_FILE}\nstate_hash=
 AUDIT_CLEAN = "version=pip-audit 2.10.1\ncode=0\ntail=No known vulnerabilities found\nparsed=yes\npackages=58\n"
 
 
+def lock_part() -> tuple[str, str]:
+    """pip-audit's part of the real CI lock, and its pin, as the runner reads them."""
+    return run.audit_requirements(run.AUDIT_LOCK.read_text(encoding="utf-8"))
+
+
+def lock_digest() -> str:
+    """The sha256 of the lock's part, which the audit's venv records as installed."""
+    return hashlib.sha256(lock_part()[0].encode("utf-8")).hexdigest()
+
+
 def written(path: str, models: dict, sink: str = "null") -> str:
     return "written=" + json.dumps({"path": path, "sink": sink, "source": "microphone", "models": models},
                                    sort_keys=True) + "\n"
@@ -98,14 +109,19 @@ BUDGET_PREPARED = prepared(("budget/listen.yaml", run.MODELS), ("budget/speak.ya
 
 
 def driver(kind: str, *, boot_ms: float = 1800.0, mean: float = 2.4, p99: float = 4.1, over: int = 0,
-           rss_mb: float = 98.0, voice_ms: float = 620.0, cpu_pct: float = 3.5, code: int = 0) -> dict:
-    """One BUDGET_PY result, as the engine's wrapped SessionStats left it."""
+           rss_mb: float = 98.0, voice_ms: float = 620.0, cpu_pct: float = 3.5, code: int = 0,
+           gap_ms: float = 2260.0) -> dict:
+    """One BUDGET_PY result, as the engine's wrapped SessionStats left it.
+    Only the speak run's turns make a sound, so only it has turn gaps: three
+    turns whose median is `gap_ms`."""
     start = 1_000_000_000_000
     result = {"start_ns": start, "exit": code, "first_ns": start + int(boot_ms * 1e6),
               "rss_boot_kb": int(rss_mb * 1024), "frames": 7500, "mean_ms": mean, "p99_ms": p99, "over": over,
-              "voice_first_ms": [], "cpu_start": 10.0, "wall_start": 100.0, "cpu_end": 10.0, "wall_end": 160.0}
+              "voice_first_ms": [], "cpu_start": 10.0, "wall_start": 100.0, "cpu_end": 10.0, "wall_end": 160.0,
+              "gap_ms": []}
     if kind == "speak":
         result["voice_first_ms"] = [voice_ms, voice_ms]
+        result["gap_ms"] = [gap_ms + 900.0, gap_ms - 300.0, gap_ms]
     if kind == "idle":
         result["cpu_end"] = 10.0 + cpu_pct / 100.0 * 60.0
     return result
@@ -121,7 +137,7 @@ def budget_run(repeat: int = 1, **numbers) -> str:
 
 
 class FakeBody:
-    """The body, as the runner sees it: one answer per step."""
+    """The body as the runner sees it, with one answer for each step."""
 
     def __init__(self, answers: dict | None = None, *, unreachable: bool = False) -> None:
         self.scripts: list[str] = []
@@ -748,8 +764,6 @@ def test_the_fingerprint_runs_in_a_real_shell_with_the_runners_venv(tmp_path, la
     """The script as it is sent, heredoc and all, through bash. With no venv
     yet it falls back to the body's python3, here one with no PyYAML, and
     gives a note; with the venv's Python it gives the hashes."""
-    import hashlib
-
     pytest.importorskip("yaml")
     pytest.importorskip("emet_engine.state")
     home = tmp_path / "home"
@@ -1025,12 +1039,18 @@ STAND_IN = '''\
 """A stand-in for emet-listen and emet-talk on a body with no sound card:
 the lines the runner reads, and the engine's own way down. `asyncio.run`
 answers SIGINT by cancelling the task; the loop catches that, as
-`emet_engine.cli` and `emet_engine.talk` do, and prints the end line."""
+`emet_engine.cli` and `emet_engine.talk` do, and prints the end line.
+Given `--events PATH` it writes the file's header first, as
+`emet_engine.events.EventWriter` does when it is made, since the runner
+fails a step whose events file is empty or missing."""
 import asyncio, sys
 
 name, args = sys.argv[1], sys.argv[2:]
 replay, stats = "--replay" in args, "--stats" in args
 source = "wav" if replay else "microphone"
+if "--events" in args:
+    with open(args[args.index("--events") + 1], "w", encoding="ascii") as events:
+        events.write('{"format": "emet-events", "version": "1.0", "program": "%s"}\\n' % name)
 
 
 async def run() -> int:
@@ -1099,6 +1119,9 @@ def test_the_hardware_steps_own_shell_stops_a_live_program_and_keeps_its_typescr
             assert bound == 3 and 2.0 <= step.seconds < 30, "stopped at its bound, by the signal"
         text = Path(runner.run_dir, f"{name}.typescript").read_text(encoding="utf-8", errors="replace")
         passed.append((name, text))
+    for name in run.EVENTS_STEPS:
+        written = Path(runner.run_dir, f"{name}{run.EVENTS_SUFFIX}").read_text(encoding="ascii")
+        assert written.startswith('{"format": "emet-events"'), (name, written)
     talk_text = dict(passed)["live-talk"]
     assert "stopped. 0 exchange(s)." in talk_text and talk_text.startswith("Script started on ")
     assert run.flags_exercised(passed) == EVERY_FLAG
@@ -1174,6 +1197,8 @@ def test_the_runners_manifest_is_hashed_before_its_models_are_replaced(tmp_path,
     assert said.value("manifest_hash") == as_written
     written = yaml.safe_load((work / "body.yaml").read_text(encoding="utf-8"))
     assert written["models"] == run.MODELS and said.value("body") == "pi_speakerphone"
+    # Whether this venv's engine has --events, as the hardware steps read it.
+    assert said.value("events") == ("yes" if importlib.util.find_spec("emet_engine.events") else "no")
     assert {k: v for k, v in written.items() if k != "models"} == {
         k: v for k, v in yaml.safe_load(MANIFEST_YAML).items() if k != "models"}
     rewritten = fingerprint(tmp_path, (work / "body.yaml").read_text(encoding="utf-8"))[0]["manifest_hash"][0]
@@ -1633,6 +1658,18 @@ def test_the_prelude_unsets_what_it_finds(tmp_path):
     assert "not-a-real-key" not in out
 
 
+def test_the_prelude_sets_every_pip_configuration_file_aside(tmp_path):
+    """The Pi's /etc/pip.conf adds piwheels as an extra index, so every pip
+    the runner starts reads no configuration file and installs from PyPI
+    alone (ledger L53). The prelude's value wins over the environment's,
+    and it is the path pip compares with `os.devnull` on the body."""
+    assert "\nexport PIP_CONFIG_FILE=/dev/null\n" in run.PRELUDE
+    script = run.PRELUDE + 'echo "pip_config=$PIP_CONFIG_FILE"\n'
+    env = dict(os.environ, HOME=str(tmp_path), PIP_CONFIG_FILE="/etc/pip.conf", MSYS_NO_PATHCONV="1")
+    done = subprocess.run([posix_bash(), "-s"], input=script.encode(), capture_output=True, env=env, timeout=60)
+    assert done.stdout.decode().strip().splitlines()[-1] == "pip_config=/dev/null"
+
+
 def test_throttle_bits_are_named():
     assert run.throttle_meaning("throttled=0x0") == ["none"]
     assert run.throttle_meaning("throttled=0x50005") == [
@@ -1707,7 +1744,8 @@ def test_no_new_step_can_reach_a_vendor(tmp_path, laptop):
       {"name": "certifi", "version": "2026.7.22", "id": "GHSA-xxxx", "fix": ""}]),
     ("state=no-install\ntail=ERROR: Could not find a version that satisfies the requirement pip-audit==2.10.1\n"
      "tail=WARNING: Retrying after connection broken by 'NewConnectionError'\n",
-     "not run", "pip-audit==2.10.1 could not be installed in ~/emet-ci/audit-venv: no network", []),
+     "not run", "pip-audit==2.10.1 could not be installed in ~/emet-ci/audit-venv from the lock's hashes: "
+                "no network", []),
     ("version=pip-audit 2.10.1\ncode=1\ntail=requests.exceptions.ConnectionError: Max retries exceeded\nparsed=no\n",
      "not run", "pip-audit did not finish: no network", []),
     ("version=pip-audit 2.10.1\ncode=2\ntail=usage: pip-audit\nparsed=no\n",
@@ -1784,7 +1822,7 @@ def test_the_audit_runs_from_its_own_venv_over_the_runners_packages_in_a_real_sh
     (audit / "bin" / "pip-audit").write_text(STUB_AUDIT, encoding="utf-8", newline="\n")
     (audit / "bin" / "pip-audit").chmod(0o755)
     program(audit / "bin" / "python", Path(sys.executable).as_posix())
-    (audit / "installed").write_text(run.PIP_AUDIT + "\n", encoding="utf-8")
+    (audit / "installed").write_text(lock_digest() + "\n", encoding="utf-8")
     runner = make(tmp_path, laptop, BashBody(home))
     runner.home = shell_home(home)
     step = runner.audit()
@@ -1831,10 +1869,164 @@ def test_the_audit_installs_pip_audit_in_its_own_venv_and_nothing_in_the_runners
     assert step.status == "passed", step.reason
     asked = log.read_text(encoding="utf-8").splitlines()
     assert asked[0].startswith("python3 -m venv ") and asked[0].endswith("/emet-ci/audit-venv")
-    assert f"audit -m pip install --disable-pip-version-check -q {run.PIP_AUDIT}" in asked, asked
+    venv = shell_home(home) + "/emet-ci/audit-venv"
+    assert (f"audit -m pip install --disable-pip-version-check -q --require-hashes -r {venv}/requirements.txt"
+            in asked), asked
     assert [line for line in asked if line.startswith("runner ")] == [
         "runner -c import sysconfig; print(sysconfig.get_paths()['purelib'])"], "the runner's venv is only read"
-    assert (home / "emet-ci" / "audit-venv" / "installed").read_text(encoding="utf-8").strip() == run.PIP_AUDIT
+    audit = home / "emet-ci" / "audit-venv"
+    assert (audit / "installed").read_text(encoding="utf-8").strip() == lock_digest()
+    # What pip was given is the lock's part for pip-audit, byte for byte, as
+    # the heredoc carried it: every line pinned and hashed.
+    written = (audit / "requirements.txt").read_bytes().decode("utf-8")
+    assert written == lock_part()[0]
+    assert all(re.fullmatch(r"\S+==\S+( ; [^-]+)?( --hash=sha256:[0-9a-f]{64})+", line) for line in
+               written.splitlines()), written
+    assert step.details["pin"] == "pip-audit==2.10.1" and step.details["lock_sha256"] == lock_digest()
+
+
+def test_an_audit_venv_installed_from_a_bare_pin_is_made_again_from_the_lock(tmp_path, laptop, monkeypatch):
+    """Ledger L21. The body's audit venv from before 0.5.7 says it holds
+    `pip-audit==2.10.1`, a pin with no hash; the runner's marker is now the
+    lock part's sha256, so that venv is removed and made again from the
+    lock's hashes."""
+    home = tmp_path / "home"
+    fake_venv(home)
+    audit = home / "emet-ci" / "audit-venv"
+    (audit / "bin").mkdir(parents=True)
+    (audit / "bin" / "pip-audit").write_text(STUB_AUDIT, encoding="utf-8", newline="\n")
+    (audit / "bin" / "pip-audit").chmod(0o755)
+    (audit / "installed").write_text("pip-audit==2.10.1\n", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").write_text('#!/bin/sh\necho "python3 $*" >> "$HOME/asked"\nexit 9\n', encoding="utf-8",
+                                     newline="\n")
+    (bin_dir / "python3").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
+    runner = make(tmp_path, laptop, BashBody(home))
+    runner.home = shell_home(home)
+    step = runner.audit()
+    assert (home / "asked").read_text(encoding="utf-8").startswith("python3 -m venv "), "the venv is made again"
+    assert not (audit / "bin" / "pip-audit").exists(), "the venv from the bare pin is gone"
+    assert step.status == "not run" and step.reason == "the audit's venv could not be made with python3 -m venv"
+
+
+def test_the_audit_takes_pip_audit_and_all_it_needs_from_the_ci_lock_and_nothing_else():
+    """The real lock: pip-audit's part is pip-audit 2.10.1 and every pin the
+    lock holds for it, however deep (filelock is there for cachecontrol,
+    defusedxml for py-serializable, pip for pip-api), each with its hashes,
+    and none of the other tools CI pins."""
+    part, pin = lock_part()
+    assert pin == "pip-audit==2.10.1"
+    names = [run.pep503(re.split(r"[=; ]", line, maxsplit=1)[0]) for line in part.splitlines()]
+    for needed in ("pip-audit", "cachecontrol", "filelock", "msgpack", "cyclonedx-python-lib", "py-serializable",
+                   "defusedxml", "pip-api", "pip", "pip-requirements-parser", "platformdirs", "requests", "urllib3",
+                   "rich", "markdown-it-py", "mdurl", "tomli", "tomli-w", "packaging"):
+        assert needed in names, needed
+    for other in ("mutmut", "zizmor", "vulture", "coverage", "build", "libcst", "textual", "pytest", "click",
+                  "pyyaml", "pyyaml-ft", "colorama"):
+        assert other not in names, other
+    assert len(names) == len(set(names)) == 30
+    assert all(" --hash=sha256:" in line for line in part.splitlines())
+
+
+LOCK = """\
+# This file was autogenerated by uv via the following command:
+#    uv pip compile --generate-hashes requirements.in
+alpha==1.0 \\
+    --hash=sha256:aaaa \\
+    --hash=sha256:bbbb
+    # via
+    #   other-tool
+    #   pip-audit
+beta==2.0 ; python_full_version < '3.11' \\
+    --hash=sha256:cccc
+    # via alpha
+gamma==3.0 \\
+    --hash=sha256:dddd
+    # via other-tool
+pip-audit==2.10.1 \\
+    --hash=sha256:eeee
+    # via -r requirements.in
+"""
+
+
+def test_the_lock_part_follows_via_however_deep_and_keeps_markers():
+    part, pin = run.audit_requirements(LOCK)
+    assert pin == "pip-audit==2.10.1"
+    assert part.splitlines() == ["alpha==1.0 --hash=sha256:aaaa --hash=sha256:bbbb",
+                                 "beta==2.0 ; python_full_version < '3.11' --hash=sha256:cccc",
+                                 "pip-audit==2.10.1 --hash=sha256:eeee"]
+    with pytest.raises(run.RunnerError, match="holds no pip-audit"):
+        run.audit_requirements(LOCK.replace("pip-audit==2.10.1", "pip-tools==7.0"))
+    with pytest.raises(run.RunnerError, match="pins beta with no hash"):
+        run.audit_requirements(LOCK.replace("    --hash=sha256:cccc\n", ""))
+
+
+def test_an_audit_with_no_lock_to_read_is_not_run(tmp_path, laptop, monkeypatch):
+    monkeypatch.setattr(run, "AUDIT_LOCK", tmp_path / "no-requirements.txt")
+    body = FakeBody()
+    assert make(tmp_path, laptop, body).run() == 0, "the audit leaves the verdict alone"
+    said = record(tmp_path)
+    assert said["audit"]["status"] == "not run" and said["audit"]["reason"].startswith(
+        "no hashed pin of pip-audit to install: [Errno 2]")
+    assert "audit" not in body.steps(), "nothing went to the body"
+
+
+# ------------------------------------------------- the install's pip (L27)
+
+
+def test_the_runners_pip_is_held_at_26_2_or_later():
+    """pip 26.2 fixes the six advisories of the runner's pip 25.1.1 (ledger
+    L27), so the pin may move up and never below it."""
+    name, _, version = run.RUNNER_PIP.partition("==")
+    assert name == "pip" and tuple(int(part) for part in version.split(".")) >= (26, 2)
+
+
+def test_the_install_upgrades_pip_first_and_a_new_pin_installs_again(tmp_path, laptop, monkeypatch):
+    """The install step's script through bash, with a runner's Python that
+    writes down what it is asked: pip is upgraded to RUNNER_PIP before the
+    install line, the pip it then has is recorded, and the same tree with a
+    new pin gives a new key, so it installs again."""
+    home = tmp_path / "home"
+    tree = home / "emet-ci" / "emet"
+    for package in run.PACKAGES:
+        (tree / package).mkdir(parents=True)
+        (tree / package / "pyproject.toml").write_text(f'[project]\nname = "{package}"\n', encoding="utf-8")
+    log = tmp_path / "asked.log"
+    python = home / "emet-ci" / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f'#!/bin/sh\necho "$*" >> "{log.as_posix()}"\n'
+                      'case "$*" in "-m pip --version"*) echo "pip 26.2 from /x (python 3.13)" ;; '
+                      '"-c "*) echo "versions=0.5.7 0.5.7 0.5.7 0.5.7" ;; esac\nexit 0\n',
+                      encoding="utf-8", newline="\n")
+    python.chmod(0o755)
+    runner = make(tmp_path, laptop, BashBody(home))
+    runner.home = shell_home(home)
+    step = runner.install()
+    assert step.status == "passed", step.reason
+    asked = log.read_text(encoding="utf-8").splitlines()
+    installs = [line for line in asked if line.startswith("-m pip install")]
+    assert installs[0] == f"-m pip install --disable-pip-version-check -q --upgrade {run.RUNNER_PIP}"
+    assert installs[1].startswith("-m pip install --disable-pip-version-check -q -e emet-sdk[dev]")
+    assert step.details["pip"] == "26.2" and step.reason.endswith("; pip 26.2")
+    first = step.details["key"]
+    log.write_text("", encoding="utf-8")
+    assert runner.install().reason.startswith("kept"), "the same key: nothing is installed again"
+    assert not [line for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("-m pip install")]
+    monkeypatch.setattr(run, "RUNNER_PIP", "pip==26.3")
+    again = runner.install()
+    assert again.details["key"] != first and again.reason.startswith("installed")
+    assert "--upgrade pip==26.3" in log.read_text(encoding="utf-8")
+
+
+def test_a_pip_that_will_not_upgrade_fails_the_install_naming_it(tmp_path, laptop):
+    answer = run.Result(6, "key=k\nupgrade=failed\ntail=ERROR: No matching distribution found for pip==26.2\n")
+    body = FakeBody({"install": answer})
+    assert make(tmp_path, laptop, body).run() == 2
+    step = next(s for s in record(tmp_path)["steps"] if s["name"] == "install")
+    assert step["reason"] == ("pip==26.2 could not be installed in the runner's venv (exit 6): "
+                              "ERROR: No matching distribution found for pip==26.2")
 
 
 # ------------------------------------------ the checks through tools/ci.py
@@ -1899,7 +2091,7 @@ def netcut_run(tmp_path, laptop, answers: dict) -> tuple[int, dict, FakeBody]:
     (f"owner=root 755\ninstalled={NETCUT_SHA}\ntree={NETCUT_SHA}\nstate=no-rule\n", "the sudo rule is not installed"),
 ], ids=["nothing-installed", "the-script-without-its-rule"])
 def test_the_network_cut_is_not_run_while_sudo_refuses(tmp_path, laptop, answer, says):
-    """Today's state on the Pi: `sudo -n` asks for a password."""
+    """Today's state on the Pi, where `sudo -n` asks for a password."""
     code, step, body = netcut_run(tmp_path, laptop, {"netcut": answer})
     assert code == 0 and step["status"] == "not run" and step["reason"].startswith(says)
     assert "netcut-start" not in body.steps() and "netcut-alive" not in body.steps(), \
@@ -2020,3 +2212,331 @@ def test_the_network_cut_asks_sudo_to_run_only_the_trees_root_owned_script_in_a_
 def test_the_lengths_are_whole_numbers_within_their_bounds(argv):
     with pytest.raises(SystemExit):
         run.parse_args(["--release", "0.5.6", "--tree", *argv])
+
+
+# ------------------------------------------- the events files (BVP12)
+
+
+def events_text(gaps: list[float | None], *, header: dict | None = None) -> str:
+    """An events file as `--events` writes it (contract section 2.2), with
+    only the keys the runner reads: a header, a wake and a turn record for
+    each gap, and a footer."""
+    header = header or {"format": "emet-events", "version": "1.0", "program": "emet-talk",
+                        "packages": {"emet-sdk": "0.5.7", "emet-hal": "0.5.7", "emet-providers": "0.5.7",
+                                     "emet-engine": "0.5.7"}, "platform": "linux-aarch64", "python": "3.13.5"}
+    lines = [json.dumps(header)]
+    for n, gap in enumerate(gaps, 1):
+        lines.append(json.dumps({"kind": "wake", "wake": n, "at_s": n * 4.0, "confidence": 1.0}))
+        lines.append(json.dumps({"kind": "turn", "turn": n, "at_s": n * 4.0 + 2, "outcome": "answered",
+                                 "gap_ms": gap, "tail_ms": 960}))
+    lines.append(json.dumps({"kind": "footer", "at_s": 99.0, "frames": 7655}))
+    return "\n".join(lines) + "\n"
+
+
+def events_body(files: dict[str, str], answers: dict | None = None) -> FakeBody:
+    """A stand-in body whose collect brings home these files beside a suite's."""
+    body = FakeBody(answers)
+    raw = {"./suite-emet-sdk.txt": b"226 passed\n", **{f"./{n}": text.encode() for n, text in files.items()}}
+    body.answers["collect"] = run.Result(0, "", raw=tar_of(raw))
+    return body
+
+
+def test_the_talk_replay_and_the_ten_minutes_write_an_events_file_and_the_others_none(tmp_path, laptop):
+    body = FakeBody()
+    assert make(tmp_path, laptop, body, *window_args()).run() == 0
+    steps = {s["name"]: s for s in record(tmp_path)["steps"]}
+    run_dir = f"{HOME}/emet-ci/runs/20261028-140000"
+    assert run.EVENTS_STEPS == ("speaker-talk", "live-stats")
+    for name in run.HARDWARE_SUBSTEPS:
+        command = steps[name]["details"]["command"]
+        wanted = f"--stats --events {run_dir}/{name}.events.jsonl"
+        assert (wanted in command) is (name in run.EVENTS_STEPS), (name, command)
+        assert ("--events" in command) is (name in run.EVENTS_STEPS)
+        look = f'[ -s {run_dir}/{name}.events.jsonl ] || echo "events=missing"'
+        assert (look in body.script(name)) is (name in run.EVENTS_STEPS)
+    assert "--events" not in run.BEHAVIOUR, "the file is where the numbers go, never how the robot behaves"
+
+
+def test_an_engine_with_no_events_module_runs_both_steps_as_before(tmp_path, laptop):
+    body = FakeBody({"prepare": (f"manifest_hash={MANIFEST_SHA}\nbody=pi_speakerphone\nstate={STATE_FILE}\n"
+                                 f"models={json.dumps(run.MODELS)}\nevents=no\n")})
+    assert make(tmp_path, laptop, body, *window_args()).run() == 0
+    for step in record(tmp_path)["steps"]:
+        if step["name"] in run.HARDWARE_SUBSTEPS:
+            assert "--events" not in step["details"]["command"], step["name"]
+            assert "events=missing" not in body.script(step["name"])
+
+
+def test_a_step_that_wrote_no_events_file_fails(tmp_path, laptop):
+    body = FakeBody({"speaker-talk": HARDWARE_OK + "events=missing\n"})
+    assert make(tmp_path, laptop, body, *window_args()).run() == 1
+    step = next(s for s in record(tmp_path)["steps"] if s["name"] == "speaker-talk")
+    assert step["status"] == "failed" and step["reason"] == "the events file speaker-talk.events.jsonl was not written"
+
+
+def test_the_events_files_come_home_and_each_step_says_its_turns_and_gap(tmp_path, laptop):
+    body = events_body({"speaker-talk.events.jsonl": events_text([2000, 2600, 1800, None]),
+                        "live-stats.events.jsonl": events_text([])})
+    assert make(tmp_path, laptop, body, *window_args()).run() == 0
+    steps = {s["name"]: s for s in record(tmp_path)["steps"]}
+    assert steps["speaker-talk"]["details"]["events"] == {"file": "speaker-talk.events.jsonl", "turns": 4,
+                                                          "gap_ms_median": 2000}
+    assert steps["live-stats"]["details"]["events"] == {"file": "live-stats.events.jsonl", "turns": 0,
+                                                        "gap_ms_median": None}
+    assert "events" not in steps["speaker-echo"]["details"]
+    assert (tmp_path / "out" / "speaker-talk.events.jsonl").is_file()
+    report = (tmp_path / "out" / "report.txt").read_text(encoding="utf-8")
+    assert "  events   speaker-talk: 4 turn(s), turn gap median 2000 ms (speaker-talk.events.jsonl)" in report
+    assert "  events   live-stats: 0 turn(s), turn gap median not measured (live-stats.events.jsonl)" in report
+
+
+@pytest.mark.parametrize("text, says", [
+    (events_text([2000], header={"format": "emet-events", "version": "2.0"}),
+     "is format 'emet-events' version '2.0'; this reader knows emet-events 1.x"),
+    ('{"format": "emet-events", "version": "1.0"}\nnot json\n', ":2: not a JSON object"),
+], ids=["another-major", "a-broken-line"])
+def test_an_events_file_the_reader_refuses_fails_the_collect_naming_it(tmp_path, laptop, text, says):
+    body = events_body({"speaker-talk.events.jsonl": text})
+    assert make(tmp_path, laptop, body, *window_args()).run() == 1
+    collect = next(s for s in record(tmp_path)["steps"] if s["name"] == "collect")
+    assert collect["status"] == "failed"
+    assert "speaker-talk.events.jsonl could not be read: " in collect["reason"] and says in collect["reason"]
+
+
+def test_a_run_with_events_still_counts_for_every_flag_row(tmp_path, laptop):
+    """`--events` beside `--stats` leaves the ten live minutes a `--stats`
+    run: the typescripts carry the commands as sent, --events and all."""
+    body = windowed_body()
+    assert make(tmp_path, laptop, body, *window_args()).run() == 0
+    said = record(tmp_path)
+    live_stats = next(s for s in said["steps"] if s["name"] == "live-stats")
+    assert "--events" in live_stats["details"]["command"]
+    assert said["flags_run"] == EVERY_FLAG
+
+
+@pytest.mark.parametrize("path", ["~/sitting-0.5.7.events.jsonl", "~/pi-0.5.7.events.jsonl"])
+def test_a_fetched_events_file_comes_home(tmp_path, laptop, path):
+    body = FakeBody({"fetch-file": events_text([2000])})
+    assert make(tmp_path, laptop, body, "--fetch", path).run() == 0
+    assert (tmp_path / "out" / path.removeprefix("~/")).read_text().startswith('{"format": "emet-events"')
+
+
+@pytest.mark.parametrize("path", ["~/sitting-0.5.7.events.json", "~/sitting-0.5.7.jsonl", "~/notes.events.jsonl",
+                                  "~/sitting-key.events.jsonl", "~/.config/emet/x.events.jsonl",
+                                  "~/sitting-0.5.7.events.jsonl.wav"])
+def test_a_fetch_of_anything_else_ending_jsonl_is_refused(tmp_path, laptop, path):
+    body = FakeBody()
+    runner = make(tmp_path, laptop, body)
+    runner.home = HOME
+    problems: list[str] = []
+    assert runner.fetch(path, tmp_path, problems) is None
+    assert problems and "fetch-file" not in body.steps()
+
+
+# ------------------------------------------- the release sitting (EV4)
+
+
+SITTING_MD = RUN_PY.with_name("sitting.md")
+
+
+def filled_sheet(rows: dict[int, str] | None = None, *, before: str = "Copied from sitting.md.\n\n") -> str:
+    """A sheet with the maintainer's answers written in. `rows` replaces a
+    row's line, by its number."""
+    lines = ["| " + " | ".join(run.SHEET_COLUMNS) + " |", "|" + "---|" * len(run.SHEET_COLUMNS)]
+    for n in run.SHEET_ROWS:
+        held = "[x]" if n == 4 else ""
+        body = "[ ]" if n == 5 else ""
+        notes = "it took two tries | from the door" if n == 6 else ""
+        line = f"| {n} | [x] | [x] | {held} | [x] | {2 + n % 4} | {2 if n == 6 else 1} | {body} | {notes} |"
+        lines.append((rows or {}).get(n, line))
+    return before + "\n".join(lines) + "\n\nAnything else:\n\n1. the voice was quiet\n"
+
+
+def sitting_run(tmp_path, laptop, *, events: str | None, sheet: str | None = None):
+    """`--collect-only` after a sitting: the log and, when given, the events
+    file fetched, and the filled sheet named with --sheet."""
+    log = "Script started on 2026-11-30 14:10:00-08:00 [COMMAND=\"emet-talk a b --stats\"]\n"
+
+    def fetched(script: str) -> str:
+        return events if "events.jsonl" in script else log
+
+    body = FakeBody({"fetch-file": fetched})
+    (tmp_path / "sheet.md").write_text(sheet if sheet is not None else filled_sheet(), encoding="utf-8")
+    fetches = ["--fetch", "~/sitting-0.5.7.log"] + (["--fetch", "~/sitting-0.5.7.events.jsonl"] if events else [])
+    args = run.parse_args(["--release", "0.5.7", "--collect-only", *fetches, "--sheet", str(tmp_path / "sheet.md"),
+                           "--out", str(tmp_path / "out")])
+    runner = run.BodyRun(args, remote=body, laptop=laptop, clock=lambda: NOW, log_check=tmp_path / "none.py",
+                         history=[], top=tmp_path / "top")
+    code = runner.run()
+    sitting = tmp_path / "out" / "sitting.json"
+    return code, json.loads(sitting.read_text(encoding="utf-8")) if sitting.is_file() else None, body
+
+
+def test_the_sitting_sheet_is_the_one_the_runner_reads():
+    """sitting.md's sheet has the columns read_sheet reads, "Soon" is gone,
+    the anchors are written out, and its blank rows read as unticked."""
+    text = SITTING_MD.read_text(encoding="utf-8")
+    assert "| " + " | ".join(run.SHEET_COLUMNS) + " |" in text.splitlines()
+    assert "Soon" not in text
+    flowed = " ".join(text.split())
+    assert "1, I would stop talking to it; 3, acceptable; 5, as quick as a person" in flowed
+    assert "**Tries:**" in text and "1 when it woke the first time" in flowed
+    rows = run.read_sheet(text)
+    assert [r["turn"] for r in rows] == list(run.SHEET_ROWS)
+    assert all(r["asked"] is False and r["wait"] is None and r["tries"] is None for r in rows)
+    assert [r["turn"] for r in rows if r["held"] is not None] == [4]
+    assert [r["turn"] for r in rows if r["body"] is not None] == [5]
+
+
+def test_the_sitting_runs_turns_3_to_10_with_events_and_collects_them_with_the_sheet():
+    text = SITTING_MD.read_text(encoding="utf-8")
+    blocks = re.findall(r"```sh\n(.*?)\n```", text, re.S)
+    plain = next(b for b in blocks if "emet-talk" in b and "--stats" not in b)
+    stats = next(b for b in blocks if "emet-talk" in b and "--stats" in b)
+    assert plain.rstrip().endswith('emet-sdk/examples/emet-soul.yaml"'), "turns 1 and 2 keep no flags"
+    assert stats.rstrip().endswith('--stats --events ~/sitting-X.Y.Z.events.jsonl"')
+    collect = next(b for b in blocks if "run.py" in b)
+    assert ("--collect-only --fetch '~/sitting-X.Y.Z.log' --fetch '~/sitting-X.Y.Z.events.jsonl' "
+            "--sheet ../releases/vX.Y.Z/sitting-sheet.md") in collect
+    assert list(run.JOINED_ROWS) == [3, 4, 5, 6, 7, 8, 9, 10]
+    for path in ("~/sitting-X.Y.Z.log", "~/sitting-X.Y.Z.events.jsonl"):
+        assert run.FETCHABLE.match(path.replace("X.Y.Z", "0.5.7")) and not run.SECRET.search(path)
+
+
+def test_the_sitting_talks_through_the_reference_manifest_the_release_ships():
+    """Both of the sitting's runs name the branch's reference manifest, so
+    the turns are judged and timed on the model settings the release ships
+    (N25's reasoning effort), where the maintainer's ~/pi-speakerphone.yaml
+    has no models block (0.5.7's review, batch critic#1)."""
+    import yaml
+
+    text = SITTING_MD.read_text(encoding="utf-8")
+    talks = [b for b in re.findall(r"```sh\n(.*?)\n```", text, re.S) if "emet-talk" in b]
+    assert len(talks) == 2
+    for block in talks:
+        assert '-c "emet-talk emet-sdk/examples/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml' in block, block
+        assert "~/pi-speakerphone.yaml" not in block, block
+    manifest = yaml.safe_load((RUN_PY.parents[2] / "emet-sdk" / "examples" / "pi-speakerphone.yaml").read_text(encoding="utf-8"))
+    soul = yaml.safe_load((RUN_PY.parents[2] / "emet-sdk" / "examples" / "emet-soul.yaml").read_text(encoding="utf-8"))
+    assert soul["models"]["chat"]["provider"] == "openai" and "provider" not in manifest["models"]["chat"]
+    assert manifest["models"]["chat"]["params"]["reasoning_effort"] == "low"
+
+
+def test_the_real_vendor_replay_is_one_fixed_command_whose_files_come_home(tmp_path):
+    """The done-when's body run (0.5.7-D6) has a command of its own in the
+    README, since every runner step runs on mocks (0.5.7's review, batch
+    critic#2): one-breath through the soul's real stages with the voice
+    into the null sink, its typescript and events file fetched home, the
+    owner's state file left as it was. Its manifest edit, run here, gives
+    the branch's reference manifest with the null sink and nothing else
+    changed."""
+    import yaml
+
+    readme = RUN_PY.with_name("README.md").read_text(encoding="utf-8")
+    blocks = [b for b in re.findall(r"```sh\n(.*?)\n```", readme, re.S) if "pi-done-when" in b]
+    assert len(blocks) == 1, "one block holds the replay and its collect"
+    replay, collect = blocks[0].splitlines()
+    for flag in ("--replay ~/one-breath.wav", "--transcribe", "--reply", "--speak", "--stats",
+                 "--events ~/pi-done-when-X.Y.Z.events.jsonl", "--state ~/pi-done-when-state.json"):
+        assert flag in replay, flag
+    assert "--keys" not in replay and "--echo" not in replay
+    assert "script -qa ~/pi-done-when-X.Y.Z.log" in replay
+    for path in ("~/pi-done-when-X.Y.Z.log", "~/pi-done-when-X.Y.Z.events.jsonl"):
+        assert f"--fetch '{path}'" in collect
+        assert run.FETCHABLE.match(path.replace("X.Y.Z", "0.5.7")) and not run.SECRET.search(path)
+    edit = re.search(r"(sed \".*?\") emet-sdk/examples/pi-speakerphone\.yaml > ~/pi-done-when-body\.yaml", replay)
+    assert edit, replay
+    source = RUN_PY.parents[2] / "emet-sdk" / "examples" / "pi-speakerphone.yaml"
+    (tmp_path / "in.yaml").write_bytes(source.read_bytes().replace(b"\r\n", b"\n"))
+    done = subprocess.run([posix_bash(), "-c", f'{edit.group(1)} in.yaml > out.yaml'], cwd=tmp_path,
+                          capture_output=True, timeout=60)
+    assert done.returncode == 0, done.stderr.decode()
+    before = yaml.safe_load((tmp_path / "in.yaml").read_text(encoding="utf-8"))
+    after = yaml.safe_load((tmp_path / "out.yaml").read_text(encoding="utf-8"))
+    assert after["audio"]["output"].pop("sink") == "null" and after == before
+
+
+def test_a_filled_sheet_reads_each_box_and_number():
+    rows = run.read_sheet(filled_sheet())
+    assert rows[0] == {"turn": 1, "asked": True, "whole": True, "held": None, "voice": True, "wait": 3, "tries": 1,
+                       "body": None, "notes": None}
+    assert rows[3]["held"] is True and rows[4]["body"] is False
+    assert rows[5]["tries"] == 2 and rows[5]["notes"] == "it took two tries | from the door"
+    assert [r["wait"] for r in rows] == [3, 4, 5, 2, 3, 4, 5, 2, 3, 4]
+
+
+@pytest.mark.parametrize("rows, says", [
+    ({4: "| 4 | [x] | [x] | [x] | [x] | 6 | 1 | | |"}, "row 4, Wait: '6' is not a rating from 1 to 5"),
+    ({4: "| 4 | [x] | [x] | [x] | [x] | four | 1 | | |"}, "row 4, Wait: 'four' is not a rating from 1 to 5"),
+    ({2: "| 2 | [x] | [x] | | [x] | 3 | 0 | | |"}, "row 2, Tries: '0' is not a whole number from 1"),
+    ({2: "| 2 | yes | [x] | | [x] | 3 | 1 | | |"}, "row 2, Asked: 'yes' is not [x], [ ] or empty"),
+    ({3: "| 4 | [x] | [x] | | [x] | 3 | 1 | | |"}, "row 3 is numbered '4'"),
+    ({10: "| 10 | [x] | [x] | | [x] | 3 |"}, "has 6 cells, and the sheet has 9 columns"),
+    ({10: "not a row"}, "the sheet has 9 rows, and a sitting has 10"),
+], ids=["wait-6", "wait-a-word", "tries-0", "a-box-in-words", "a-row-misnumbered", "a-short-row", "nine-rows"])
+def test_a_sheet_the_runner_cannot_read_names_the_row_and_column(rows, says):
+    with pytest.raises(run.SheetError, match=re.escape(says)):
+        run.read_sheet(filled_sheet(rows))
+
+
+def test_a_sheet_with_the_old_columns_is_no_sheet():
+    old = filled_sheet().replace("| Wait (1 to 5) | Tries |", "| Soon |")
+    with pytest.raises(run.SheetError, match="no table has the sheet's columns"):
+        run.read_sheet(old)
+
+
+def test_a_sheet_is_refused_before_the_body_is_reached(tmp_path, capsys):
+    (tmp_path / "sheet.md").write_text(filled_sheet({4: "| 4 | [x] | [x] | [x] | [x] | 9 | 1 | | |"}),
+                                       encoding="utf-8")
+    for argv, says in ([["--collect-only", "--sheet", str(tmp_path / "sheet.md")], "row 4, Wait: '9'"],
+                       [["--collect-only", "--sheet", str(tmp_path / "none.md")], "could not be read"],
+                       [["--tree", "--sheet", str(tmp_path / "sheet.md")], "--sheet goes with --collect-only"]):
+        with pytest.raises(SystemExit) as stopped:
+            run.parse_args(["--release", "0.5.7", *argv])
+        assert stopped.value.code == 2 and says in capsys.readouterr().err
+
+
+def test_the_sitting_joins_each_rating_to_its_turns_timings(tmp_path, laptop):
+    code, sitting, body = sitting_run(tmp_path, laptop, events=events_text([2100 + 10 * n for n in range(8)]))
+    assert code == 0
+    assert sitting["format"] == "emet-sitting/1" and sitting["release"] == "0.5.7" and sitting["joined"] == "joined"
+    turns = sitting["turns"]
+    assert [t["turn"] for t in turns] == list(run.SHEET_ROWS)
+    assert turns[0]["record"] is None and turns[1]["record"] is None, "turns 1 and 2 ran with no flags"
+    assert [t["record"]["turn"] for t in turns[2:]] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert turns[2]["record"]["gap_ms"] == 2100 and turns[9]["record"]["gap_ms"] == 2170
+    assert turns[2]["wait"] == 5 and turns[2]["record"]["kind"] == "turn"
+    assert set(turns[0]) == {"turn", "asked", "whole", "held", "voice", "wait", "tries", "body", "notes", "record"}
+    collect = next(s for s in record(tmp_path)["steps"] if s["name"] == "collect")
+    assert collect["details"]["sitting"] == {"file": "sitting.json", "events": "sitting-0.5.7.events.jsonl",
+                                             "joined": "joined", "rated": 10}
+    report = (tmp_path / "out" / "report.txt").read_text(encoding="utf-8")
+    assert "  sitting  sitting.json: 10 of 10 turn(s) rated; joined" in report
+    assert f"f={HOME}/sitting-0.5.7.events.jsonl" in "".join(body.scripts)
+
+
+@pytest.mark.parametrize("gaps, joined", [
+    ([2000] * 9, "not joined: 9 turn records for 8 rows"),
+    ([2000] * 5, "not joined: 5 turn records for 8 rows"),
+], ids=["a-false-wake", "a-run-started-again"])
+def test_a_sitting_with_other_than_eight_turns_keeps_its_ratings_unjoined(tmp_path, laptop, gaps, joined):
+    code, sitting, _ = sitting_run(tmp_path, laptop, events=events_text(gaps))
+    assert code == 0 and sitting["joined"] == joined
+    assert all(t["record"] is None for t in sitting["turns"])
+    assert [t["wait"] for t in sitting["turns"]] == [r["wait"] for r in run.read_sheet(filled_sheet())]
+
+
+def test_a_sitting_with_no_events_file_says_which_to_fetch(tmp_path, laptop):
+    code, sitting, _ = sitting_run(tmp_path, laptop, events=None)
+    assert code == 0
+    assert sitting["joined"] == "not joined: no events file was fetched (--fetch '~/sitting-0.5.7.events.jsonl')"
+    assert all(t["record"] is None for t in sitting["turns"]) and sitting["turns"][0]["asked"] is True
+
+
+def test_a_sitting_whose_events_file_is_refused_fails_the_collect_and_keeps_the_ratings(tmp_path, laptop):
+    code, sitting, _ = sitting_run(tmp_path, laptop, events='{"format": "emet-events", "version": "9.0"}\n')
+    assert code == 1
+    assert sitting["joined"].startswith("not joined: sitting-0.5.7.events.jsonl could not be read: ")
+    assert sitting["turns"][3]["held"] is True
+    collect = next(s for s in record(tmp_path)["steps"] if s["name"] == "collect")
+    assert collect["status"] == "failed" and "sitting-0.5.7.events.jsonl could not be read" in collect["reason"]

@@ -113,7 +113,7 @@ _MAX_BAD = 20
 
 
 def user_state_dir() -> Path:
-    """A person's place: `$XDG_STATE_HOME/emet`, or `~/.local/state/emet`."""
+    """A person's state folder, `$XDG_STATE_HOME/emet` or else `~/.local/state/emet`."""
     base = os.environ.get("XDG_STATE_HOME")
     root = Path(base) if base else Path.home() / ".local" / "state"
     return root / "emet"
@@ -141,7 +141,7 @@ def state_path(body_id: str, explicit: str | Path | None = None) -> Path:
     if not isinstance(body_id, str) or not _SAFE_ID.match(body_id):
         raise ValueError(
             f"body.id {body_id!r} cannot name a state file. Use lowercase letters, "
-            f"digits and underscores, as the manifest schema asks."
+            f"digits and '_', as the manifest schema asks."
         )
     name = f"{body_id}.json"
     if explicit:

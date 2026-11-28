@@ -101,16 +101,31 @@ DEFAULT_MAX_TOKENS = 300
 DEFAULT_TURNS = 24
 
 #: What the robot says when the model does not. `declined`: the provider
-#: refused the request; `failed`: the network or the provider broke mid-turn;
-#: `nothing_heard`: the name was heard and no words followed, where None
-#: means stay quiet. A soul overrides any of them under `persona.lines`, in
-#: its own voice: the design says the robot fails loudly and in character,
-#: and these are the words.
+#: refused the request; `failed`: the network or the provider broke mid-turn,
+#: or a reply spent its whole token cap before any words; `nothing_heard`:
+#: the name was heard and no words followed, where None means stay quiet. A
+#: soul overrides any of these three under `persona.lines`, in its own
+#: voice: the design says the robot fails loudly and in character, and these
+#: are the words.
+#:
+#: Two more are the engine's own words until the soul can hold them in 0.6
+#: (0.5.7-D5): `unavailable`, said at the end of each wake's turn while the
+#: chat model is retired or unknown to its vendor, which sends nothing of the
+#: turn, and at the end of the turn whose reply first found it so; and
+#: `out_of_credit`, said when the vendor answers that the account that pays
+#: for the model has no credit, where "ask me again" would ask for a retry
+#: that cannot help.
 DEFAULT_LINES: Mapping[str, str | None] = {
     "declined": "I would rather not answer that.",
     "failed": "I lost my train of thought. Ask me again.",
     "nothing_heard": None,
+    "unavailable": "The part of me that thinks has been switched off. My owner needs to choose another.",
+    "out_of_credit": "I can't answer right now. The account that pays for my thinking has run out.",
 }
+
+#: The keys of `DEFAULT_LINES` a soul may set under `persona.lines`, which
+#: the soul bundle's schema keeps closed to these three.
+_SOUL_LINES = ("declined", "failed", "nothing_heard")
 
 
 def persona(soul: Mapping[str, Any]) -> str:
@@ -215,11 +230,13 @@ def persona_lines(soul: Mapping[str, Any]) -> dict[str, str | None]:
     """The soul's own words for the moments a model has none, over the defaults.
 
     A key set to null in the soul means silence for that moment, which is
-    how a soul turns `nothing_heard` off after turning it on.
+    how a soul turns `nothing_heard` off after turning it on. The engine's
+    own two, `unavailable` and `out_of_credit`, are kept whatever the soul
+    says.
     """
     lines: dict[str, str | None] = dict(DEFAULT_LINES)
     given = (soul.get("persona") or {}).get("lines") or {}
-    for key in lines:
+    for key in _SOUL_LINES:
         if key in given:
             value = given[key]
             lines[key] = str(value).strip() or None if value is not None else None

@@ -5,7 +5,7 @@
   "vulture_min_confidence": 80,
   "budgets": {
     "emet_sdk": {
-      "lines": {"budget": 3880, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
+      "lines": {"budget": 4282, "date": "2026-11-27", "commit": "8de8152-dirty"},
       "over_complexity": {"budget": 7, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
       "highest_complexity": {"budget": 28, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
       "longest_function": {"budget": 95, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
@@ -19,17 +19,17 @@
       "unused_names": {"budget": 3, "date": "2026-11-26", "commit": "2cc6acb-dirty", "tool": "vulture 2.16"}
     },
     "emet_providers": {
-      "lines": {"budget": 3546, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
+      "lines": {"budget": 4863, "date": "2026-11-27", "commit": "8de8152-dirty"},
       "over_complexity": {"budget": 14, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
       "highest_complexity": {"budget": 38, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
       "longest_function": {"budget": 94, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
       "unused_names": {"budget": 0, "date": "2026-11-26", "commit": "2cc6acb-dirty", "tool": "vulture 2.16"}
     },
     "emet_engine": {
-      "lines": {"budget": 6834, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
-      "over_complexity": {"budget": 30, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
+      "lines": {"budget": 9813, "date": "2026-11-27", "commit": "8de8152-dirty"},
+      "over_complexity": {"budget": 35, "date": "2026-11-27", "commit": "8de8152-dirty"},
       "highest_complexity": {"budget": 50, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
-      "longest_function": {"budget": 151, "date": "2026-11-26", "commit": "2cc6acb-dirty"},
+      "longest_function": {"budget": 185, "date": "2026-11-27", "commit": "8de8152-dirty"},
       "unused_names": {"budget": 0, "date": "2026-11-26", "commit": "2cc6acb-dirty", "tool": "vulture 2.16"}
     }
   }

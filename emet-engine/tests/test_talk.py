@@ -322,7 +322,7 @@ def test_the_header_names_the_body_and_prints_the_binding_table(tmp_path, monkey
 
     text = capsys.readouterr().out
     assert "  body     a test rig (talk_body)" in text
-    assert "  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice" in text
+    assert "  chains   32 resolved at boot against 0 part(s): 0 to hardware, 32 to voice" in text
     assert "voice  utter" in text and "speak" in text
     assert "  state    " in text and "talk_body.json" in text
     assert "  self     " in text
@@ -492,3 +492,194 @@ def test_without_stats_the_board_is_not_read(tmp_path, monkeypatch, capsys):
     talk.main(["body.yaml", "soul.yaml"])
 
     assert read == [] and "  board " not in capsys.readouterr().out
+
+
+# ------------------------------------------------------------- 0.5.7's lines
+
+
+def test_each_exchange_ends_with_its_turn_line_under_stats(tmp_path, monkeypatch, capsys):
+    """TT8 and OC1: `  (turn gap ...)` closes each exchange, and `--events`
+    writes the same turn beside it, with no word said."""
+    import json
+
+    wav = write_wav(tmp_path / "two.wav", spoken(b"first", b"one") + spoken(b"second", b"two"))
+    stub_loaders(monkeypatch, body(wav), soul())
+    path = tmp_path / "talk.jsonl"
+
+    rc = talk.main(["body.yaml", "soul.yaml", "--stats", "--events", str(path)])
+
+    out = capsys.readouterr().out.splitlines()
+    assert rc == 0
+    turns = [i for i, line in enumerate(out) if line.startswith("  (turn gap ")]
+    assert len(turns) == 2
+    assert all(out[i - 1].startswith("  emet: ") for i in turns)
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    # A5's end-to-end check of 0.5.7: every record emet-talk writes is one
+    # the shipped schema holds.
+    from jsonschema import Draft202012Validator
+
+    from emet_engine.events import SCHEMA
+
+    validator = Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+    for record in records:
+        validator.validate(record)
+    assert records[0]["program"] == "emet-talk"
+    assert [r.get("kind") for r in records[1:]].count("turn") == 2
+    assert records[-1]["kind"] == "footer"
+    assert "first one" not in path.read_text(encoding="utf-8")
+
+
+def test_events_without_stats_is_refused_with_exit_2(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert talk.main(["body.yaml", "soul.yaml", "--events", "run.jsonl"]) == 2
+    assert capsys.readouterr().err == "emet-talk: --events writes what --stats prints; add --stats\n"
+    assert list(tmp_path.iterdir()) == [], "refused before the file is opened"
+
+
+def test_a_declined_reply_prints_no_empty_speaker_tag(tmp_path, monkeypatch, capsys):
+    """L16: the speaker's tag is printed with the reply's first word, so a
+    reply with none leaves no `  emet: ` line standing empty."""
+    from emet_providers.mock import MockLanguageModel
+    from emet_sdk.types import ReplyDone
+
+    async def reply(self, prompt):
+        yield ReplyDone(text="", stop_reason="refusal", model="mock")
+
+    monkeypatch.setattr(MockLanguageModel, "reply", reply)
+    wav = write_wav(tmp_path / "d.wav", spoken(b"hello"))
+    stub_loaders(monkeypatch, body(wav), soul(persona={"lines": {"declined": "Not that one."}}))
+
+    talk.main(["body.yaml", "soul.yaml"])
+
+    out = capsys.readouterr().out.splitlines()
+    assert "  emet: " not in out
+    said = out.index("  you:  hello")
+    assert out[said + 1 : said + 3] == ["  (the provider declined)", "  emet: Not that one."]
+
+
+def test_the_speaker_tag_waits_for_the_first_word():
+    import io
+    from contextlib import redirect_stdout
+
+    screen = io.StringIO()
+    with redirect_stdout(screen):
+        speaker = talk.Speaker("  emet: ")
+        speaker.said("hello")
+        speaker.delta("")
+        speaker.close()
+        speaker.delta("Hi")
+        speaker.delta(" there.")
+        speaker.close()
+        speaker.close()
+    assert screen.getvalue() == "  you:  hello\n  emet: Hi there.\n"
+
+
+class _Terminal:
+    """A stream that says it is a terminal, writing into a journal it
+    shares with its partner, each write with the stream's name."""
+
+    def __init__(self, name: str, journal: list[tuple[str, str]]) -> None:
+        self.name = name
+        self.journal = journal
+
+    def write(self, text: str) -> int:
+        self.journal.append((self.name, text))
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_stats_at_a_terminal_draws_the_live_line_and_guards_stderr(tmp_path, monkeypatch):
+    """BVB3 stage 1 gives the live line to emet-talk as well: under --stats
+    at a terminal it is drawn, a write to stderr while it is drawn clears it
+    first, and both streams are the program's own again at exit."""
+    wav = write_wav(tmp_path / "l.wav", spoken(b"hello"))
+    stub_loaders(monkeypatch, body(wav), soul())
+    journal: list[tuple[str, str]] = []
+    screen, errors = _Terminal("out", journal), _Terminal("err", journal)
+    monkeypatch.setattr("sys.stdout", screen)
+    monkeypatch.setattr("sys.stderr", errors)
+    real_start = ListenSession.start
+    warned: list[bool] = []
+
+    async def start(self):
+        drawn = self.on_frame
+
+        def frame(level, speech, quiet):
+            drawn(level, speech, quiet)
+            if not warned:
+                warned.append(True)
+                import sys
+
+                print("  ! a warning in the middle of the run", file=sys.stderr)
+
+        self.on_frame = frame
+        await real_start(self)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+
+    assert talk.main(["body.yaml", "soul.yaml", "--stats"]) == 0
+
+    import sys
+
+    assert sys.stdout is screen and sys.stderr is errors
+    out = [text for name, text in journal if name == "out"]
+    assert any(text.startswith("\r    ears ") for text in out), "the line was never drawn"
+    at = journal.index(("err", "  ! a warning in the middle of the run"))
+    before = [text for name, text in journal[:at] if name == "out"]
+    assert before[-1] == "\r\x1b[K", "the warning landed on the drawn line"
+
+
+def test_a_replay_file_that_will_not_open_is_refused_before_the_boot_tone(tmp_path, monkeypatch, capsys):
+    """The refusal comes before the robot makes a sound: the file is opened
+    before the rising pair plays, so the sink is handed nothing."""
+    out = tmp_path / "said.wav"
+    stub_loaders(monkeypatch, body(str(tmp_path / "nothere.wav"), str(out)), soul())
+
+    assert talk.main(["body.yaml", "soul.yaml"]) == 1
+    err = capsys.readouterr().err
+    assert "the audio source 'wav' cannot start, so the robot would listen to nothing. It will not run." in err
+    if out.exists():
+        with wave.open(str(out), "rb") as w:
+            assert w.getnframes() == 0, "the boot tone reached the sink before the refusal"
+
+
+UNAVAILABLE = {"provider": "mock", "params": {
+    "fail_on_start": True, "fault": "model_unavailable", "fault_detail": "The mock was told its model is retired."}}
+
+
+def test_a_false_wake_is_silent_while_the_model_cannot_answer(tmp_path, monkeypatch, capsys):
+    """Review finding engine-console/code#1, settled by the rule that a false
+    wake is silent unless `persona.lines.nothing_heard` says otherwise: with
+    the chat model unavailable, a wake with nobody speaking says nothing,
+    where it said the unavailable line aloud (contract 0.5.7 section 9)."""
+    out = str(tmp_path / "said.wav")
+    manifest = body(write_wav(tmp_path / "f.wav", false_wake()), out)
+    manifest["models"]["chat"] = UNAVAILABLE
+    stub_loaders(monkeypatch, manifest, soul())
+
+    assert talk.main(["body.yaml", "soul.yaml"]) == 0
+    text = capsys.readouterr().out
+    assert "cannot answer; nothing was sent" not in text
+    assert "The part of me that thinks" not in text
+    from emet_providers.mock import read_back
+
+    with wave.open(out, "rb") as w:
+        assert "The part of me that thinks" not in read_back(w.readframes(w.getnframes()))
+
+
+def test_a_question_while_the_model_cannot_answer_still_gets_the_line(tmp_path, monkeypatch, capsys):
+    """The other half of engine-console/code#1: a wake with speech still gets
+    the unavailable line at the end of its turn (C5 (a))."""
+    manifest = body(write_wav(tmp_path / "q.wav", spoken(b"what", b"time", b"is it")))
+    manifest["models"]["chat"] = UNAVAILABLE
+    stub_loaders(monkeypatch, manifest, soul())
+
+    assert talk.main(["body.yaml", "soul.yaml"]) == 0
+    text = capsys.readouterr().out
+    assert "  (the language model cannot answer; nothing was sent to the transcriber or the model)" in text
+    assert "  emet: The part of me that thinks has been switched off. My owner needs to choose another." in text

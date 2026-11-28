@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --replay narrow.wav
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the audio source 'wav' cannot start, so the robot would listen to nothing. It will not run. 'narrow.wav' is 8-bit; this expects 16-bit PCM

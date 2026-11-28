@@ -440,7 +440,7 @@ class TurnRecorder:
 
 
 def load_file(path: Path | str) -> dict[str, Any]:
-    """One cassette file, checked: `{"format": ..., "turns": [...]}`."""
+    """One cassette file, `{"format": ..., "turns": [...]}`, read and checked."""
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")

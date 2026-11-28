@@ -157,6 +157,18 @@ class Utterance:
     #: Whether the silence window was extended once because the words so
     #: far looked unfinished.
     extended: bool = False
+    #: The quiet the endpointer had counted when it ended the turn, in
+    #: milliseconds rounded up to whole frames: from the last loud frame to
+    #: the endpoint. That is the patience on a plain turn, twice it on an
+    #: extended turn whose extension ran out in silence, and the patience
+    #: again when speech resumed inside the extension. It is the first part
+    #: of the wait a person feels (`--stats` prints it as `quiet`). A turn
+    #: the words ended had no frame loud enough to start speech, so its count
+    #: runs from the end of the click's deaf window, and speech the energy
+    #: detector took for quiet (a distant speaker under its threshold) is
+    #: counted with the quiet. None when nothing was caught: a wake and then
+    #: no speech, or a recording that ended first.
+    tail_ms: float | None = None
 
     @property
     def had_speech(self) -> bool:
@@ -239,6 +251,24 @@ class Endpointer:
         its click is the sound `deafen()` keeps from making it true.
         """
         return self._started
+
+    @property
+    def speech_ms(self) -> float:
+        """How much speech this turn has caught so far, in milliseconds,
+        the pre-roll included. Zero while the wait for speech goes on."""
+        return self._speech_ms
+
+    @property
+    def quiet_ms(self) -> float:
+        """The quiet counted since the last loud frame, in milliseconds.
+
+        Once speech has started it is the count the patience is judged
+        against. Before then it runs from the wake, the click's deaf window
+        left out, and the patience judges it only when the transcriber's
+        words end the wait; otherwise the lead-in ends it, so the count can
+        pass the patience while the turn still waits for speech.
+        """
+        return self.vad.quiet_ms
 
     def deafen(self, ms: float) -> None:
         """Keep the next `ms` of audio from starting speech.
@@ -374,11 +404,15 @@ class Endpointer:
     def _finish(self, reason: EndReason, *, heard: bool = False) -> Utterance:
         frames = self._waiting if heard else self._frames
         audio = b"".join(frames)
+        # Read before the reset below clears the run. A turn that caught
+        # nothing has no last loud frame to count from.
+        caught = self._started or heard
         utterance = Utterance(
             audio=audio,
             duration_ms=len(frames) * self.frame_ms,
             reason=reason,
             extended=self._extended,
+            tail_ms=self.vad.quiet_ms if caught else None,
         )
         self._frames = []
         self._waiting = []

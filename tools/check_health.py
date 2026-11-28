@@ -183,7 +183,7 @@ class Measurement:
 
 
 def line_count(path: Path) -> int:
-    """`wc -l`'s count: the newline characters in the file."""
+    """The count `wc -l` gives, the newline characters in the file."""
     return path.read_bytes().count(b"\n")
 
 
@@ -205,7 +205,7 @@ def sdk_lines(root: Path) -> tuple[int, int]:
 
 
 def outside_text() -> str:
-    """`OUTSIDE_THE_CONTRACT` as the report names it: `cli.py and testing/`."""
+    """`OUTSIDE_THE_CONTRACT` as the report names it, as in `cli.py and testing/`."""
     return " and ".join(sorted(n if n.endswith(".py") else f"{n}/" for n in OUTSIDE_THE_CONTRACT))
 
 

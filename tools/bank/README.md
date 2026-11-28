@@ -14,6 +14,7 @@ and hashes. `FORMAT.md` is every file's format.
 | `check.py` | checks a bank: index, manifests, hashes, slots, consent; a generated bank's voices, provenance and sums | the standard library |
 | `generate.py` | builds the generated bank from public voices and simulated rooms; packs and fetches it | the standard library, numpy to be fast; Piper in a venv of its own, run and never imported |
 | `record.py` | prompts and records a sitting on the reference body | the standard library, `arecord` |
+| `sweep.py` | writes the sine sweep a phone plays for sitting 2's room responses, outside the repository | the standard library |
 | `label.py` | labels takes: energy, forced alignment, a whisper transcript, flags | a tools venv (`requirements.txt`) |
 | `replay.py` | replays the bank through `emet-listen`, against the goldens | the repo's venv |
 | `seed_cassettes.py` | turns paid Deepgram replays already made into cassettes | the repo's venv |
@@ -71,7 +72,8 @@ wake_pause among them, 8 s. `--check` prints the plan as a sheet with each
 take numbered through the sitting, and each screen shows its take's number.
 A plan is a sitting: `plans/v1-sitting-1.json` (room A, near and about 3 m;
 31 minutes of audio) and `plans/v1-sitting-2.json` (numbers, short answers,
-pauses and long turns; a TV, facing away, about 5 m; room B; 30.5 minutes),
+pauses and long turns; a TV, facing away, about 5 m; room B; a block with
+the gain control off that holds the room responses; 33 min 40 s),
 and `plans/trial-30s.json`, which tried the prompter on one file first, 38 s
 since its wake_pause take has 8 s. Before each file it says where to stand:
 Enter starts it, `s` skips it, `q` ends the sitting. While a file records,
@@ -247,8 +249,9 @@ run's partials so the endpointer ends each turn where it did, and keeps a
 turn only when every byte matches.
 
 `canary.py` runs once a month: the four live-vendor tests and one cassette
-turn replayed live. A new model version or a changed final marks the
-cassettes stale. It spends the month's canary, so without `--spend` it runs
+turn replayed live. A new model version or a final with other words marks
+the cassettes stale; a final that differs in case or punctuation alone is a
+note (ledger L45). It spends the month's canary, so without `--spend` it runs
 only the checks that need no network and spends nothing.
 
 ## Where things live

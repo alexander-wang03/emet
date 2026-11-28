@@ -59,7 +59,7 @@ DEFAULT_SEEDS = 200
 
 
 def seeds(default: int = DEFAULT_SEEDS) -> list[int]:
-    """The seeds a property runs over: one named seed, or 0 to N - 1."""
+    """The seeds a property runs over, one named seed or 0 to N - 1."""
     one = os.environ.get("EMET_PROPERTY_SEED")
     if one:
         return [int(one)]

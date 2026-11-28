@@ -438,11 +438,11 @@ class Intent:
 | `acknowledge` | none | Backchannel. Must fire within 300ms of user endpoint. |
 | `attend` | `speaker`, `bearing`, `person:<id>`, `none` | Consumes DoA or vision. Head yaw, or body rotation, or nothing. |
 | `express` | `curiosity`, `delight`, `confusion`, `concern`, `amusement`, `boredom`, `surprise`, `affection`, `thinking` | The core expressive set. Deliberately small. |
-| `signal` | `booting`, `listening`, `thinking`, `speaking`, `muted`, `offline`, `error` | System state, not emotion. Distinct so a soul can't suppress it. |
+| `signal` | `booting`, `listening`, `thinking`, `speaking`, `muted`, `offline`, `unavailable`, `error` | System state, not emotion. Distinct so a soul can't suppress it. |
 | `idle` | `settle`, `look_around`, `fidget`, `doze` | Emitted by the idle loop, lowest priority. |
 | `move` | `approach`, `retreat`, `turn_to`, `wander`, `stop` | Only bound if a `drive` exists. |
 
-**Two kinds are the engine's own, since 0.5.** Every sentence of a reply is a `speak` intent performed through its binding, and its action carries a prosody hint: a `contour` read off the end mark (`rising`, `bright`, `level`). It is recorded on the action only: `VoicePlugin.speak()` takes text alone, so reaching a voice needs a contract change in a later release. The engine's state is a `signal` intent: `booting` once it is up, `listening` on a wake, `thinking` while the model works, `speaking` from the first sentence, `offline` when, in `emet-talk`, a provider's words or reply do not arrive, `error` when a declared part is not working at boot, `muted` when it stops listening. A model's tag naming either kind is dropped: system state is the engine's to report, and speech is the text itself.
+**Two kinds are the engine's own, since 0.5.** Every sentence of a reply is a `speak` intent performed through its binding, and its action carries a prosody hint: a `contour` read off the end mark (`rising`, `bright`, `level`). It is recorded on the action only: `VoicePlugin.speak()` takes text alone, so reaching a voice needs a contract change in a later release. The engine's state is a `signal` intent: `booting` once it is up, `listening` on a wake, `thinking` while the model works, `speaking` from the first sentence, `offline` when a provider's words or reply do not arrive because the network or the server failed, `unavailable` (since 0.5.7) when the chat model cannot answer at all, one the vendor has retired or does not know (the fault `model_unavailable`), `error` when a declared part is not working at boot, `muted` when it stops listening. Neither is performed for an empty reply at the token cap or an account out of credit, since the network caused neither and the model can still answer once the cap or the account changes; each has its own line (§13). A model's tag naming either kind is dropped: system state is the engine's to report, and speech is the text itself.
 
 ### 5.2 Reserved intents (`RSV`)
 
@@ -498,6 +498,8 @@ express.curiosity:
 
 **Resolution:** at boot, walk each chain top to bottom, bind the first rung whose actuator selector matches something in the manifest. Log the resolved binding table. It is the single most useful debugging artifact, printable with `emet explain`.
 
+**When two parts fit one rung, the first declared wins it.** The parts are tried in the order the manifest's `capabilities` lists them, so of two lights that both declare the role `status`, the one listed first performs every rung `{role: status, type: light}`. The order of the parts decides which part performs an intent and never which rung binds: a rung binds when any part fits it.
+
 Since 0.5 the engine does this against what the body's parts report: it starts every declared part whose type has a plugin category (a reserved type is listed for the self-model and nothing is built), resolves every chain once against the descriptors the parts return, prints the table in the boot log grouped by what performs each intent, and keeps it in the body's state file (§4.1). A part that will not start is bound past; a driver that is not installed stops the boot, naming the plugin. `--chains` on `emet-listen` and `emet-talk` lays an override file over the SDK's chains, as it does for `emet explain`.
 
 **Validation:** the SDK **rejects** any chain whose final rung is not a voice rung. This is the mechanical enforcement of principle 2.
@@ -515,7 +517,7 @@ each on a body with nothing but a speaker:
 | Action | What it does | Used by |
 |---|---|---|
 | `utter` / `inflect` / `tone` | Produces sound: speech, a filler, a system tone. | `speak`, `express.*`, `signal.booting`, `signal.listening`, `signal.muted` |
-| `explain` | Says *why the body cannot comply*. | `move.approach`, `move.retreat` and `move.turn_to` on a body that cannot do them, `signal.offline`, `signal.error` |
+| `explain` | Says *why the body cannot comply*. | `move.approach`, `move.retreat` and `move.turn_to` on a body that cannot do them, `signal.offline`, `signal.unavailable`, `signal.error` |
 | `backchannel` | The thinking-gap filler; binds and fires nothing until 1.0. | `acknowledge` |
 | `silence` | Binds and produces nothing. | all `idle.*` and `attend.*`, `move.stop`, `move.wander`, `signal.thinking`, `signal.speaking` |
 
@@ -541,7 +543,7 @@ output, not a failure, and nothing downstream should treat it as one.
 - `utter` says a sentence of the reply, which travels as a `speak` intent.
 - `inflect` says the rung's next `filler`, in turn, in the reply's voice, at the place the tag stood: `[express.curiosity]` before a sentence is "hm?" before it, and "hmm." the next time.
 - `tone` plays one of three presets the engine renders at the sink's rate: `rising_pair` (`signal.booting`), `soft_click` (`signal.listening`), `falling_pair` (`signal.muted`). They play only with a voice running. On a body that declares no echo cancellation, the endpointer does not take its own click for the start of speech.
-- `explain` says `cannot_move` and `cannot_turn` in the self-model's words (§7); `offline` in the soul's `failed` line; `error` by naming the parts that are not working.
+- `explain` says `cannot_move` and `cannot_turn` in the self-model's words (§7); `offline` in the soul's `failed` line; `unavailable` in the engine's unavailable line, "The part of me that thinks has been switched off. My owner needs to choose another." (a default of `emet_engine.prompting`, until 0.6 gives the soul a line of its own); `error` by naming the parts that are not working.
 - `backchannel` binds and fires nothing until the micro-model arrives with barge-in in 1.0.
 - `silence` binds, makes no sound, and is recorded as satisfied.
 
@@ -1218,6 +1220,18 @@ faith, and the robot should say that it will not answer rather than say
 nothing. `error` carries the text so far, so a dropped connection mid-sentence
 loses the rest of the sentence and not the turn.
 
+Since 0.5.7 each stop that is no answer has its own line, held as one table
+in `emet_engine/failures.py`, and the engine tells them apart by what the
+plugin reports, never by the words of its message. A `length` stop with no
+text is a reply that spent its token cap before the first word, which a
+reasoning model does when it thinks past the cap: the robot says the failed
+line and the console names the cap. After an `error` stop the engine reads
+the plugin's `health()`, whose `faults` the plugin sets from the vendor's
+response: `model_unavailable`, a model the vendor has retired or does not
+know, and `out_of_credit`, an account that cannot pay, each get a line of
+their own. Any other `error` is the network or the server, and only that
+one performs `signal.offline`.
+
 **No vendor SDK.** Both shipped plugins speak JSON over HTTPS and read
 Server-Sent Events through one small HTTP client, for the reason given in
 §12.3: a vendor SDK is the vendor's shape arriving by another door. The
@@ -1228,9 +1242,23 @@ the offline mode reserved in §14 arrives as a manifest line.
 
 **What fails loudly, and where.** `start()` reads the key from the variable
 the soul names and refuses to report healthy without one; then one cheap
-request, a model listing, so a rejected key or an unreachable network is
-known at boot. The engine refuses to run a robot that would hear questions
-and never answer them, in the terms the owner can act on.
+request to the vendor's models endpoint, so a rejected key, an unreachable
+network or a model the vendor no longer serves is known at boot. The engine
+refuses to run a robot whose model cannot start, in the terms the owner can
+act on: no key, a rejected key, no network, a local server that does not
+answer.
+
+**A model that cannot answer boots all the same** (since 0.5.7). When the
+only chat model is one the vendor has retired or does not know, its health
+names the fault `model_unavailable`, and the robot boots rather than
+refusing: a headless robot that refused to boot would tell nobody why. The
+boot prints why, and each wake gets one spoken line, "The part of me that
+thinks has been switched off. My owner needs to choose another.", through
+`signal.unavailable`, with nothing sent to the transcriber or the model.
+The line comes when the person stops speaking, at the end of that wake's
+turn. A model the vendor stops serving during a run turns the robot the
+same way from that turn on. An unknown id, a typo or a key without access
+to the model, is treated as a retired one.
 
 ### 12.5 Speech synthesis plugins
 
@@ -1321,7 +1349,18 @@ Four decisions, defaults chosen. All `P0`. Turn-taking is what separates charmin
 3. **Thinking gap:** local micro-model backchannel within 300ms, so a sound arrives before the cloud answer.
 4. **Trailing clause:** if the transcript looks incomplete, extend the silence window once (`extend_on_incomplete`). Cheap heuristic, big perceived-intelligence payoff. Since 0.4: judged on the words so far at the moment silence runs out the patience, by `emet_engine.turn.looks_incomplete`, which reads a last word no sentence ends on ("where are my", "and then"), a trailing comma, or a clause with no end mark from a provider that has been supplying them. One extra window per turn; speech resuming inside it returns the turn to plain patience. Off without a transcriber, whatever the soul says.
 
-**When the model has no words, the soul does.** A provider that declines, a network that breaks mid-reply, a name heard with nothing after it: each gets a line from `persona.lines` (§8.1), spoken in the robot's own voice, so it fails loudly and in character rather than in silence. The engine has plain defaults for the first two and stays quiet on the third unless the soul says otherwise. Since 0.5, in `emet-talk`, a provider whose words or reply did not arrive is also `signal.offline`, whose voice rung explains in the soul's `failed` line, so on a body with nothing else to show it the line is said once; where a status light shows it, the light pulses and the line is still said.
+**When the model has no words, the soul does.** A provider that declines, a network that breaks mid-reply, a name heard with nothing after it: each gets a line from `persona.lines` (§8.1), spoken in the robot's own voice, so it fails loudly and in character rather than in silence. The engine has plain defaults for the first two and stays quiet on the third unless the soul says otherwise. Since 0.5 a provider whose words or reply did not arrive is also `signal.offline`, whose voice rung explains in the soul's `failed` line, so on a body with nothing else to show it the line is said once; where a status light shows it, the light pulses and the line is still said. Since 0.5.7 that signal is for a network or a server that failed and nothing else (§12.4's stop reasons), and `emet-listen --speak` says each line as `emet-talk` does. Three failures have lines of their own: a chat model that cannot answer says the engine's unavailable line through `signal.unavailable`; an account out of credit says "I can't answer right now. The account that pays for my thinking has run out." and performs no signal; an empty reply at the token cap says the `failed` line and performs no signal. Until 0.6 gives the soul fields for them, the first two are the engine's words (`emet_engine.prompting.DEFAULT_LINES`).
+
+**The turn budget** (since 0.5.7, EV3 stage 1). The wait a person feels is the turn gap: from the last loud frame of what they said to the first sound of the answer, which `--stats` prints for each turn and as a median, a mean and a maximum in its footer. Every number is a value to tune:
+
+| Term | Value | Why |
+|---|---|---|
+| Budget, the turn gap at the median | 2.0 s | For a robot's response time, "ratings level off at two seconds" (Shiwa, Kanda, Imai, Ishiguro and Hagita, "How quickly should communication robots respond?", HRI 2008; `CITATIONS.md`). Reading that as a limit is this project's reading of the abstract |
+| Stretch | 1.0 s | The same study: "user preference ... is the highest at one second" |
+| The first term, `patience_ms` | 900 ms shipped | The quiet the endpointer waits before the turn ends (item 1 above), the soul's to set. It is written into the gap and never cut to meet the budget |
+| Horizon | 380 ms | The median gap between two people in TurnBench (Jiang et al., 2026; `CITATIONS.md`); across ten languages the mean gaps lie within 250 ms of each other (Stivers et al., "Universals and cultural variation in turn-taking in conversation", PNAS 2009; `CITATIONS.md`). A cascade with a 900 ms patience cannot reach it by design, so it is a horizon and never a target |
+
+Each release's body run measures the turn gap's median on the local path, the mock transcriber and language model with Piper into the null sink, as a row of the budget table, held to the last release's value on the same body as every row is (`tools/body/run.py`); 0.5.7 records the first value. The sitting's turns run over the cloud transcriber and model, so their gaps are reported per run beside the maintainer's rating of each wait (`tools/body/sitting.md`), and never rank two vendors. Shiwa's and Stivers's figures are from their abstracts, read 2026-11-25; TurnBench's are from the paper, read 2026-09-03.
 
 **Until barge-in, it does not hear itself.** The listen loop does not read the microphone while the robot speaks, so on a body with no echo cancellation the capture queue ends with the robot's own voice when listening resumes, and the wake engine would hear it: on the reference body "Say, 'Emet, wake up.'" woke it and it answered its own "wake up" (0.5.1's body run). Since 0.5.2, when the wake engine is about to hear again after the robot has made a sound, whatever waited in the queue is thrown away (`discard_queued()`, up to two seconds on the shipped microphone, counted as frames lost while busy), and a phrase that ended in the tail still in the air, the sink's output latency and a frame rounded up to whole frames, is ignored however late the wake engine reports it. A body with echo cancellation, a recording and a sink that plays into no room keep everything; a live source without `discard_queued()` keeps its backlog and is not protected. The system prompt also tells the model the phrase that wakes it, which it could not say before. Barge-in, in 1.0, reads the microphone while the robot speaks and replaces this with echo cancellation.
 

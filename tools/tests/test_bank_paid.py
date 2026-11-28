@@ -26,7 +26,7 @@ OCT28 = datetime.date(2026, 10, 28)
 
 
 def old_ledger(tmp_path: Path) -> Path:
-    """The shape of releases/v0.5.3/harness/deepgram-ledger.json: ten spent."""
+    """A ledger shaped like releases/v0.5.3/harness/deepgram-ledger.json, with ten spent."""
     times = ["2026-09-29 22:24:12 PDT"] + [f"2026-10-0{d} 23:20:27 PDT" for d in (1, 1, 2, 2, 2, 2, 3, 5, 5)]
     path = tmp_path / "deepgram-ledger.json"
     path.write_text(json.dumps({"allowed": 10, "spent": [{"time": t, "recording": "r"} for t in times]}), encoding="utf-8")
@@ -547,7 +547,7 @@ class FakeDeepgram:
 
 
 class Closed(Exception):
-    """What websockets raises when the server closes: it has rcvd and sent."""
+    """What websockets raises when the server closes, which has rcvd and sent."""
 
     rcvd = sent = None
 

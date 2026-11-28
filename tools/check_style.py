@@ -9,6 +9,23 @@
                    project's own, GitHub's noreply domain, and placeholders
                    at example.com and example.invalid
 
+and four prose rules from 0.5.7-D10 (c), which are problems like the rest
+while `PROSE_RULES_BLOCK` is True, as it is since 0.5.7's sweep rewrote what
+they found (set False, they print `warning:` lines and leave the exit code
+alone):
+
+    docstrings     no one-line docstring shaped "X: Y", a `: ` outside
+                   backticks; one plain sentence instead
+    litotes        a closed list ("not without", "no small", ...); say the
+                   positive thing
+    not just       "not just (only, merely, simply) ... but" within 80
+                   characters of one line; say what it is
+    inflections    the banned words' other forms (delved, leveraging,
+                   robustly, seamlessly, comprehensively, underscores, ...)
+
+`--file PATH`, repeatable, reads a file outside the tree with every rule,
+such as a release's `../releases/vX.Y.Z/pr-body.md`.
+
 **Why this exists.** 0.3 removed 178 em-dashes by hand from code, comments,
 schemas, examples and docs after they had crept in one at a time over three
 releases. Each one had passed review, because a reviewer reading for meaning
@@ -39,12 +56,14 @@ prints that path with the address cut out.
 
 Dependency-free and short enough to read, like `check_layering.py`.
 
-Usage:  python tools/check_style.py [repo_root]
-Exit:   0 clean, 1 problems found.
+Usage:  python tools/check_style.py [repo_root] [--file PATH ...]
+Exit:   0 clean (warnings allowed), 1 problems found.
 """
 
 from __future__ import annotations
 
+import argparse
+import ast
 import codecs
 import re
 import subprocess
@@ -68,6 +87,31 @@ SKIP_DIRS = {".git", ".venv", "__pycache__", "dist", "build", ".pytest_cache", "
 SKIP_FILES = {"CODE_OF_CONDUCT.md", "LICENSE", "check_style.py"}
 
 BANNED_RE = re.compile(r"\b(" + "|".join(BANNED) + r")\b", re.IGNORECASE)
+
+#: 0.5.7-D10 (c). True since A12's sweep rewrote what the four prose rules
+#: found, so they block like the rest; False makes them warnings again.
+PROSE_RULES_BLOCK = True
+
+#: The banned words' other forms. The bare words are BANNED's.
+INFLECTED_RE = re.compile(
+    r"\b(delv(?:es|ed|ing)|leverag(?:es|ed|ing)|robust(?:ly|ness)|seamlessly|comprehensive(?:ly|ness)"
+    r"|underscor(?:es|ed|ing))\b",
+    re.IGNORECASE,
+)
+
+#: Litotes, a closed list: CLAUDE.md rule 3 and the corrections behind
+#: 0.5.7-D10 (c). Any run of spaces between the words counts as one.
+LITOTES = ("not without", "no small", "not a coincidence", "not unlike", "not uncommon", "not unusual",
+           "not insignificant", "not unimportant", "not unreasonable", "no mean feat")
+LITOTES_RE = re.compile(r"\b(" + "|".join(r"\s+".join(map(re.escape, l.split())) for l in LITOTES) + r")\b",
+                        re.IGNORECASE)
+
+#: Negative parallelism on one line: "not just X but Y", with at most 80
+#: characters between the two.
+NOT_JUST_RE = re.compile(r"\bnot\s+(?:just|only|merely|simply)\b.{0,80}?\bbut\b", re.IGNORECASE)
+
+#: A span in backticks, which a docstring's `: ` may sit inside.
+BACKTICKS = re.compile(r"`[^`]*`")
 
 #: An address-shaped string: a local part, `@`, and a dotted domain whose
 #: last label is letters or a punycode `xn--` label, so
@@ -228,29 +272,112 @@ def check_addresses(root: Path) -> list[str]:
     return problems
 
 
-def check(root: Path) -> list[str]:
+def one_line_docstrings(text: str) -> list[int]:
+    """The line of each one-line docstring shaped "X: Y" in a module's text:
+    a `: ` outside backticks. A module that does not parse has none here."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if not (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                continue
+            value = first.value.value.strip()
+            if "\n" not in value and ": " in BACKTICKS.sub("", value):
+                found.append(first.value.lineno)
+    return sorted(found)
+
+
+def prose_findings(rel: str, lines: list[str], text: str, python: bool) -> list[str]:
+    """What the four rules of 0.5.7-D10 (c) find in one file."""
+    found: list[str] = []
+    if python:
+        found += [f'{rel}:{n}: a one-line docstring shaped "X: Y"; write one plain sentence'
+                  for n in one_line_docstrings(text)]
+    for n, line in enumerate(lines, 1):
+        for m in LITOTES_RE.finditer(line):
+            found.append(f'{rel}:{n}:{m.start() + 1}: litotes "{" ".join(m.group(0).split())}"; say the positive thing')
+        for m in NOT_JUST_RE.finditer(line):
+            found.append(f'{rel}:{n}:{m.start() + 1}: "not just ... but"; say what it is')
+        for m in INFLECTED_RE.finditer(line):
+            found.append(f"{rel}:{n}: {m.group(0)!r}. Say the plain thing.")
+    return found
+
+
+def style_findings(rel: str, text: str, python: bool) -> tuple[list[str], list[str]]:
+    """One file's problems and prose findings, by the rules for text."""
     problems: list[str] = []
+    lines = text.splitlines()
+    for n, line in enumerate(lines, 1):
+        if EM_DASH in line:
+            problems.append(f"{rel}:{n}: em-dash. Use a comma, a colon, or two sentences.")
+        for m in BANNED_RE.finditer(line):
+            problems.append(f"{rel}:{n}: {m.group(0)!r}. Say the plain thing.")
+    return problems, prose_findings(rel, lines, text, python)
+
+
+def check_prose(root: Path, extra: list[Path] | None = None) -> tuple[list[str], list[str]]:
+    """Every rule but the addresses over the tree, then every rule over each
+    `--file`: the problems, and the prose rules' findings."""
+    problems: list[str] = []
+    prose: list[str] = []
     for path in text_files(root):
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        rel = shown(path.relative_to(root).as_posix())
-        for n, line in enumerate(lines, 1):
-            if EM_DASH in line:
-                problems.append(f"{rel}:{n}: em-dash. Use a comma, a colon, or two sentences.")
-            for m in BANNED_RE.finditer(line):
-                problems.append(f"{rel}:{n}: {m.group(0)!r}. Say the plain thing.")
+        found, more = style_findings(shown(path.relative_to(root).as_posix()), text, path.suffix == ".py")
+        problems += found
+        prose += more
     problems.extend(check_addresses(root))
-    return problems
+    for path in extra or []:
+        rel = shown(path.as_posix())
+        if not path.is_file():
+            problems.append(f"{rel}: no such file to read (--file)")
+            continue
+        text = as_text(path.read_bytes())
+        if text is None:
+            problems.append(f"{rel}: a binary file, which --file does not read")
+            continue
+        found, more = style_findings(rel, text, path.suffix == ".py")
+        problems += found
+        prose += more
+        for n, line in enumerate(text.splitlines(), 1):
+            for m in ADDRESS_RE.finditer(line):
+                if not allowed(m.group(0)):
+                    problems.append(f"{rel}:{n}: an address outside the allowlist, at column {m.start() + 1}. "
+                                    f"Use the project's address, or a placeholder at example.com.")
+    return problems, prose
+
+
+def check(root: Path, extra: list[Path] | None = None) -> list[str]:
+    """Every problem, the prose rules' findings among them once they block."""
+    problems, prose = check_prose(root, extra)
+    return problems + prose if PROSE_RULES_BLOCK else problems
 
 
 def main(argv: list[str]) -> int:
-    root = Path(argv[1] if len(argv) > 1 else ".").resolve()
+    parser = argparse.ArgumentParser(prog="check_style.py", description="Enforce the house style.")
+    parser.add_argument("root", nargs="?", default=".", help="the repository's root")
+    parser.add_argument("--file", action="append", default=[], type=Path,
+                        help="a file outside the tree to read with every rule, such as a pull request's body")
+    args = parser.parse_args(argv[1:])
+    root = Path(args.root).resolve()
     if not (root / "emet-sdk").exists():
         print(f"style-check: {root} does not look like the Emet repository", file=sys.stderr)
         return 1
-    problems = check(root)
+    problems, prose = check_prose(root, args.file)
+    if PROSE_RULES_BLOCK:
+        problems, prose = problems + prose, []
+    for line in prose:
+        print(f"  warning: {line}")
+    if prose:
+        print(f"\n{len(prose)} warning(s) from the prose rules of 0.5.7-D10 (c), which block once "
+              f"PROSE_RULES_BLOCK is True.")
     if not problems:
         print("style-check: ok")
         return 0

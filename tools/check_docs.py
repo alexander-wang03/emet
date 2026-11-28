@@ -110,7 +110,7 @@ SHELL_LABELS = {"sh", "bash", "shell", "console", "shell-session"}
 #: when no rule matches its first line, so the line is reported unknown. A
 #: first line that a rule matches makes it one too (`is_command`).
 KNOWN_COMMANDS = {
-    "python", "python3", "pip", "pip3", "pytest", "emet", "emet-listen", "emet-talk", "git", "cd",
+    "python", "python3", "pip", "pip3", "pytest", "emet", "emet-listen", "emet-talk", "emet-say", "git", "cd",
     "source", "mkdir", "cat", "chmod", "ssh", "script", '"$PY"', "$PY", ".venv/bin/pip", ".venv/bin/pytest",
     ".venv/bin/python", ".venv/Scripts/python", "sudo", "printf", "rm",
 }
@@ -148,7 +148,7 @@ RULES: tuple[Rule, ...] = (
     Rule(r"emet validate examples/invalid/\S+\.yaml", RUN, "an invalid example, refused", exit=1),
     Rule(r"emet (?:validate|explain)(?: \S+)+", RUN, "reads the files it names"),
     Rule(r"emet --version", RUN, "prints the version"),
-    Rule(r"emet(?:-listen|-talk)? (?:--help|-h)", RUN, "prints the help and opens nothing"),
+    Rule(r"emet(?:-listen|-talk|-say)? (?:--help|-h)", RUN, "prints the help and opens nothing"),
     # The repository's own checks. This script is left out: it would run itself.
     Rule(PY + r" tools/check_health\.py .*--update.*", SKIP, "rewrites tools/health_budget.json"),
     Rule(PY + r" tools/check_[a-z_]+\.py .*<[^<>]+>.*", SKIP, "names a file by a placeholder, which a reader "
@@ -181,6 +181,8 @@ RULES: tuple[Rule, ...] = (
     Rule(r"emet-talk .*", SKIP, "opens the microphone and the speaker, and needs a key for each stage the soul names"),
     Rule(r"emet-listen .*--replay .*", SKIP, "replays a recording that is not in the repository"),
     Rule(r"emet-listen .*", SKIP, "opens the microphone"),
+    Rule(r"emet-say .*", SKIP, "plays through the manifest's sink, or writes a file, and needs a key for the "
+         "voice the soul names"),
     Rule(r"script .*", SKIP, "the Pi: a typescript of the robot"),
     Rule(PY + r" tools/body/run\.py .*", SKIP, "the Pi, over SSH"),
     Rule(r"ssh .*", SKIP, "the Pi, over SSH"),
@@ -202,6 +204,10 @@ RULES: tuple[Rule, ...] = (
     Rule(PY + r" tools/bank/paid_replay\.py .*--dry-run.*", SKIP, "needs the voice bank's miss list and ledger"),
     Rule(PY + r" tools/bank/paid_replay\.py .*", SKIP, "spends money: a paid Deepgram replay, with a key"),
     Rule(r"<tools-venv>/python tools/bank/label\.py .*", SKIP, "needs a tools venv and the voice bank"),
+    # A local language model's own server, which its owner installs and runs (emet-providers/README.md).
+    Rule(r"litert-lm (?:import|serve) .*", SKIP, "downloads a local model, or starts its server"),
+    Rule(r"(?:OLLAMA_KEEP_ALIVE=\S+ )?ollama (?:pull|serve)(?: \S+)*", SKIP, "downloads a local model, or starts its server"),
+    Rule(r"llama-server .*", SKIP, "starts a local model's server on a model file the reader downloads"),
     # CI's own tools, which go in tools/.venv (tools/ci/README.md).
     Rule(r"zizmor .*", SKIP, "needs the CI tools, which go in tools/.venv"),
     Rule(r"\S*uv(?:\.exe)? pip compile .*", SKIP, "makes the CI tools' lock again, with uv from a scratch venv"),
@@ -228,7 +234,7 @@ class Link:
 
 
 def strip_comment(text: str) -> str:
-    """A shell comment dropped: a `#` at the start or after a space, outside quotes."""
+    """The line with its shell comment dropped, a `#` at the start or after a space, outside quotes."""
     quote = ""
     for i, ch in enumerate(text):
         if quote:
@@ -246,7 +252,7 @@ def normal(text: str) -> str:
 
 
 def fences(lines: Sequence[str]) -> Iterable[tuple[int, str, list[tuple[int, str]]]]:
-    """Each fenced block: its opening line's number, its label and its lines."""
+    """Each fenced block, with its opening line's number, its label and its lines."""
     i = 0
     while i < len(lines):
         m = re.match(r"^( {0,3})(`{3,}|~{3,})\s*([^\s`]*)", lines[i])
@@ -401,7 +407,7 @@ def program(word: str) -> list[str] | None:
         return [sys.executable]
     if word in ("pytest", ".venv/bin/pytest"):
         return [sys.executable, "-m", "pytest"]
-    if word in ("emet", "emet-listen", "emet-talk"):
+    if word in ("emet", "emet-listen", "emet-talk", "emet-say"):
         here = Path(sys.executable).parent
         for candidate in (here / word, here / f"{word}.exe", here / "Scripts" / f"{word}.exe"):
             if candidate.is_file():

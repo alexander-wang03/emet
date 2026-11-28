@@ -3,7 +3,7 @@ exit 1
 --- stdout
 ok   body.yaml  (manifest)
 ok   soul.yaml  (soul)
-FAIL (pairing)  (pairing)
+FAIL body.yaml and soul.yaml  (pairing)
      x barge_in_without_aec /interaction/barge_in
        interaction.barge_in is enabled but this body reports audio.input.aec: none. Without echo cancellation the robot hears its own speech and interrupts itself. Set barge_in: false, or declare the AEC this body actually has.
 --- stderr

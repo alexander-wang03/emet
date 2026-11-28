@@ -225,7 +225,7 @@ def _field_line(field: dataclasses.Field) -> str:
 
 
 def _class_lines(cls: type) -> list[str]:
-    """A class: its bases and kind, then every member it defines itself."""
+    """A class as lines, its bases and kind first and then every member it defines itself."""
     bases = [_type_name(b) for b in cls.__bases__ if b is not object]
     kinds: list[str] = []
     if dataclasses.is_dataclass(cls):

@@ -75,8 +75,8 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import manifest as bank_files  # noqa: E402
-import replay  # noqa: E402
+import manifest as bank_files  # noqa: E402  the bank's one reader and writer, beside this file
+import replay  # noqa: E402  the bank's replay, beside this file
 
 PROJECT = HERE.parents[2]
 
@@ -182,7 +182,7 @@ def regenerate_here(doc: dict, wav: Path, work: Path, mean: str, cassette_path: 
 
 
 def regenerated_from(path: Path) -> dict[int, bytes]:
-    """A regeneration made elsewhere: the mock's turns and wakes.json."""
+    """The mock's turns from a regeneration made elsewhere, matched to its wakes.json."""
     ends = json.loads((path / "wakes.json").read_text(encoding="utf-8"))["wake_end_samples"]
     turns = replay.read_turns(path)
     if len(ends) != len(turns):

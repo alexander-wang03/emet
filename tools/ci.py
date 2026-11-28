@@ -47,8 +47,9 @@ first lines say which were left out.
 
 **Tools.** Standard library only, so the script runs on a bare Python
 (`python -S -I tools/ci.py --list`, which the `layering` job checks). build,
-zizmor and pip-audit are used from the running interpreter when they are
-installed there, then from the tools venv (`tools/.venv`), then from `PATH`.
+zizmor, pip-audit and flake8 are used from the running interpreter when
+they are installed there, then from the tools venv (`tools/.venv`), then
+from `PATH`.
 coverage and mutmut run the suites, so they are used only from the
 interpreter that runs this script, which can import the four packages.
 Under `--install` the pinned set comes from `tools/ci/requirements.txt`, by
@@ -135,6 +136,9 @@ WHEEL_DATA = (
     "emet_sdk/py.typed",
 )
 
+#: The engine's one data file, the --events schema (0.5.7 contract 2.2).
+ENGINE_WHEEL_DATA = ("emet_engine/schemas/events-1.schema.json",)
+
 #: Variables that change what a test run means, left out of every job's
 #: environment (review RB275): snapshots rewritten in place of compared,
 #: one seed or a wider range in place of the default seeds, and a live call
@@ -159,6 +163,11 @@ PASSED, FAILED, NOT_RUN = "passed", "failed", "not run"
 
 #: `git commit -s` writes this line; the DCO check reads it, any case.
 SIGN_OFF = re.compile(r"^Signed-off-by: .+ <.+@.+>", re.IGNORECASE | re.MULTILINE)
+
+#: 0.5.7-D10 (b): a line of a commit message that names a co-author or the
+#: tool that wrote it, read case-insensitively. CLAUDE.md rule 1 allows no
+#: trailer beyond the sign-off, and 0.4.1's merged body carried such a line.
+ATTRIBUTION = re.compile(r"^co-authored-by:|generated with|noreply@anthropic\.com", re.IGNORECASE)
 
 #: mutmut joins a class and its method with this letter in a mutant's name
 #: (mutmut's `format_utils.py`, read 2026-11-26).
@@ -490,7 +499,7 @@ class Context:
         return venv / ("Scripts" if self.windows else "bin") / self.exe(name)
 
     def console(self, name: str) -> str:
-        """An installed console script: beside the interpreter, then on PATH."""
+        """An installed console script, looked for beside the interpreter and then on PATH."""
         beside = Path(self.python).parent / self.exe(name)
         if beside.is_file():
             return str(beside)
@@ -642,6 +651,56 @@ def standard_library_only(ctx: Context) -> Outcome:
     return failed("needs more than the standard library: " + ", ".join(bad)) if bad else passed()
 
 
+#: 0.5.7-D14: flake8 holds only the four codes the code's `# noqa` markers
+#: already name, over the four packages and `tools/`. `--extend-exclude`
+#: keeps flake8's own exclude, `.svn,CVS,.bzr,.hg,.git,__pycache__,.tox,
+#: .nox,.eggs,*.egg` (flake8 7.5.0's `defaults.py`, read 2026-11-27 in the
+#: pinned wheel), and adds the venvs inside the scanned folders
+#: (`emet-sdk/.venv`, `tools/.venv`) and mutmut's `mutants/`.
+FLAKE8_SELECT = ("E402", "E731", "F401", "F821")
+FLAKE8_EXCLUDE = (".venv", "mutants")
+FLAKE8_PATHS = (*PACKAGES, "tools")
+
+#: Its first run, 2026-11-27, found 8 sites no marker covers (4 F401, 4
+#: F821), so the step warned until stream A12's sweep fixed them that day.
+#: The sweep set this True, and the step blocks `layering`.
+FLAKE8_BLOCKS = True
+
+
+def flake8(ctx: Context) -> Outcome:
+    """D14's linter. flake8 7.5.0 with pyflakes 4.1.0, pycodestyle 2.15.0 and
+    mccabe 0.7.0, the PyCQA's, each MIT (PyPI's JSON API, read 2026-11-27:
+    flake8 and pycodestyle declare `MIT` with no classifier, pyflakes `MIT`
+    with the MIT classifier, mccabe `Expat license` with the MIT
+    classifier), pinned by hash in `tools/ci/requirements.txt`."""
+    tool = ctx.tool("flake8", "flake8")
+    if tool is None:
+        return not_run("needs flake8")
+    paths = [p for p in FLAKE8_PATHS if (ctx.root / p).is_dir()]
+    return ctx.check([*tool, "--select=" + ",".join(FLAKE8_SELECT), "--extend-exclude=" + ",".join(FLAKE8_EXCLUDE),
+                      *paths])
+
+
+def pr_body(ctx: Context) -> Path | None:
+    """The release's pull request body beside the repository,
+    `../releases/vX.Y.Z/pr-body.md` for the version `emet-sdk` declares, when
+    this machine has it. The laptop does; GitHub's checkout does not."""
+    try:
+        project = tomllib.loads((ctx.root / "emet-sdk" / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return None
+    body = ctx.root.parent / "releases" / f"v{project.get('version', '')}" / "pr-body.md"
+    return body if body.is_file() else None
+
+
+def house_style(ctx: Context) -> Outcome:
+    """`check_style.py` over the tree, and over the release's pull request
+    body with `--file` where it is beside the repository (0.5.7-D10 (c)),
+    since the body is published on GitHub as surely as a file is."""
+    body = pr_body(ctx)
+    return script(ctx, "tools/check_style.py", ".", *(("--file", str(body)) if body else ()))
+
+
 def layering_steps(ctx: Context) -> list[Step]:
     """Layering, release invariants, house style, code health, the workflows.
 
@@ -656,26 +715,31 @@ def layering_steps(ctx: Context) -> list[Step]:
     it prints (GV5 stage 1). After zizmor, `tools/ci/check_workflows.py`
     holds the workflows to the house rules zizmor does not hold (stream
     B2's), so a broken workflow fails the job that checks the workflows.
+    Last, flake8 with the four codes the `# noqa` markers name (D14),
+    blocking while `FLAKE8_BLOCKS` is True, as the sweep set it.
     """
     return [
-        ci_tools_step("zizmor, and vulture for the health report"),
+        ci_tools_step("zizmor, flake8, and vulture for the health report"),
         script_step("Check package layering", "layering", "tools/check_layering.py", "."),
         script_step("Check release invariants", "release", "tools/release_check.py", "."),
-        script_step("Check house style", "style", "tools/check_style.py", "."),
+        Step("Check house style", "style", house_style),
         script_step("Check code health and the SDK's line budget", "health", "tools/check_health.py", "."),
         Step("Check the workflows with zizmor", "zizmor", zizmor),
         script_step("Check the workflows' house rules", "workflows", "tools/ci/check_workflows.py", "."),
         Step("The tools that start on a bare Python need only the standard library", "stdlib",
              standard_library_only),
+        Step("Lint with flake8, the four codes the noqa markers name", "flake8", flake8,
+             advisory=not FLAKE8_BLOCKS),
     ]
 
 
 # ---------------------------------------------------------------------- dco
 
 
-def dco(ctx: Context) -> Outcome:
-    """Every commit of the pull request carries Signed-off-by. GitHub gives
-    the range as BASE_SHA and HEAD_SHA; the laptop reads origin/master..HEAD."""
+def branch_commits(ctx: Context) -> tuple[str, list[str]] | Outcome:
+    """The pull request's range and its commits, or the outcome that says
+    why they cannot be read. GitHub gives the range as BASE_SHA and
+    HEAD_SHA; the laptop reads origin/master..HEAD."""
     base, head = ctx.env.get("BASE_SHA", ""), ctx.env.get("HEAD_SHA", "")
     if not (base and head):
         if ctx.github:
@@ -684,7 +748,15 @@ def dco(ctx: Context) -> Outcome:
     listed = ctx.run(["git", "rev-list", f"{base}..{head}"], quiet=True)
     if listed.code != 0:
         return not_run(f"needs the history of {base}..{head}: " + (listed.out.strip().splitlines() or ["git failed"])[-1])
-    commits = listed.out.split()
+    return f"{base}..{head}", listed.out.split()
+
+
+def dco(ctx: Context) -> Outcome:
+    """Every commit of the pull request carries Signed-off-by."""
+    found = branch_commits(ctx)
+    if isinstance(found, Outcome):
+        return found
+    span, commits = found
     missing = 0
     for sha in commits:
         message = ctx.run(["git", "log", "-1", "--format=%B", sha], quiet=True).out
@@ -698,12 +770,43 @@ def dco(ctx: Context) -> Outcome:
         ctx.say("or add sign-off to existing work with 'git rebase --signoff <base>'.")
         ctx.say("See CONTRIBUTING.md.")
         return failed(f"{missing} of {len(commits)} commits without Signed-off-by")
-    ctx.say(f"all commits signed off ({len(commits)} in {base}..{head})")
+    ctx.say(f"all commits signed off ({len(commits)} in {span})")
+    return passed()
+
+
+def attribution_lines(message: str) -> list[str]:
+    """The lines of a commit message that name a co-author or a tool."""
+    return [line.strip() for line in message.splitlines() if ATTRIBUTION.search(line.strip())]
+
+
+def no_attribution(ctx: Context) -> Outcome:
+    """0.5.7-D10 (b): no commit of the pull request carries a co-author or a
+    tool's line. A commit is public once pushed, and the squash on master
+    keeps its title only, so the branch's own commits are read here, each
+    of them, before the merge can make one part of master's history."""
+    found = branch_commits(ctx)
+    if isinstance(found, Outcome):
+        return found
+    span, commits = found
+    carrying = 0
+    for sha in commits:
+        message = ctx.run(["git", "log", "-1", "--format=%B", sha], quiet=True).out
+        lines = attribution_lines(message)
+        if lines:
+            carrying += 1
+            title = (message.strip().splitlines() or [""])[0]
+            for line in lines:
+                ctx.say(f'commit {sha[:7]} "{title}" carries an attribution line: {line}. Emet\'s commits carry no '
+                        f"co-author or tool line; the sign-off names the author. Rewrite the message and push again.")
+    if carrying:
+        return failed(f"{carrying} of {len(commits)} commits carry an attribution line")
+    ctx.say(f"no commit carries an attribution line ({len(commits)} in {span})")
     return passed()
 
 
 def dco_steps(ctx: Context) -> list[Step]:
-    return [Step("Every commit carries Signed-off-by", "sign-off", dco)]
+    return [Step("Every commit carries Signed-off-by", "sign-off", dco),
+            Step("No commit carries a co-author or a tool's line", "attribution", no_attribution, always=True)]
 
 
 # -------------------------------------------------------------------- wheel
@@ -905,6 +1008,11 @@ def wheel_data(ctx: Context) -> Outcome:
         for name in missing:
             ctx.say(f"  - {name}")
         return failed(f"{len(missing)} data file(s) missing from the SDK's wheel")
+    engine = ctx.state["wheels"]["emet-engine"]
+    with zipfile.ZipFile(engine) as archive:
+        lacking = [name for name in ENGINE_WHEEL_DATA if name not in archive.namelist()]
+    if lacking:
+        return failed(f"{engine.name} is missing {', '.join(lacking)}")
     ctx.say(f"all {len(WHEEL_DATA)} data files present in {wheel.name}")
     return passed()
 
@@ -967,6 +1075,7 @@ def cli_outside(ctx: Context) -> Outcome:
         ([emet, "--version"], False),
         ([ctx.in_venv(venv, "emet-listen"), "--help"], True),
         ([ctx.in_venv(venv, "emet-talk"), "--help"], True),
+        ([ctx.in_venv(venv, "emet-say"), "--help"], True),
         ([emet, "validate", examples / "bodiless.yaml"], False),
         ([emet, "validate", examples / "mock-scout.yaml", "--verify-drivers"], False),
         ([emet, "explain", examples / "mock-scout.yaml", "--why"], False),
@@ -1169,6 +1278,40 @@ def numpy_arithmetic(ctx: Context) -> Outcome:
     return passed()
 
 
+#: Ledger L20: the extras no test job installs, put in a venv of their own
+#: and held to the licence gate. `piper` brings piper-tts, GPL-3.0-or-later
+#: by its exception in `tools/licences.json`, and onnxruntime; `audio`
+#: brings sounddevice and cffi. Local paths, so the SDK is this tree's and
+#: never another project's of that name on the index.
+EXTRAS_GATED = ("./emet-sdk", "./emet-hal[audio]", "./emet-providers[piper]")
+
+
+def extras_install(ctx: Context) -> Outcome:
+    """A venv under the temp folder holding the SDK, `emet-hal[audio]` and
+    `emet-providers[piper]` and nothing else of this job's."""
+    venv = ctx.scratch("extras-venv")
+    made = ctx.check([ctx.python, "-m", "venv", venv])
+    if made.status != PASSED:
+        return made
+    python = ctx.in_venv(venv, "python")
+    outcome = ctx.check([python, "-m", "pip", "install", "--disable-pip-version-check", *EXTRAS_GATED])
+    if outcome.status == PASSED:
+        ctx.state["extras-venv"] = python
+    return outcome
+
+
+def extras_licences(ctx: Context) -> Outcome:
+    """BVP1 over the extras venv: every distribution there, the piper-tts
+    exception read for `emet-providers[piper]` alone. The script is standard
+    library, so the venv's own interpreter runs it and reads what it holds.
+    Blocking: it passed on the tree of 2026-11-27, on the laptop (16
+    distributions, piper-tts by its exception)."""
+    python = ctx.state.get("extras-venv")
+    if python is None:
+        return not_run("needs the extras venv, which this job makes only under --install")
+    return ctx.check([python, ctx.root / "tools" / "check_licences.py"])
+
+
 def test_steps(ctx: Context) -> list[Step]:
     """One Python; the workflow's matrix starts the job three times.
 
@@ -1183,7 +1326,8 @@ def test_steps(ctx: Context) -> list[Step]:
     package's `filterwarnings = error` makes that warning a failure. After
     the blocking steps, 3.13 runs the bank builder's numpy test against
     numpy in a folder of its own (RC124), then the CI tools' licences and
-    coverage.
+    coverage. Before those, 3.13 puts the `piper` and `audio` extras in a
+    venv of their own and runs the licence gate over it (ledger L20).
     """
     newest = ctx.version == (3, 13)
     steps = package_installs(TEST_INSTALL)
@@ -1203,6 +1347,10 @@ def test_steps(ctx: Context) -> list[Step]:
         Step("CLI rejects the invalid examples", "invalid-examples", invalid_examples),
     ]
     if newest:
+        steps.append(Step("Install the piper and audio extras into a venv of their own", "extras-install",
+                          extras_install, install=True, gate=True))
+        steps.append(Step("Every licence the piper and audio extras bring is on the allowed list", "extras-licences",
+                          extras_licences))
         # After every blocking step, so the suites above ran in an
         # environment that held the four packages and nothing else. numpy
         # goes to a folder outside the interpreter, so it changes nothing
@@ -1562,7 +1710,7 @@ def pip_audit_requirements(pyproject: str) -> list[str]:
 
 
 def pip_audit_findings(report: str) -> list[dict[str, str]]:
-    """pip-audit's JSON as rows: name, version, advisory id, fix versions."""
+    """pip-audit's JSON as rows of name, version, advisory id and fix versions."""
     rows = []
     for dependency in json.loads(report).get("dependencies", []):
         for vuln in dependency.get("vulns", []):
@@ -1715,8 +1863,11 @@ def mutmut_cannot(ctx: Context) -> str:
 #: one they sit in, and import what they test by its bare name.
 LIFTED = ("tools",)
 
+#: The hardware guard every suite's conftest walks up to (0.5.7-D10 (a)).
+GUARD = "tools/hardware_guard.py"
 
-def mutmut_folder(tree: Path, project: str) -> tuple[Path, list[str]]:
+
+def mutmut_folder(tree: Path, project: str, guard: Path | None = None) -> tuple[Path, list[str]]:
     """Where `mutmut run` starts for one project in a copy of the tree, and
     the entries it copies into `mutants/` beside the mutated source.
 
@@ -1735,21 +1886,35 @@ def mutmut_folder(tree: Path, project: str) -> tuple[Path, list[str]]:
     copy's root, with each entry of `tools/` copied up beside `emet-sdk/`
     and the rest: the module is still `plan_file`, and the folder above
     `mutants/tests/` is a whole repository.
+
+    Every suite's `conftest.py` walks up from `mutants/tests/` to the first
+    `tools/hardware_guard.py` and fails the collection without one (C13). So
+    the copy keeps the guard at `tools/hardware_guard.py`: `guard`, the
+    tree's own, is copied in when the copy lacks it, and a copy that has
+    none is refused here, naming the file.
     """
     folder = tree / project
     names = sorted(p.name for p in folder.iterdir() if p.name not in ("mutants", "setup.cfg"))
-    if project not in LIFTED:
-        return folder, names
-    clash = [name for name in names if (tree / name).exists()]
-    if clash:
-        raise ValueError(f"{project}/ cannot be copied up to the root of the copy, which already holds "
-                         + ", ".join(clash))
-    for name in names:
-        if (folder / name).is_dir():
-            shutil.copytree(folder / name, tree / name)
-        else:
-            shutil.copy2(folder / name, tree / name)
-    return tree, names
+    start = folder
+    if project in LIFTED:
+        clash = [name for name in names if (tree / name).exists()]
+        if clash:
+            raise ValueError(f"{project}/ cannot be copied up to the root of the copy, which already holds "
+                             + ", ".join(clash))
+        for name in names:
+            if (folder / name).is_dir():
+                shutil.copytree(folder / name, tree / name)
+            else:
+                shutil.copy2(folder / name, tree / name)
+        start = tree
+    held = tree / GUARD
+    if not held.is_file() and guard is not None and guard.is_file():
+        held.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(guard, held)
+    if not held.is_file():
+        raise ValueError(f"the mutmut copy of {project} has no {GUARD}, which every suite's conftest.py loads, "
+                         f"so its tests would not be collected")
+    return start, names
 
 
 def mutmut(ctx: Context) -> Outcome:
@@ -1804,7 +1969,7 @@ def mutmut(ctx: Context) -> Outcome:
                 (tree / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ctx.root / name, tree / name)
         try:
-            folder, others = mutmut_folder(tree, project)
+            folder, others = mutmut_folder(tree, project, ctx.root / GUARD)
         except ValueError as error:
             return failed(str(error))
         sources = sorted({inside.split("/")[0] + ("/" if "/" in inside else "") for inside, _ in functions})
@@ -2037,9 +2202,8 @@ def bank_steps(set_name: str) -> Callable[[Context], list[Step]]:
 #: count graduates it: ten green runs, pull-request runs and scheduled runs
 #: on master counted, at least two of them pull requests (RELEASE_PROCESS.md
 #: §11); a run whose bank step says not run counts as no green run.
-#: `bank-full` never runs on a pull request, so that count cannot graduate
-#: it, and it stays advisory until the maintainer says which count a weekly
-#: job is on.
+#: `bank-full` never runs on a pull request, so it graduates on 0.5.7-D9 (a)'s
+#: count instead: ten green scheduled runs.
 #:
 #: `minutes` is the `timeout-minutes` of the workflow job that runs the key,
 #: for every job with an advisory part (`test_ci.py` holds the two equal).

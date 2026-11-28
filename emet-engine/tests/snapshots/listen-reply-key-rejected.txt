@@ -3,6 +3,5 @@ exit 1
 --- stdout
 emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
 --- stderr
-openai: the server at https://api.openai.com/v1 rejected the key in EMET_SNAPSHOT_KEY (HTTP 401). Check the key.
 
 the language model 'openai' cannot start, so the robot would hear questions it can never answer. It will not run. the server at https://api.openai.com/v1 rejected the key in EMET_SNAPSHOT_KEY (HTTP 401). Check the key.

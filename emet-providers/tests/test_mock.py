@@ -125,7 +125,7 @@ def test_words_arrive_as_growing_partials_then_one_final():
 
 
 def test_silence_alone_gives_an_empty_final():
-    """A real answer: they said nothing the provider could make out."""
+    """An empty final is a real answer, meaning they said nothing the provider could make out."""
     stt = started()
 
     async def scenario():
@@ -601,3 +601,136 @@ def test_an_unstarted_mock_voice_says_so():
 
 def test_the_souls_rate_is_carried():
     assert voice(soul_voice={"rate": 1.5}).rate == 1.5
+
+
+# ------------------------------ 0.5.7: the reply at the cap, kinds, endpoints
+
+
+import logging  # noqa: E402
+
+
+def capped(max_tokens: int, *texts: str) -> Prompt:
+    base = prompt(*texts)
+    return Prompt(system=base.system, messages=base.messages, max_tokens=max_tokens)
+
+
+def test_a_reasoning_model_that_spends_the_cap_thinking_gives_the_empty_reply_at_the_cap():
+    """DL1's failure, without a vendor: every token went to thinking, so the
+    reply stops at `length` with no words, and the engine's
+    `llm-empty-at-cap` row says the failed line."""
+    model = llm(reasoning_tokens=300, reply="Four.")
+    events = run(collect(model.reply(capped(300, "what's two plus two"))))
+    assert not [e for e in events if isinstance(e, TextDelta)], "no word streams"
+    (done,) = events
+    assert done == ReplyDone(text="", stop_reason="length", model="mock", input_tokens=6, output_tokens=300)
+
+
+def test_thinking_past_the_cap_still_gives_the_empty_reply_at_the_cap():
+    """Review finding providers/tests#9: more thinking than the cap leaves
+    no room, never a slice from the front of the words."""
+    events = run(collect(llm(reasoning_tokens=302, reply="one two three four five").reply(capped(300, "count"))))
+    (done,) = events
+    assert (done.text, done.stop_reason, done.output_tokens) == ("", "length", 300)
+
+
+def test_thinking_that_leaves_room_for_some_words_cuts_the_reply_at_the_cap():
+    """The `llm-cut-at-cap` row, words and then `length`."""
+    model = llm(reasoning_tokens=297, reply="one two three four five")
+    events = run(collect(model.reply(capped(300, "count"))))
+    assert [e.text for e in events if isinstance(e, TextDelta)] == ["one", " two", " three"]
+    done = events[-1]
+    assert done.text == "one two three" and done.stop_reason == "length" and done.output_tokens == 300
+
+
+def test_the_cap_is_honoured_without_any_thinking():
+    done = run(collect(llm(reply="one two three four five").reply(capped(2, "count"))))[-1]
+    assert done.text == "one two" and done.stop_reason == "length" and done.output_tokens == 2
+
+
+def test_thinking_under_the_cap_is_counted_and_the_reply_ends_as_usual():
+    done = run(collect(llm(reasoning_tokens=40, reply="As you wish.").reply(capped(300, "anything"))))[-1]
+    assert done.text == "As you wish." and done.stop_reason == "end" and done.output_tokens == 43
+
+
+def test_without_the_param_the_reply_and_its_counts_are_as_before():
+    done = run(collect(llm(reply="As you wish.").reply(prompt("anything"))))[-1]
+    assert done.stop_reason == "end" and done.output_tokens == 3 and done.input_tokens == 3
+
+
+@pytest.mark.parametrize("spent", [-1, "lots", True, 2.5])
+def test_reasoning_tokens_that_are_no_count_leave_the_model_unhealthy_saying_so(spent):
+    model = llm(reasoning_tokens=spent)
+    assert not model.describe().healthy
+    assert model.health().faults == ("start_failed",)
+    assert model.health().detail == (
+        f"params.reasoning_tokens is a whole number of tokens, 0 or more, and it was given {spent!r}."
+    )
+
+
+def mocks(**params) -> list:
+    """One of each mock, built with `params` and started."""
+    stt = MockTranscriber({"provider": "mock", "key_env": "EMET_MOCK_KEY", "params": params}, AudioFormat())
+    model = MockLanguageModel({"provider": "mock", "key_env": "EMET_MOCK_KEY", "params": params})
+    tts = MockVoice({"provider": "mock", "key_env": "EMET_MOCK_KEY", "params": params})
+    for plugin in (stt, model, tts):
+        run(plugin.start())
+    return [stt, model, tts]
+
+
+@pytest.mark.parametrize("kind", ["out_of_credit", "model_unavailable", "no_model", "x_overheated"])
+def test_a_mock_that_fails_to_start_names_the_kind_it_was_given(kind):
+    """So an engine test can boot a chat model whose fault is
+    `model_unavailable`, or a transcriber whose account is unpaid, with
+    no vendor's fake behind it."""
+    for plugin in mocks(fail_on_start=True, fault=kind, fault_detail="said by the test"):
+        assert not plugin.describe().healthy
+        assert plugin.health().faults == (kind,) and plugin.health().detail == "said by the test"
+
+
+def test_a_kind_the_sdk_refuses_leaves_the_mock_unhealthy_with_the_sdks_reason():
+    for plugin in mocks(fail_on_start=True, fault="overcurrent"):
+        health = plugin.health()
+        assert health.faults == ("start_failed",)
+        assert health.detail.startswith("params.fault is not a kind Health takes. unknown fault kind 'overcurrent'.")
+        assert "'x_overcurrent'" in health.detail
+
+
+def test_each_mock_names_its_kind_where_the_fault_is_raised(monkeypatch):
+    """The `"no key" in self._fault` copies are gone from the mocks."""
+    monkeypatch.delenv("EMET_MOCK_KEY", raising=False)
+    for plugin in mocks(require_key=True):
+        assert plugin.health().faults == ("no_key",)
+    for plugin in mocks(fail_on_start=True, fault_detail="no key here, says the text"):
+        assert plugin.health().faults == ("start_failed",), "the kind is never read from the words"
+
+
+def test_a_mock_runs_on_this_body_unless_given_an_endpoint(monkeypatch):
+    """SF2: a test that wants the boot line's host and `--stats`' sent line
+    gives the mocks an endpoint, and nothing is sent to it."""
+    for plugin in mocks():
+        d = plugin.describe()
+        assert d.endpoint is None and d.host is None and d.key_env is None
+    monkeypatch.setenv("EMET_MOCK_KEY", "k")
+    for plugin in mocks(endpoint="https://owner:secret@example.com:8443/v1?debug=1", require_key=True):
+        d = plugin.describe()
+        assert d.healthy and d.endpoint == "https://example.com:8443/v1"
+        assert d.host == "example.com:8443" and d.key_env == "EMET_MOCK_KEY"
+
+
+def test_the_mocks_log_a_start_refusal_at_info_and_keep_their_other_warnings(tmp_path, caplog):
+    """L16: the engine prints a start refusal through `health().detail`, so
+    it is INFO. A cassette with no turn for the request is printed by
+    nobody else, so it stays a WARNING."""
+    import json as _json
+
+    empty = tmp_path / "c.json"
+    empty.write_text(_json.dumps({"format": "emet-cassette/1", "turns": []}), encoding="utf-8")
+    with caplog.at_level(logging.DEBUG, logger="emet_providers.mock"):
+        mocks(fail_on_start=True)
+        run(make(cassette=str(empty)).start())
+    said = [(r.levelno, r.getMessage()) for r in caplog.records]
+    refusals = [text for level, text in said if "simulated" in text]
+    assert len(refusals) == 3 and all(level == logging.INFO for level, text in said if "simulated" in text)
+    assert [text for level, text in said if level >= logging.WARNING] == [
+        f"mock stt: no turn in {empty} was recorded for this request; every turn will miss"
+    ]

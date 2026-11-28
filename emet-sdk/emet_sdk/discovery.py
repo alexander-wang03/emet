@@ -54,13 +54,27 @@ and the value is legal, the software simply is not present. Conflating that
 with a typo costs support hours, and closing the enum to avoid the ambiguity
 would make walking robots inexpressible without migrating every manifest in
 the field.
+
+**Where each plugin came from.** Discovery keeps the distribution that
+declared each entry point, and its version, as a `PluginOrigin`, so the boot
+lines can say `from emet-providers 0.5.7` beside each provider. Two
+different distributions that offer one name in one group are refused with
+a `DuplicatePluginError` naming both, when that name is loaded: which one
+Python finds first depends on where each is installed and on the order the
+file system lists a folder in, which nobody chose, and a package that
+takes a provider's name would be handed that provider's key. One
+distribution found twice on the path is one claimant. The same name in two
+groups, such as `mock` for a voice and for a language model, is no clash.
 """
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from functools import lru_cache
 from importlib.metadata import EntryPoint, entry_points
-from typing import Iterable, Iterator, Mapping
+from itertools import chain
+from typing import Any, Iterable, Iterator, Mapping
 
 __all__ = [
     "GROUP_ACTUATOR",
@@ -72,6 +86,7 @@ __all__ = [
     "GROUP_STT",
     "GROUP_LLM",
     "GROUP_TTS",
+    "PluginOrigin",
     "PluginRegistry",
     "discover",
 ]
@@ -86,9 +101,76 @@ GROUP_STT = "emet.stt"
 GROUP_LLM = "emet.llm"
 GROUP_TTS = "emet.tts"
 
+#: Every group, and what its plugins are called in a refusal.
+_GROUPS: Mapping[str, str] = {
+    GROUP_ACTUATOR: "driver plugin",
+    GROUP_SENSOR: "driver plugin",
+    GROUP_LOCOMOTION: "locomotion plugin",
+    GROUP_WAKE: "wake word plugin",
+    GROUP_AUDIO: "audio source",
+    GROUP_AUDIO_OUT: "audio sink",
+    GROUP_STT: "speech recognition provider",
+    GROUP_LLM: "language model provider",
+    GROUP_TTS: "speech synthesis provider",
+}
 
-def _entry_points(group: str) -> dict[str, EntryPoint]:
-    return {ep.name: ep for ep in entry_points(group=group)}
+
+@dataclass(frozen=True, slots=True)
+class PluginOrigin:
+    """Where one installed plugin comes from.
+
+    `distribution` and `version` are those of the installed package whose
+    metadata declared the entry point, read at discovery. Both are None for
+    an entry point that no distribution declared, which only a test builds.
+    """
+
+    group: str
+    name: str
+    #: The entry point's target, `module:attribute`.
+    value: str
+    distribution: str | None = None
+    version: str | None = None
+
+    @property
+    def label(self) -> str | None:
+        """The distribution and its version as a boot line prints them, or None."""
+        if self.distribution is None:
+            return None
+        return f"{self.distribution} {self.version}" if self.version else self.distribution
+
+
+def _distribution_of(dist: Any) -> tuple[str | None, str | None]:
+    """The name and version a distribution's metadata gives, in one parse.
+
+    `dist.name` and `dist.version` each parse the whole METADATA file, the
+    package's README included, so the file is read once here for both. A
+    dist-info folder left with its entry points and no METADATA, as an
+    interrupted install can leave one, has no name to read, and its entry
+    points count as ones no distribution declared.
+    """
+    if dist is None:
+        return None, None
+    try:
+        meta = dist.metadata
+        name, version = meta.get("Name"), meta.get("Version")
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return None, None
+    if not name:
+        return None, None
+    return name, version or None
+
+
+def _origin(ep: EntryPoint, read: tuple[str | None, str | None] | None = None) -> PluginOrigin:
+    name, version = read if read is not None else _distribution_of(getattr(ep, "dist", None))
+    return PluginOrigin(group=ep.group, name=ep.name, value=ep.value, distribution=name, version=version)
+
+
+def _claimant(origin: PluginOrigin) -> str:
+    """Who offers an entry point: its distribution's normalised name (PEP 503),
+    or, for one no distribution declared, its target."""
+    if origin.distribution is None:
+        return f"={origin.value}"
+    return re.sub(r"[-_.]+", "-", origin.distribution).lower()
 
 
 class PluginRegistry:
@@ -127,22 +209,62 @@ class PluginRegistry:
         #: linting a manifest for hardware you have not wired yet is a normal
         #: thing to do; booting an engine against it is not.
         self.verify_drivers = verify_drivers
+        #: (group, name) to the entry points of two or more distributions
+        #: that offer that name, which `from_entry_points` fills.
+        self._claims: dict[tuple[str, str], tuple[EntryPoint, ...]] = {}
+        #: (group, name) to where the entry point that name loads comes from,
+        #: read once by `from_entry_points`; `origin` reads it again for a
+        #: registry built from mappings.
+        self._origins: dict[tuple[str, str], PluginOrigin] = {}
 
     @classmethod
     @lru_cache(maxsize=1)
     def discover(cls) -> "PluginRegistry":
         """Read the entry points of every installed distribution."""
-        return cls(
-            actuators=_entry_points(GROUP_ACTUATOR),
-            sensors=_entry_points(GROUP_SENSOR),
-            locomotion=_entry_points(GROUP_LOCOMOTION),
-            wake=_entry_points(GROUP_WAKE),
-            audio=_entry_points(GROUP_AUDIO),
-            audio_out=_entry_points(GROUP_AUDIO_OUT),
-            stt=_entry_points(GROUP_STT),
-            llm=_entry_points(GROUP_LLM),
-            tts=_entry_points(GROUP_TTS),
+        return cls.from_entry_points(chain.from_iterable(entry_points(group=group) for group in _GROUPS))
+
+    @classmethod
+    def from_entry_points(cls, eps: Iterable[EntryPoint], *, verify_drivers: bool = False) -> "PluginRegistry":
+        """A registry of these entry points, each kept with the distribution that declared it.
+
+        Entry points outside the nine groups are ignored. For each name in a
+        group the first entry point is the one loaded, and a name that two
+        distributions offer is kept as a clash, which `load_*` and `origin`
+        refuse. `discover()` passes what is installed; a test passes entry
+        points read from distributions it wrote.
+        """
+        found: dict[str, dict[str, EntryPoint]] = {group: {} for group in _GROUPS}
+        offered: dict[tuple[str, str], dict[str, EntryPoint]] = {}
+        origins: dict[tuple[str, str], PluginOrigin] = {}
+        # One read of each distribution's metadata, however many entry
+        # points it declares. The distribution is held beside what was read,
+        # so its id cannot be reused by another while this loop runs.
+        read: dict[int, tuple[Any, tuple[str | None, str | None]]] = {}
+        for ep in eps:
+            if ep.group not in found:
+                continue
+            dist = getattr(ep, "dist", None)
+            if id(dist) not in read:
+                read[id(dist)] = (dist, _distribution_of(dist))
+            origin = _origin(ep, read[id(dist)][1])
+            found[ep.group].setdefault(ep.name, ep)
+            origins.setdefault((ep.group, ep.name), origin)
+            offered.setdefault((ep.group, ep.name), {}).setdefault(_claimant(origin), ep)
+        registry = cls(
+            actuators=found[GROUP_ACTUATOR],
+            sensors=found[GROUP_SENSOR],
+            locomotion=found[GROUP_LOCOMOTION],
+            wake=found[GROUP_WAKE],
+            audio=found[GROUP_AUDIO],
+            audio_out=found[GROUP_AUDIO_OUT],
+            stt=found[GROUP_STT],
+            llm=found[GROUP_LLM],
+            tts=found[GROUP_TTS],
+            verify_drivers=verify_drivers,
         )
+        registry._claims = {key: tuple(by.values()) for key, by in offered.items() if len(by) > 1}
+        registry._origins = origins
+        return registry
 
     def with_verification(self, verify_drivers: bool) -> "PluginRegistry":
         """A view of the same discovered plugins at a different strictness.
@@ -150,7 +272,7 @@ class PluginRegistry:
         `discover()` is cached and shared, so callers get a copy rather than
         flipping a flag other callers can see.
         """
-        return PluginRegistry(
+        view = PluginRegistry(
             actuators=self._actuators,
             sensors=self._sensors,
             locomotion=self._locomotion,
@@ -162,6 +284,49 @@ class PluginRegistry:
             tts=self._tts,
             verify_drivers=verify_drivers,
         )
+        view._claims = dict(self._claims)
+        view._origins = dict(self._origins)
+        return view
+
+    def origin(self, group: str, name: str) -> PluginOrigin | None:
+        """Where the plugin a name loads comes from, or None when none is installed.
+
+        `group` is one of the `GROUP_*` names. A name two distributions offer
+        raises `DuplicatePluginError`, as loading it does.
+        """
+        ep = self._group(group).get(name)
+        if ep is None:
+            return None
+        self._refuse_a_clash(group, name)
+        return self._origins.get((group, name)) or _origin(ep)
+
+    def _group(self, group: str) -> dict[str, EntryPoint]:
+        by_group = {
+            GROUP_ACTUATOR: self._actuators,
+            GROUP_SENSOR: self._sensors,
+            GROUP_LOCOMOTION: self._locomotion,
+            GROUP_WAKE: self._wake,
+            GROUP_AUDIO: self._audio,
+            GROUP_AUDIO_OUT: self._audio_out,
+            GROUP_STT: self._stt,
+            GROUP_LLM: self._llm,
+            GROUP_TTS: self._tts,
+        }
+        if group not in by_group:
+            raise ValueError(f"no entry-point group {group!r}. The groups are {', '.join(sorted(by_group))}.")
+        return by_group[group]
+
+    def _refuse_a_clash(self, group: str, name: str) -> None:
+        claims = self._claims.get((group, name))
+        if claims:
+            raise _duplicate(group, name, claims)
+
+    def _load(self, group: str, name: str, available: Iterable[str]) -> type:
+        ep = self._group(group).get(name)
+        if ep is None:
+            raise _missing(name, available, _GROUPS[group])
+        self._refuse_a_clash(group, name)
+        return ep.load()
 
     # ---------------------------------------------------------------- query
 
@@ -259,24 +424,16 @@ class PluginRegistry:
 
     def load_driver(self, plugin: str) -> type:
         """Import and return the plugin class for a `driver.plugin` name."""
-        ep = self._actuators.get(plugin) or self._sensors.get(plugin)
-        if ep is None:
-            raise _missing(plugin, self.driver_names, "driver plugin")
-        return ep.load()
+        group = GROUP_ACTUATOR if plugin in self._actuators else GROUP_SENSOR
+        return self._load(group, plugin, self.driver_names)
 
     def load_locomotion(self, kinematics: str) -> type:
         """Import and return the plugin class for a `kinematics` value."""
-        ep = self._locomotion.get(kinematics)
-        if ep is None:
-            raise _missing(kinematics, self.locomotion_names, "locomotion plugin")
-        return ep.load()
+        return self._load(GROUP_LOCOMOTION, kinematics, self.locomotion_names)
 
     def load_wake(self, engine: str) -> type:
         """Import and return the plugin class for an `audio.wake.engine` name."""
-        ep = self._wake.get(engine)
-        if ep is None:
-            raise _missing(engine, self.wake_names, "wake word plugin")
-        return ep.load()
+        return self._load(GROUP_WAKE, engine, self.wake_names)
 
     def load_audio(self, source: str) -> type:
         """Import and return the class for an `audio.input.source` name.
@@ -287,10 +444,7 @@ class PluginRegistry:
         receiving its capability block, and it is what lets the engine build a
         microphone it cannot import.
         """
-        ep = self._audio.get(source)
-        if ep is None:
-            raise _missing(source, self.audio_names, "audio source")
-        return ep.load()
+        return self._load(GROUP_AUDIO, source, self.audio_names)
 
     def load_audio_out(self, sink: str) -> type:
         """Import and return the class for an `audio.output.sink` name.
@@ -298,10 +452,7 @@ class PluginRegistry:
         Constructed as `cls(config, fmt)` with the manifest's `audio.output`
         block, the same convention sources follow.
         """
-        ep = self._audio_out.get(sink)
-        if ep is None:
-            raise _missing(sink, self.audio_out_names, "audio sink")
-        return ep.load()
+        return self._load(GROUP_AUDIO_OUT, sink, self.audio_out_names)
 
     def load_stt(self, provider: str) -> type:
         """Import and return the plugin class for a speech recognition provider.
@@ -311,10 +462,7 @@ class PluginRegistry:
         `AudioFormat` the wake engine fixed. Same shape as a source or a sink,
         for the same reason: the engine holds a name and a mapping.
         """
-        ep = self._stt.get(provider)
-        if ep is None:
-            raise _missing(provider, self.stt_names, "speech recognition provider")
-        return ep.load()
+        return self._load(GROUP_STT, provider, self.stt_names)
 
     def load_llm(self, provider: str) -> type:
         """Import and return the plugin class for a language model provider.
@@ -323,10 +471,7 @@ class PluginRegistry:
         reference from `emet_sdk.models.chat_selection`. No audio format: a
         language model never hears the microphone.
         """
-        ep = self._llm.get(provider)
-        if ep is None:
-            raise _missing(provider, self.llm_names, "language model provider")
-        return ep.load()
+        return self._load(GROUP_LLM, provider, self.llm_names)
 
     def load_tts(self, provider: str) -> type:
         """Import and return the plugin class for a speech synthesis provider.
@@ -336,10 +481,33 @@ class PluginRegistry:
         the soul's `voice` block. The voice states its own sample rate after
         `start()`, and the sink is opened to match.
         """
-        ep = self._tts.get(provider)
-        if ep is None:
-            raise _missing(provider, self.tts_names, "speech synthesis provider")
-        return ep.load()
+        return self._load(GROUP_TTS, provider, self.tts_names)
+
+
+_COUNTS = {2: "two", 3: "three", 4: "four"}
+
+
+def _duplicate(group: str, name: str, claims: Iterable[EntryPoint]) -> Exception:
+    """The refusal of a name more than one distribution offers in one group,
+    naming each of them and how to remove one."""
+    from emet_sdk.validate import DuplicatePluginError, ValidationReport
+
+    origins = sorted((_origin(ep) for ep in claims), key=lambda o: ((o.distribution or "").lower(), o.value))
+    named = [f"{o.label} ({o.value})" if o.label else f"an entry point no distribution declared ({o.value})"
+             for o in origins]
+    listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+    commands = [f"pip uninstall {o.distribution}" for o in origins if o.distribution]
+    remove = f" Uninstall the one you did not mean to install, then start again: {', or '.join(commands)}." if commands else ""
+    report = ValidationReport()
+    report.error(
+        "duplicate_plugin",
+        f"{_COUNTS.get(len(origins), str(len(origins)))} installed distributions offer the "
+        f"{_GROUPS[group]} {name!r} in the group {group}: {listed}. Emet will not choose "
+        f"one for you, since which one Python finds first depends on where each is "
+        f"installed and on the order the file system lists a folder in, which nobody "
+        f"chose.{remove}",
+    )
+    return DuplicatePluginError(report)
 
 
 def _missing(name: str, available: Iterable[str], what: str) -> Exception:

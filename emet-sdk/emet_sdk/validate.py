@@ -50,6 +50,7 @@ __all__ = [
     "ValidationReport",
     "ValidationError",
     "MissingPluginError",
+    "DuplicatePluginError",
     "PluginRegistry",
     "BUILTIN_LOCOMOTION",
     "BUILTIN_WAKE",
@@ -210,6 +211,18 @@ class MissingPluginError(ValidationError):
     is well-formed and the value is legal, the software just is not present.
     Never silently degrade because of this; it is a different failure from
     missing hardware.
+    """
+
+
+class DuplicatePluginError(ValidationError):
+    """Two installed distributions offer one plugin name in one group.
+
+    Raised by `PluginRegistry` when that name is loaded. Its own type for the
+    reason `MissingPluginError` has one: the document is well-formed and the
+    value is legal, and the fix is in what is installed. Emet will not pick
+    one of the two, since the pick would follow the order they were
+    installed, and a package that takes a provider's name would be handed
+    that provider's key.
     """
 
 
@@ -514,7 +527,9 @@ def _check_mount_references(
         mount = cap.get("mounted_on")
         if mount is None or mount == "body":
             continue
-        if mount not in ids:
+        # A reserved part's `mounted_on` is open in the schema, so it may be a
+        # list or a mapping, which names no part and cannot be looked up.
+        if not isinstance(mount, str) or mount not in ids:
             report.error(
                 "unknown_reference",
                 f"{cap.get('id')!r} is mounted_on {mount!r}, which is not a "
@@ -531,8 +546,10 @@ def _check_plugins(
     unverified: list[str] = []
 
     for i, cap in enumerate(caps):
-        driver = cap.get("driver") or {}
-        plugin = driver.get("plugin")
+        # A reserved part's `driver` is open in the schema. One that is no
+        # mapping names no plugin, and is passed over as an absent one is.
+        driver = cap.get("driver")
+        plugin = driver.get("plugin") if isinstance(driver, Mapping) else None
         if isinstance(plugin, str):
             if registry.verify_drivers:
                 if not registry.has_driver(plugin):
@@ -686,6 +703,15 @@ def validate_chain_document(doc: Any) -> ValidationReport:
         return report
 
     for name in parsed:
+        if not isinstance(name, str):
+            report.error(
+                "unknown_intent",
+                f"a chain is named {name!r} ({type(name).__name__}), and an intent's name is a "
+                f"string such as 'express.curiosity'. YAML reads an unquoted 1, null or yes "
+                f"as a number, a null or a boolean.",
+                f"/{name}",
+            )
+            continue
         kind, argument = _intents.parse(name)
         try:
             _intents.validate_intent_name(kind, argument)

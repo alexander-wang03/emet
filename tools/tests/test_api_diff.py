@@ -29,7 +29,7 @@ REPO = TOOLS.parent
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import api_diff  # noqa: E402
+import api_diff  # noqa: E402  a tool, imported by its bare name from tools/
 
 SCHEMA = {
     "$id": "https://emet.invalid/schemas/demo.schema.json",
@@ -730,7 +730,7 @@ def test_the_command(sides, tmp_path, capsys):
 
 
 def value_tag(text: str) -> str:
-    """The tag field of a schema line: `type; required; TAG; limits`."""
+    """The tag field of a schema line, the third of `type; required; TAG; limits`."""
     return text.split("; ")[2] if text.count("; ") >= 2 else ""
 
 
@@ -738,11 +738,12 @@ def test_the_real_tree_lists_every_surface():
     found = listing(REPO)
     values = "\n".join(found.values())
     assert "could not be parsed" not in values and "no ArgumentParser" not in values
-    assert {key.split()[1] for key in found if key.startswith("script ")} == {"emet", "emet-listen", "emet-talk"}
+    assert {key.split()[1] for key in found if key.startswith("script ")} == {
+        "emet", "emet-listen", "emet-talk", "emet-say"}
     groups = {key.split()[1] for key in found if key.startswith("entry-point ")}
     assert groups == {"emet.actuators", "emet.sensors", "emet.locomotion", "emet.wake", "emet.audio",
                       "emet.audio_out", "emet.stt", "emet.llm", "emet.tts"}
-    for command in ("emet validate", "emet explain", "emet-listen", "emet-talk"):
+    for command in ("emet validate", "emet explain", "emet-listen", "emet-talk", "emet-say"):
         assert [key for key in found if key.startswith(f"flag {command} --")], command
     # emet-talk takes the body's flags from a helper in emet-listen's module.
     assert "flag emet-talk --state" in found

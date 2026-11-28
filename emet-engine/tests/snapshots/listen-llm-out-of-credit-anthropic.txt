@@ -1,0 +1,45 @@
+$ emet-listen body.yaml soul.yaml --reply --speak
+exit 0
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+listening for 'hey emet'
+  engine   mock
+  source   wav
+  audio    16000 Hz, 80 ms frames
+  patience 900 ms
+  body     a speakerphone on a desk (probe)
+  chains   32 resolved at boot against 0 part(s): 0 to hardware, 32 to voice
+             voice  utter        speak
+             voice  inflect      express.affection express.amusement
+                                 express.boredom express.concern
+                                 express.confusion express.curiosity
+                                 express.delight express.surprise
+                                 express.thinking
+             voice  tone         signal.booting signal.listening signal.muted
+             voice  explain      move.approach move.retreat move.turn_to
+                                 signal.error signal.offline
+                                 signal.unavailable
+             voice  backchannel  acknowledge
+             voice  silence      attend.bearing attend.none attend.person
+                                 attend.speaker idle.doze idle.fidget
+                                 idle.look_around idle.settle move.stop
+                                 move.wander signal.speaking signal.thinking
+  state    <tmp>/user-state/probe.json, nothing carried in or out: a recording is not this body's room
+  self     13 sentence(s) about its body, 9 of them what it cannot do; tags offered: 9
+  stt      mock (streaming), on this body, from emet-providers <version>
+  llm      anthropic, model claude-opus-5, at api.anthropic.com, key EMET_SNAPSHOT_KEY, from emet-providers <version>
+  voice    mock (16000 Hz), on this body, from emet-providers <version>
+  (ctrl-c to stop)
+
+  heard 'hey emet'  (confidence 0.90)
+    hearing 'hello'
+    hearing 'hello there'
+    then 1.1s of speech, ended on silence
+    said 'hello there'
+    the language model cannot answer: Anthropic says the account is out of credit (HTTP 402, billing_error). Add credit in the Claude Console's billing settings. Retrying will not help.
+    spoke 0 sentence(s)
+    spoke the line: I can't answer right now. The account that pays for my thinking has run out.
+
+source ended. heard it 1 time(s).
+--- stderr
+(nothing)

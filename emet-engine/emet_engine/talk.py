@@ -8,6 +8,12 @@ until Ctrl-C.
 
 `emet-listen` is the same loop with each stage behind a flag, for finding
 out which one is wrong. This command is for the robot.
+
+A turn that failed prints the line `emet_engine.failures` holds for its
+row, which the session picked when it ended the turn, and the robot says
+the row's line aloud. The speaker's tag (`  emet: `) is printed with the
+reply's first word, so a reply that failed before any text leaves no empty
+tag above its failure line (ledger L16 of 0.5.7).
 """
 
 from __future__ import annotations
@@ -16,27 +22,66 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 from emet_sdk.discovery import PluginRegistry
 from emet_sdk.validate import MissingPluginError, ValidationError
 
 from emet_engine import board
 from emet_engine.cli import (
+    StatsLines,
     _load,
     _replay,
     add_body_flags,
+    add_events_flag,
     boot_lines,
+    events_refused,
+    failure_text,
     identity_line,
     install_stop_signals,
+    live_line,
+    open_events,
     print_explanation,
+    print_failure,
     print_run_footer,
+    provider_lines,
     state_warnings,
 )
 from emet_engine.keys import load_keys
-from emet_engine.session import EngineError, ListenSession
+from emet_engine.session import EngineError, Exchange, ListenSession
 from emet_engine.turn import EndReason
 
 __all__ = ["main"]
+
+
+class Speaker:
+    """The `you:` line and the speaker's line of each exchange.
+
+    The speaker's tag is printed with the reply's first word, never before
+    it, so a reply that failed or was declined before any text leaves no
+    empty `  emet: ` line above the line that says why.
+    """
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+        self.open = False
+
+    def said(self, text: str) -> None:
+        print(f"  you:  {text}", flush=True)
+
+    def delta(self, text: str) -> None:
+        if not text:
+            return
+        if not self.open:
+            print(self.tag, end="", flush=True)
+            self.open = True
+        print(text, end="", flush=True)
+
+    def close(self) -> None:
+        """End the reply's line, if one was started."""
+        if self.open:
+            print()
+            self.open = False
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -44,6 +89,15 @@ async def _run(args: argparse.Namespace) -> int:
     # `--stats` the board as the run found it, read again at the footer.
     print(identity_line("emet-talk"), flush=True)
     board_start = board.read_board() if args.stats else None
+    events = open_events(getattr(args, "events", None), "emet-talk")
+    try:
+        return await _talk(args, board_start, events)
+    finally:
+        if events is not None:
+            events.close()
+
+
+async def _talk(args: argparse.Namespace, board_start: board.BoardReading | None, events: Any) -> int:
     install_stop_signals()
     registry = PluginRegistry.discover()
     if not registry:
@@ -68,7 +122,8 @@ async def _run(args: argparse.Namespace) -> int:
         manifest = _replay(manifest, args.replay)
 
     name = str((soul.get("identity") or {}).get("name") or "Emet")
-    speaker_tag = f"  {name.lower()}: "
+    speaker = Speaker(f"  {name.lower()}: ")
+    out = StatsLines("emet-talk", stats=args.stats, events=events)
 
     session = ListenSession(
         manifest,
@@ -77,12 +132,27 @@ async def _run(args: argparse.Namespace) -> int:
         transcribe=True,
         reply=True,
         speak=True,
-        on_wake=lambda event: print(f"\n  (heard {event.phrase!r})", flush=True),
-        on_handover=(lambda handover: print(f"  ({handover.text()})", flush=True)) if args.stats else None,
+        on_wake=lambda event: (print(f"\n  (heard {event.phrase!r})", flush=True), out.wake(event)),
+        on_handover=out.handover if args.stats else None,
         on_extended=lambda text: print("  (that sounded unfinished; waiting a little longer)", flush=True),
         chains=args.chains or (),
         state=args.state,
     )
+    with live_line(session, stats=args.stats):
+        return await _talk_to(session, args, board_start, events, name=name, speaker=speaker, out=out, loaded=loaded)
+
+
+async def _talk_to(
+    session: ListenSession,
+    args: argparse.Namespace,
+    board_start: board.BoardReading | None,
+    events: Any,
+    *,
+    name: str,
+    speaker: Speaker,
+    out: StatsLines,
+    loaded: Any,
+) -> int:
     async with session:
         assert session.format is not None
         state_warnings(session)
@@ -90,13 +160,7 @@ async def _run(args: argparse.Namespace) -> int:
             f"{name} is listening for {session.phrase!r}",
             f"  wake     {session.engine_name} on {session.source_name}, "
             f"{session.format.sample_rate} Hz",
-            f"  words    {session.stt_name}"
-            + (f", {session.stt_descriptor.model}" if session.stt_descriptor and session.stt_descriptor.model else ""),
-            f"  answers  {session.chat_name}"
-            + (f", {session.llm_descriptor.model}" if session.llm_descriptor and session.llm_descriptor.model else ""),
-            f"  voice    {session.tts_name}"
-            + (f", {session.tts_descriptor.model}" if session.tts_descriptor and session.tts_descriptor.model else "")
-            + (f" ({session.tts_descriptor.sample_rate} Hz)" if session.tts_descriptor else ""),
+            *provider_lines(session, "emet-talk"),
             f"  patience {session.patience_ms} ms"
             + (", extends once on a trailing clause" if session.extend_on_incomplete else ""),
         ]
@@ -111,41 +175,9 @@ async def _run(args: argparse.Namespace) -> int:
         exchanges = 0
         interrupted = False
         try:
-            async for exchange in session.talk(
-                on_said=lambda text: print(f"  you:  {text}\n{speaker_tag}", end="", flush=True),
-                on_delta=lambda text: print(text, end="", flush=True),
-            ):
+            async for exchange in session.talk(on_said=speaker.said, on_delta=speaker.delta):
                 exchanges += 1
-                transcript = exchange.utterance.transcript
-                text = transcript.text.strip() if transcript else ""
-                broke = transcript.error if transcript is not None else None
-                if not text:
-                    if broke:
-                        print(f"  (the words never arrived: {broke})")
-                    elif exchange.utterance.reason is EndReason.SOURCE_ENDED:
-                        print("  (the recording ended before anything followed)")
-                    else:
-                        print("  (then nothing)")
-                    if exchange.line:
-                        print(f"{speaker_tag}{exchange.line}")
-                    continue
-                # The `you:` line and the streamed reply were printed by the
-                # two hooks above; this ends the reply's line.
-                print()
-                if broke:
-                    print(f"  (those words may be cut short: {broke})")
-                if exchange.reply is not None and exchange.reply.stop_reason == "refusal":
-                    print("  (the provider declined)")
-                elif exchange.reply is not None and exchange.reply.stop_reason == "error":
-                    print(f"  (the language model failed: {exchange.reply.error})")
-                elif exchange.reply is not None and exchange.reply.stop_reason == "length":
-                    print("  (cut off at the reply's token cap)")
-                if exchange.line:
-                    print(f"{speaker_tag}{exchange.line}")
-                for lost in (s for s in exchange.spoken if not s.ok):
-                    print(f"  (the voice could not say {lost.text!r}: {lost.error})")
-                if exchange.intents:
-                    print("  (intents: " + ", ".join(i.name for i in exchange.intents) + ")")
+                _print_exchange(session, exchange, speaker, out)
         except asyncio.CancelledError:
             interrupted = True
             task = asyncio.current_task()
@@ -153,8 +185,44 @@ async def _run(args: argparse.Namespace) -> int:
                 task.uncancel()
 
         print(f"\n{'stopped' if interrupted else 'source ended'}. {exchanges} exchange(s).")
-        print_run_footer(session, stats=args.stats, board_start=board_start)
+        print_run_footer(session, stats=args.stats, board_start=board_start, events=events)
     return 0
+
+
+def _print_exchange(session: ListenSession, exchange: Exchange, speaker: Speaker, out: StatsLines) -> None:
+    """One exchange's notes, after the `you:` line and the streamed reply
+    the two hooks printed: the failure line of the turn's row, the line said
+    aloud, the sentences lost, the intents, and under `--stats` the turn's
+    own line, last."""
+    speaker.close()
+    transcript = exchange.utterance.transcript
+    text = transcript.text.strip() if transcript else ""
+    failed = (
+        failure_text(session, exchange.failure, "emet-talk", exchange.utterance, exchange.reply)
+        if exchange.failure is not None
+        else None
+    )
+    if not text:
+        if failed is not None and exchange.failure is not None:
+            print_failure(failed, exchange.failure)
+        elif exchange.utterance.reason is EndReason.SOURCE_ENDED:
+            print("  (the recording ended before anything followed)")
+        else:
+            print("  (then nothing)")
+    else:
+        if transcript is not None and transcript.error:
+            print(f"  (those words may be cut short: {transcript.error})")
+        if exchange.reply is not None and exchange.reply.stop_reason == "refusal":
+            print("  (the provider declined)")
+        elif failed is not None and exchange.failure is not None:
+            print_failure(failed, exchange.failure)
+    if exchange.line:
+        print(f"{speaker.tag}{exchange.line}")
+    for lost in (s for s in exchange.spoken if not s.ok):
+        print(f"  (the voice could not say {lost.text!r}: {lost.error})")
+    if exchange.intents:
+        print("  (intents: " + ", ".join(i.name for i in exchange.intents) + ")")
+    out.turn(exchange.record)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -186,8 +254,11 @@ def main(argv: list[str] | None = None) -> int:
         "and the board's temperature, throttle flags and load average at the "
         "start and at the end, as far as the machine reports them",
     )
+    add_events_flag(parser)
     add_body_flags(parser)
     args = parser.parse_args(argv)
+    if events_refused(args, "emet-talk"):
+        return 2
 
     try:
         return asyncio.run(_run(args))

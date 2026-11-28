@@ -296,25 +296,30 @@ def descriptors_from_manifest(
     The static projection exists so that `emet explain` works on a laptop, with
     no robot attached and no drivers installed. Anything it shows is the
     optimistic case: the binding table you get if every declared part works.
+
+    The schema leaves a reserved type's fields open, so a manifest the
+    validator accepts may give a `manipulator` a `role` of `2.5` or `joints`
+    of `true`. The projection keeps a field only in the shape the descriptor
+    declares: a `role` or `form` that is no string is read as absent, and
+    `joints` that are no list, or a joint whose `axis` is no string, give no
+    joints or no axis. A part is then claimed more narrowly, and resolving
+    against it never raises.
     """
     out: list[CapabilityDescriptor] = []
 
     for cap in manifest.get("capabilities") or []:
         cap_type = cap.get("type")
-        joints = tuple(
-            str(j["id"]) for j in (cap.get("joints") or []) if isinstance(j, Mapping) and "id" in j
-        )
-        axes = frozenset(
-            str(j["axis"])
-            for j in (cap.get("joints") or [])
-            if isinstance(j, Mapping) and j.get("axis") in _AXES
-        )
+        declared = cap.get("joints")
+        listed = [j for j in declared if isinstance(j, Mapping)] if isinstance(declared, (list, tuple)) else []
+        joints = tuple(str(j["id"]) for j in listed if "id" in j)
+        axes = frozenset(j["axis"] for j in listed if isinstance(j.get("axis"), str) and j["axis"] in _AXES)
+        role, form = (value if isinstance(value, str) else None for value in (cap.get("role"), cap.get("form")))
         out.append(
             CapabilityDescriptor(
                 capability_id=str(cap.get("id", "")),
                 capability_type=str(cap_type or ""),
-                role=cap.get("role"),
-                form=cap.get("form"),
+                role=role,
+                form=form,
                 actions=frozenset(),   # unknowable without asking the plugin
                 axes=axes,
                 joints=joints,

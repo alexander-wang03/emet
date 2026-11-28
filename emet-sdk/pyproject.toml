@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emet-sdk"
-version = "0.5.6"
+version = "0.5.7"
 description = "The types, schemas and contracts that Emet's engine and every plugin share."
 readme = "README.md"
 requires-python = ">=3.11"

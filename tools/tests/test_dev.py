@@ -24,7 +24,7 @@ REPO = TOOLS.parent
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import dev  # noqa: E402
+import dev  # noqa: E402  a tool, imported by its bare name from tools/
 
 PYPROJECTS = {
     "emet-sdk": """\
@@ -115,7 +115,7 @@ def test_a_clean_install_passes(tmp_path):
 
 
 def test_an_entry_point_declared_since_the_install_is_stale(tmp_path):
-    """The roadmap's test: plant an entry point in a pyproject.toml after the install."""
+    """The roadmap's test plants an entry point in a pyproject.toml after the install."""
     root = write_tree(tmp_path)
     dists = installed(root)
     write_tree(root, {"emet-hal": PYPROJECTS["emet-hal"] + '"planted" = "emet_hal.planted:Planted"\n'})
@@ -287,43 +287,74 @@ def test_a_report_with_a_problem_exits_1(tmp_path):
     assert lines[-3:] == ["  x one", "  fix: do this", "dev: 1 problem(s)"]
 
 
-def test_the_real_tree_declares_the_nine_groups_and_three_scripts():
+def test_the_real_tree_declares_the_nine_groups_and_four_scripts():
     tree = dev.declared(REPO)
     groups = {g for d in tree.values() for g, _n, _v in d.entry_points}
     assert groups == set(dev.GROUPS) | {dev.SCRIPTS}
     scripts = {n for d in tree.values() for g, n, _v in d.entry_points if g == dev.SCRIPTS}
-    assert scripts == {"emet", "emet-listen", "emet-talk"}
+    assert scripts == {"emet", "emet-listen", "emet-talk", "emet-say"}
 
 
 # ---------------------------------------------------------- setup, update
 
 
-def test_dry_run_runs_nothing(tmp_path, monkeypatch, capsys):
+#: Both setup tests run twice: as on 3.11 and 3.13, and as on 3.12, where
+#: pocketsphinx has no wheel and setup prints its note before the first `$ `
+#: line (ledger L26, found under WSL on 3.12). So they read the `$ ` lines
+#: wherever they fall, and each case states its condition itself, whatever
+#: Python runs it: the wake-wheel case run on 3.12 once read the shipped
+#: set and failed (review finding checks-ci/claims-scope#1, 2026-11-27).
+WAKE_WHEEL = pytest.mark.parametrize("wheel", [True, False], ids=["wake-wheel", "no-wake-wheel"])
+
+
+def pin_the_wheel(monkeypatch, wheel: bool) -> None:
+    """Make the running Python one pocketsphinx has a wheel for, or one it
+    has none for, as the case says."""
+    monkeypatch.setattr(dev, "NO_WAKE_WHEEL", set() if wheel else {tuple(sys.version_info[:2])})
+
+
+def commands_and_notes(out: list[str]) -> tuple[list[str], list[str]]:
+    """The printed `$ ` lines, and the other lines without the no-wheel note."""
+    commands = [line for line in out if line.startswith("$ ")]
+    notes = [line for line in out if not line.startswith("$ ") and "publishes no wheel" not in line]
+    return commands, notes
+
+
+@WAKE_WHEEL
+def test_dry_run_runs_nothing(tmp_path, monkeypatch, capsys, wheel):
     root = write_tree(tmp_path / "repo")
 
     def refuse(*args, **kwargs):
         raise AssertionError(f"a dry run ran {args!r}")
 
     monkeypatch.setattr(dev.subprocess, "run", refuse)
+    pin_the_wheel(monkeypatch, wheel)
     venv = tmp_path / "venv"
     assert dev.main(["setup", "--dry-run", "--root", str(root), "--venv", str(venv)]) == 0
     assert dev.main(["update", "--dry-run", "--root", str(root), "--venv", str(venv)]) == 1
     out = capsys.readouterr().out.splitlines()
-    assert out[0].startswith("$ ") and "-m venv" in out[0]
-    assert out[1].startswith("$ ") and "-m pip install -e emet-sdk[dev]" in out[1].replace("'", "")
-    assert out[2].startswith("$ ") and "dev.py check --root" in out[2].replace('"', "").replace("'", "")
-    assert out[3] == "dev: a dry run, so nothing ran"
-    assert out[4] == f"dev: no venv at {venv.resolve()}: run `python tools/dev.py setup` first"
+    assert any("publishes no wheel" in line for line in out) is not wheel
+    commands, notes = commands_and_notes(out)
+    assert len(commands) == 3, out
+    assert "-m venv" in commands[0]
+    install = "-m pip install -e emet-sdk[dev]" + ("" if wheel else " -e emet-hal[dev,audio] ")
+    assert install in commands[1].replace("'", "") + " "
+    assert "dev.py check --root" in commands[2].replace('"', "").replace("'", "")
+    assert notes == ["dev: a dry run, so nothing ran",
+                     f"dev: no venv at {venv.resolve()}: run `python tools/dev.py setup` first"]
     assert not venv.exists()
 
 
-def test_setup_with_no_venv_named_makes_emet_sdks(tmp_path, monkeypatch, capsys):
-    """CONTRIBUTING: one command makes emet-sdk/.venv, the shared venv."""
+@WAKE_WHEEL
+def test_setup_with_no_venv_named_makes_emet_sdks(tmp_path, monkeypatch, capsys, wheel):
+    """CONTRIBUTING says one command makes emet-sdk/.venv, the shared venv."""
     root = write_tree(tmp_path / "repo")
     monkeypatch.setattr(dev.subprocess, "run", lambda *a, **k: pytest.fail("a dry run ran something"))
+    pin_the_wheel(monkeypatch, wheel)
     assert dev.main(["setup", "--dry-run", "--root", str(root)]) == 0
-    first = capsys.readouterr().out.splitlines()[0]
-    assert first == "$ " + dev.shown([sys.executable, "-m", "venv", str(root.resolve() / "emet-sdk" / ".venv")])
+    commands, _notes = commands_and_notes(capsys.readouterr().out.splitlines())
+    assert commands[0] == "$ " + dev.shown([sys.executable, "-m", "venv",
+                                            str(root.resolve() / "emet-sdk" / ".venv")])
 
 
 def test_setup_makes_the_venv_installs_and_checks_in_that_order(tmp_path):

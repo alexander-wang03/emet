@@ -59,7 +59,7 @@ def notes(preset: str) -> list[tuple[float, float]]:
 
 
 def spoken(word: str) -> bytes:
-    """One word as the mock voice writes it: the bytes, then zeros."""
+    """One word as the mock voice writes it, its bytes and then zeros."""
     return word.encode("ascii") + bytes(64 - len(word))
 
 
@@ -278,7 +278,7 @@ def test_a_note_that_lands_on_exact_zeros_still_reads_as_nothing(monkeypatch, hz
 
 @pytest.mark.parametrize("preset", sorted(PRESETS))
 def test_the_words_around_a_tone_are_read_back_unchanged(preset):
-    """The way an engine test's recording looks: words, a tone, words."""
+    """An engine test's recording holds words, then a tone, then more words."""
     pcm = spoken("hello") + spoken("there") + render(preset, 16000) + spoken("again")
     assert read_back(pcm) == "hello there again"
 

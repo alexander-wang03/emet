@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --reply --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the speech recognition provider 'deepgram' cannot start, so what people say would go nowhere. It will not run half-deaf. Deepgram says the account is out of credit (HTTP 402, ASR_PAYMENT_REQUIRED). Add credit to the project in Deepgram's console. Retrying will not help.

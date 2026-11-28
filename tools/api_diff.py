@@ -329,7 +329,7 @@ def _marks(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
 
 
 def _function_text(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    """A signature as written: decorators, defaults and annotations."""
+    """A signature as written, with its decorators, defaults and annotations."""
     word = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
     returns = f" -> {ast.unparse(node.returns)}" if node.returns is not None else ""
     return f"{_marks(node)}{word} ({ast.unparse(node.args)}){returns}"
@@ -351,7 +351,7 @@ def _is_dataclass(node: ast.ClassDef) -> bool:
 
 
 def _class_lines(key: str, node: ast.ClassDef) -> dict[str, str]:
-    """A class: its bases, and each member it defines itself."""
+    """A class as lines, for its bases and each member it defines itself."""
     out: dict[str, str] = {}
     fields: list[str] = []
     for stmt in node.body:
@@ -580,7 +580,7 @@ def _plain(value: Any) -> str:
 
 
 def _shape(node: Any) -> str:
-    """A property's type in a few words: what a document may put there."""
+    """A property's type in a few words, saying what a document may put there."""
     if node is True:
         return "anything"
     if node is False:
@@ -764,7 +764,7 @@ def _call_name(call: ast.Call) -> str:
 
 
 def _receiver(call: ast.Call) -> str:
-    """The plain name a method is called on: `parser` in `parser.add_argument()`."""
+    """The plain name a method is called on, as `parser` is in `parser.add_argument()`."""
     func = call.func
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
         return func.value.id
@@ -833,7 +833,7 @@ def _function_named(tree: Tree, module: ast.Module, dotted: str, is_package: boo
 
 
 def _flag_of(call: ast.Call, parser: _Parser) -> _Flag | None:
-    """One `add_argument` call as a line: its name, and every keyword but the help."""
+    """One `add_argument` call as a line holding its name and every keyword but the help."""
     strings = [_constant(a) for a in call.args]
     names = [s for s in strings if s]
     if not names:
@@ -980,7 +980,7 @@ def listing(tree: Tree) -> dict[str, str]:
 
 
 def listing_text(lines: dict[str, str]) -> list[str]:
-    """The listing as text: one line a name, sorted, so two runs agree."""
+    """The listing as text, one line a name and sorted, so two runs agree."""
     return [f"{key}: {value}" for key, value in sorted(lines.items())]
 
 
@@ -993,7 +993,7 @@ def diff(old: dict[str, str], new: dict[str, str]) -> tuple[list[str], list[str]
 
 
 def report(old: dict[str, str], new: dict[str, str], base: str) -> list[str]:
-    """What the tool prints: the one line, or the three lists."""
+    """What the tool prints, which is the one line or the three lists."""
     added, removed, changed = diff(old, new)
     if not (added or removed or changed):
         return [f"api: no change against {base}"]

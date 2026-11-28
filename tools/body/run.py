@@ -13,15 +13,16 @@ evidence home:
     sync        the code under test into ~/emet-ci/emet: the laptop's
                 working tree (`--tree`), or a pushed commit fetched
                 anonymously from the public repository (`--commit REF`)
-    install     the release process's install line with the provider
-                extras and piper, as the maintainer's venv on the body has
-                them, into ~/emet-ci/.venv, again whenever a pyproject.toml
-                has changed
+    install     pip in ~/emet-ci/.venv upgraded to RUNNER_PIP, then the
+                release process's install line with the provider extras and
+                piper, as the maintainer's venv on the body has them, again
+                whenever a pyproject.toml or the pip pin has changed
     body        the body's fingerprint: the maintainer's manifest hashed in
                 canonical form and the carried state file hashed as it is,
                 so the run names the body it ran on; never a step, and a
                 file that is missing is a note and never a failure
-    audit       pip-audit over the runner's venv, from a venv of its own;
+    audit       pip-audit over the runner's venv, from a venv of its own,
+                installed from the hashed pins of tools/ci/requirements.txt;
                 its findings are recorded and never fail the run
     suites      the four packages' tests, collected, passed and skipped
                 counted per package
@@ -32,15 +33,17 @@ evidence home:
                 a golden, and it names each recording of a sitting that has
                 no golden yet, which replay.py holds to nothing
     budgets     the plan's budget table: boot, the first chunk at the null
-                sink on the local path, the per-frame mean and 99th
-                percentile, frames over 80 ms, resident memory and idle CPU,
-                each held to the last release's on this body, and the board
-                lines beside them, recorded and never judged
+                sink and the turn gap's median on the local path, the
+                per-frame mean and 99th percentile, frames over 80 ms,
+                resident memory and idle CPU, each held to the last
+                release's on this body, and the board lines beside them,
+                recorded and never judged
     speaker     the real speaker with no microphone: --replay with --echo,
-                --replay with --speak, and emet-talk --replay
+                --replay with --speak, and emet-talk --replay, the last
+                writing an events file
     live        the microphone: a plain run of 60 s, emet-talk with no
                 flags for 60 s, and --stats for ten minutes, each with
-                nobody speaking
+                nobody speaking, the last writing an events file
     netcut      with --netcut SECONDS: port 443 cut with SSH up and put back,
                 through the root-owned emet-netcut and its one sudo rule
     soak        with --soak MINUTES: the bank's recordings at real time
@@ -51,8 +54,10 @@ evidence home:
     collect     the run's text files to releases/vX.Y.Z/body/<date>/,
                 body_log_check.py on each typescript, the date each body
                 flag of RELEASE_PROCESS.md §4 last ran, read from the logs,
-                and the flags this run itself exercised, read from its own
-                typescripts
+                the flags this run itself exercised, read from its own
+                typescripts, and each events file's turns, read with
+                tools/events_file.py; with `--sheet`, the release sitting's
+                ratings joined to its turns in sitting.json
 
 **What it writes.** `run.json`, format `emet-body-run/2`, and `report.txt`.
 Format 2 keeps every field of format 1 and adds `body`, the fingerprint, and
@@ -106,6 +111,8 @@ Usage:
     python tools/body/run.py --release 0.5.5 --commit 1a2b3c4
     python tools/body/run.py --release 0.5.5 --tree --window 2026-10-28T14:00 2026-10-28T15:00
     python tools/body/run.py --release 0.5.5 --collect-only --fetch '~/sitting-0.5.5.log'
+    python tools/body/run.py --release 0.5.7 --collect-only --fetch '~/sitting-0.5.7.log' \\
+        --fetch '~/sitting-0.5.7.events.jsonl' --sheet ../releases/v0.5.7/sitting-sheet.md
     python tools/body/run.py --release 0.5.6 --commit 1a2b3c4 --soak 60 --repeat 5
     python tools/body/run.py --release 0.5.6 --soak-collect
     python tools/body/run.py --release 0.5.6 --nightly-report
@@ -120,6 +127,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import io
 import json
 import re
@@ -153,9 +161,17 @@ PACKAGES = ("emet-sdk", "emet-hal", "emet-providers", "emet-engine")
 #: the 4 live vendor tests the maintainer's skips, where 0.5.5's runs skipped
 #: 9. `piper` is
 #: GPL-3.0, imported through its extra and never bundled; the budget's first
-#: chunk on the local path needs it. tools/body/nightly.sh keeps the same line.
+#: chunk on the local path needs it. tools/body/nightly.sh keeps the same line
+#: and the same RUNNER_PIP, so the two share one install key.
 INSTALL = ("emet-sdk[dev]", "emet-hal[dev,audio,wake]", "emet-providers[dev,deepgram,anthropic,openai,piper]",
            "emet-engine[dev]")
+#: The pip the runner's venv is upgraded to before the install line (ledger
+#: L27). The venv's own pip was 25.1.1, with six advisories of its own
+#: (PYSEC-2026-1795, -1796, -2875, -2876, -196 and -3721, pip-audit 2.10.1 on
+#: the body, 2026-11-26), and pip-audit names 26.2 as the fix for all six.
+#: Part of the install's key, so a new pin installs again. nightly.sh holds
+#: the same pin, and a test holds the two keys equal.
+RUNNER_PIP = "pip==26.2"
 CHECKS = ("check_layering.py", "release_check.py", "check_style.py")
 #: In the order they run. The speaker and the microphone come before the
 #: network cut and the soak, so a window is spent on them alone.
@@ -166,6 +182,14 @@ ASKED_STEPS = ("soak", "netcut")
 #: What the two hardware steps run, in order, each a step of its own in
 #: `run.json`. Only these add to `flags_run`.
 HARDWARE_SUBSTEPS = ("speaker-echo", "speaker-speak", "speaker-talk", "live-plain", "live-talk", "live-stats")
+#: The two sub-steps that also write an events file (`--events`, BVP12),
+#: each beside its typescript as `<step>.events.jsonl`: emet-talk's replay
+#: and the ten minutes of `--stats`. `--events` needs `--stats`, which both
+#: have, and it is never a BEHAVIOUR flag.
+EVENTS_STEPS = ("speaker-talk", "live-stats")
+EVENTS_SUFFIX = ".events.jsonl"
+#: tools/events_file.py, the events file's reader, beside this file's folder.
+EVENTS_READER = Path(__file__).resolve().parents[1] / "events_file.py"
 
 NIGHT_STARTS = dt.time(22, 0)
 NIGHT_ENDS = dt.time(8, 0)
@@ -305,13 +329,20 @@ HEX64 = re.compile(r"[0-9a-f]{64}")
 #: Every command on the body starts here. The EMET_ names that were set are
 #: kept for the preflight record, names only, and then unset. Temporary
 #: files and pip's cache go inside ~/emet-ci, so the runner writes nowhere
-#: else on the body.
+#: else on the body. `PIP_CONFIG_FILE=/dev/null` sets every pip
+#: configuration file aside: the Pi's `/etc/pip.conf` adds piwheels as an
+#: extra index (read 2026-11-27), whose own builds of a version carry
+#: hashes PyPI does not list, so the runner's installs come from PyPI alone
+#: (ledger L53). pip skips its files when the variable is `os.devnull`
+#: (`pip/_internal/configuration.py`, pip 24.3.1 and 25.1.1, read
+#: 2026-11-27).
 PRELUDE = r"""set -u
 EMET_SET=$(env | sed -n 's/^\(EMET_[A-Za-z0-9_]*\)=.*/\1/p' | tr '\n' ' ')
 for name in $EMET_SET; do unset "$name"; done
 CI="$HOME/emet-ci"
 PY="$CI/.venv/bin/python"
 export PYTHONDONTWRITEBYTECODE=1 GIT_TERMINAL_PROMPT=0 TMPDIR="$CI/tmp" PIP_CACHE_DIR="$CI/cache/pip"
+export PIP_CONFIG_FILE=/dev/null
 mkdir -p "$TMPDIR"
 """
 
@@ -334,11 +365,13 @@ done
 """
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 #: What `--fetch` may copy home: the typescripts the maintainer's body runs
-#: and the release sitting write in the home folder, and nothing else. The
-#: name has no directory in it, so nothing under ~/.config or ~/.ssh can
-#: match, and it ends in .log, so no recording can; a name holding key, env,
-#: secret or token is refused besides.
-FETCHABLE = re.compile(r"^~/(?:pi|sitting)-[A-Za-z0-9._-]+\.log$")
+#: and the release sitting write in the home folder, and the events files
+#: beside them (`--events`, which hold numbers and verdicts and never a
+#: word), and nothing else. The name has no directory in it, so nothing
+#: under ~/.config or ~/.ssh can match, and it ends in .log or
+#: .events.jsonl, so no recording can; a name holding key, env, secret or
+#: token is refused besides.
+FETCHABLE = re.compile(r"^~/(?:pi|sitting)-[A-Za-z0-9._-]+\.(?:log|events\.jsonl)$")
 SECRET = re.compile(r"key|env|secret|token", re.IGNORECASE)
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -369,7 +402,15 @@ THROTTLE_BITS = {
 #: installed into the runner's venv, its dependencies (ten direct ones in
 #: 2.10.1's metadata, and theirs) would join the venv the suites run in and
 #: be audited as the robot's.
-PIP_AUDIT = "pip-audit==2.10.1"
+#:
+#: It is installed from the CI lock, tools/ci/requirements.txt, which `uv pip
+#: compile --generate-hashes` writes and Dependabot keeps (ledger L21): the
+#: laptop reads pip-audit's pin there and every pin pip-audit needs, each with
+#: its hashes, and the body installs exactly those with `--require-hashes`,
+#: so a file PyPI serves that the lock never hashed is refused. The lock is
+#: the one beside this file, the tree the runner itself is in.
+AUDIT_LOCK = Path(__file__).resolve().parents[1] / "ci" / "requirements.txt"
+AUDIT_TOOL = "pip-audit"
 AUDIT_VENV = "audit-venv"
 #: What a pip-audit that could not reach its service says, in its last lines.
 NO_NETWORK = re.compile(r"ConnectionError|NewConnectionError|Name or service not known|name resolution|"
@@ -440,10 +481,13 @@ except Exception as exc:
 #: methods of `SessionStats` wrapped to read what the engine measures already
 #: and prints only in part (its footer has no 99th percentile and no time of
 #: the first frame). `record_frame` notes the first frame's time, resident
-#: memory and CPU clock; `report`, which the footer calls, notes the rest.
-#: Both call the engine's own method. A wrapped method the engine stopped
-#: calling leaves its numbers out of the result, and the measure is null:
-#: the 0.5.3 row of RELEASE_PROCESS.md §10, a harness that names what it wraps.
+#: memory and CPU clock; `report`, which the footer calls, notes the rest,
+#: the turn gap of each turn among them (`TurnRecord.gap_ms`, last loud frame
+#: to first sound, None for a turn that made no sound). Both call the
+#: engine's own method. A wrapped method the engine stopped calling, or an
+#: engine with no `turn_records`, leaves its numbers out of the result, and
+#: the measure is null: the 0.5.3 row of RELEASE_PROCESS.md §10, a harness
+#: that names what it wraps.
 BUDGET_PY = '''\
 import json, sys, time
 from pathlib import Path
@@ -478,6 +522,9 @@ def footer(self, *args, **kwargs):
     seen.update(frames=self.frames, mean_ms=self.mean_ms, p99_ms=self.percentile(99), max_ms=self.process_ms_max,
                 over=self.over_budget, budget_ms=self.frame_ms, voice_first_ms=list(self.speech_first_ms),
                 cpu_end=time.process_time(), wall_end=time.monotonic(), rss_end_kb=rss_kb())
+    records = getattr(self, "turn_records", None)
+    if records is not None:
+        seen["gap_ms"] = [r.gap_ms for r in records if r.gap_ms is not None]
     return report(self, *args, **kwargs)
 
 
@@ -760,6 +807,11 @@ exit 0
 MEASURES = (
     ("Boot to first frame", "ms"),
     ("First chunk at the null sink after the final, local path", "ms"),
+    # EV3 stage 1: the wait a person feels, last loud frame to first sound,
+    # at the median of the one breath's turns. DESIGN.md §13 gives it a
+    # budget of 2.0 s from Shiwa et al. (HRI 2008, CITATIONS.md); the runner
+    # holds it to the last release's value, as every row here.
+    ("Turn gap, median, local path", "ms"),
     ("Per-frame mean", "ms"),
     ("Per-frame 99th percentile", "ms"),
     ("Frames over 80 ms", "frames"),
@@ -769,6 +821,7 @@ MEASURES = (
     ("Board lines (temperature, throttle, load)", ""),
 )
 BOARD = MEASURES[-1][0]
+TURN_GAP = MEASURES[2][0]
 #: Stage 4: a measure is within when it rose by no more than the larger of
 #: 25% and the spread repeated runs of it show. A value to tune. Holding each
 #: release's numbers to the last one's on the same machine is the idea of
@@ -804,7 +857,7 @@ class RunnerError(Exception):
 
 
 class Unreachable(Exception):
-    """ssh got no answer from the body: off, asleep, or off the network."""
+    """ssh got no answer from the body, which is off, asleep or off the network."""
 
 
 # --------------------------------------------------------------------------
@@ -1642,7 +1695,9 @@ def budget_rows(values: dict[str, list[float]], board: str | None, *, top: Path,
 
 def budget_values(results: dict[str, dict[str, Any]]) -> dict[str, list[float]]:
     """Each measure's repeated values from the budget's driver results, named
-    `frames-N`, `speak-N` and `idle-N`. A run that did not exit 0 gives none."""
+    `frames-N`, `speak-N` and `idle-N`. A run that did not exit 0 gives none.
+    The turn gap of a run is the median of its turns' gaps, so `--repeat`
+    gives one value a run and the row is their median, as every row's is."""
     def runs(kind: str) -> list[dict[str, Any]]:
         return [r for name, r in sorted(results.items()) if name.startswith(kind + "-") and r.get("exit") == 0]
 
@@ -1664,6 +1719,9 @@ def budget_values(results: dict[str, dict[str, Any]]) -> dict[str, list[float]]:
         firsts = r.get("voice_first_ms") or []
         if firsts:
             values["First chunk at the null sink after the final, local path"].append(sum(firsts) / len(firsts))
+        gaps = [g for g in r.get("gap_ms") or [] if isinstance(g, (int, float)) and not isinstance(g, bool)]
+        if gaps:
+            values[TURN_GAP].append(float(median(gaps)))
     for r in idle:
         wall = (r.get("wall_end") or 0) - (r.get("wall_start") or 0)
         if wall > 0 and r.get("cpu_end") is not None and r.get("cpu_start") is not None:
@@ -1732,17 +1790,101 @@ def budget_table(record: dict[str, Any], here: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def audit_record(values: dict[str, list[str]], code: str) -> tuple[dict[str, Any], str]:
+def pep503(name: str) -> str:
+    """A distribution's name as PEP 503 normalises it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+@dataclass
+class Locked:
+    """One requirement of a hashed lock: the requirement with its marker,
+    its hashes, and the names `# via` says it is there for."""
+    requirement: str
+    hashes: list[str] = field(default_factory=list)
+    via: set[str] = field(default_factory=set)
+
+    def line(self) -> str:
+        """The requirement and its hashes on one line, as pip reads a line
+        whose continuations are joined."""
+        return " ".join([self.requirement, *self.hashes])
+
+
+def lock_entries(text: str) -> dict[str, Locked]:
+    """Each requirement of a lock `uv pip compile --generate-hashes` wrote,
+    by its PEP 503 name, in the lock's order. A `# via` comment names the
+    requirements it is there for on its own line or on the lines under it;
+    `-r FILE` there names a file, which is no requirement."""
+    found: dict[str, Locked] = {}
+    current: Locked | None = None
+    in_via = False
+    for raw in text.splitlines():
+        words = raw.strip().rstrip("\\").strip()
+        if not words or raw.startswith("#"):
+            # A blank line, or the header's own comments at the margin.
+            in_via = False
+            continue
+        if not raw[:1].isspace():
+            spec = [w for w in words.split() if not w.startswith("--hash=")]
+            current = Locked(" ".join(spec), [w for w in words.split() if w.startswith("--hash=")])
+            found[pep503(re.split(r"[=<>!~;\s\[]", words, maxsplit=1)[0])] = current
+            in_via = False
+            continue
+        if current is None:
+            continue
+        if words.startswith("--hash="):
+            current.hashes += words.split()
+        elif words.startswith("# via"):
+            in_via = True
+            rest = words.removeprefix("# via").strip()
+            if rest and not rest.startswith("-"):
+                current.via.add(pep503(rest))
+        elif in_via and words.startswith("#"):
+            item = words.lstrip("#").strip()
+            if item and not item.startswith("-"):
+                current.via.add(pep503(item))
+        else:
+            in_via = False
+    return found
+
+
+def audit_requirements(text: str) -> tuple[str, str]:
+    """pip-audit's part of the CI lock, one requirement a line with its
+    hashes in the lock's order, and pip-audit's own pin. The part is
+    pip-audit and every requirement the lock holds for it, or for one of
+    those, however deep. Raises RunnerError when the lock holds no pip-audit
+    or a requirement of that part has no hash."""
+    entries = lock_entries(text)
+    tool = entries.get(AUDIT_TOOL)
+    if tool is None:
+        raise RunnerError(f"the CI lock holds no {AUDIT_TOOL}")
+    needed = {AUDIT_TOOL}
+    grew = True
+    while grew:
+        grew = False
+        for name, entry in entries.items():
+            if name not in needed and entry.via & needed:
+                needed.add(name)
+                grew = True
+    unhashed = sorted(name for name in needed if not entries[name].hashes)
+    if unhashed:
+        raise RunnerError(f"the CI lock pins {', '.join(unhashed)} with no hash")
+    lines = [entry.line() for name, entry in entries.items() if name in needed]
+    pin = tool.requirement.split(";")[0].strip()
+    return "\n".join(lines) + "\n", pin
+
+
+def audit_record(values: dict[str, list[str]], code: str, pin: str = AUDIT_TOOL) -> tuple[dict[str, Any], str]:
     """`run.json`'s `audit`, and the step's reason, from what the audit's
     script printed. Never a failure: no network, a tool that would not
-    install and a finding all leave the run's verdict alone."""
-    tool = (values.get("version") or [""])[-1].strip() or PIP_AUDIT.replace("==", " ")
+    install and a finding all leave the run's verdict alone. `pin` is the
+    lock's, `pip-audit==2.10.1`."""
+    tool = (values.get("version") or [""])[-1].strip() or pin.replace("==", " ")
     tail = " / ".join(values.get("tail", []))[-200:]
     state = (values.get("state") or [""])[-1]
     if state:
         why = {
             "no-venv": "the audit's venv could not be made with python3 -m venv",
-            "no-install": f"{PIP_AUDIT} could not be installed in ~/emet-ci/{AUDIT_VENV}",
+            "no-install": f"{pin} could not be installed in ~/emet-ci/{AUDIT_VENV} from the lock's hashes",
             "no-runner-venv": "the runner's venv did not say where its packages are",
         }.get(state, state)
         if NO_NETWORK.search(tail):
@@ -1783,6 +1925,140 @@ def parse_nightly(text: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 # The run
 # --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
+# The events files and the release sitting's sheet
+# --------------------------------------------------------------------------
+
+
+def events_reader() -> Any:
+    """tools/events_file.py, loaded by its path, since run.py runs as a
+    script and the reader sits in the folder above it."""
+    if not EVENTS_READER.is_file():
+        raise RunnerError(f"{EVENTS_READER.name} is not in tools/, so no events file can be read")
+    spec = importlib.util.spec_from_file_location("emet_events_file", EVENTS_READER)
+    if spec is None or spec.loader is None:
+        raise RunnerError(f"{EVENTS_READER} could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def turn_records(path: Path) -> list[dict[str, Any]]:
+    """The `turn` records of an events file, in the file's order. The reader
+    refuses a format other than emet-events 1.x and skips a kind it does not
+    know; a refusal is a RunnerError naming the file."""
+    reader = events_reader()
+    try:
+        found = reader.read(path)
+    except (reader.EventsError, OSError, ValueError) as exc:
+        raise RunnerError(f"{path.name} could not be read: {exc}") from exc
+    return list(found.turns)
+
+
+def events_summary(path: Path) -> dict[str, Any]:
+    """A hardware step's `details.events`: the file's name, its turns, and the
+    median of their gaps in whole ms as the reader sums it, null when no turn
+    made a sound."""
+    turns = turn_records(path)
+    gap = events_reader().gaps(turns)
+    return {"file": path.name, "turns": len(turns), "gap_ms_median": gap["median_ms"] if gap else None}
+
+
+#: The release sitting's sheet in tools/body/sitting.md (EV4 stage 1): its
+#: columns, its rows, and the rows whose turns run under `--stats --events`,
+#: joined in order to the events file's turn records. The idea of putting a
+#: person's judgement of each turn beside its measured costs is PARADISE's
+#: (Walker, Litman, Kamm and Abella, ACL 1997; an idea, CITATIONS.md); the
+#: anchors of the wait's 1 to 5 are this project's words (0.5.7-D7).
+SHEET_COLUMNS = ("#", "Asked", "Whole", "Held", "Voice", "Wait (1 to 5)", "Tries", "Body", "Notes")
+SHEET_BOXES = {"Asked": "asked", "Whole": "whole", "Held": "held", "Voice": "voice", "Body": "body"}
+SHEET_ROWS = tuple(range(1, 11))
+JOINED_ROWS = tuple(range(3, 11))
+SITTING_FORMAT = "emet-sitting/1"
+SEPARATOR = re.compile(r"^\|[\s:|-]+\|$")
+
+
+class SheetError(ValueError):
+    """A filled sheet the runner cannot read, naming the row and the column."""
+
+
+def table_cells(line: str) -> list[str] | None:
+    """A Markdown table row's cells, stripped, or None for a line that is no
+    table row."""
+    text = line.strip()
+    if not text.startswith("|") or not text.endswith("|") or len(text) < 2:
+        return None
+    return [cell.strip() for cell in text[1:-1].split("|")]
+
+
+def read_sheet(text: str) -> list[dict[str, Any]]:
+    """The ten rows of a filled sheet, the table under sitting.md's columns
+    with the maintainer's answers written in. A box is `[x]` (true), `[ ]`
+    (false) or empty (null, a box the turn does not have); the wait is 1 to
+    5 or empty; the tries a whole number from 1 or empty; the notes any text,
+    and a `|` in them is kept. Raises SheetError naming the row and column."""
+    lines = text.splitlines()
+    header = next((i for i, line in enumerate(lines) if table_cells(line) == list(SHEET_COLUMNS)), None)
+    if header is None:
+        raise SheetError("no table has the sheet's columns: | " + " | ".join(SHEET_COLUMNS) + " |")
+    if header + 1 >= len(lines) or not SEPARATOR.match(lines[header + 1].strip()):
+        raise SheetError("the sheet's header has no |---| line under it")
+    rows: list[dict[str, Any]] = []
+    for line in lines[header + 2:]:
+        cells = table_cells(line)
+        if cells is None:
+            break
+        if len(cells) < len(SHEET_COLUMNS):
+            raise SheetError(f"the row {line.strip()!r} has {len(cells)} cells, and the sheet has "
+                             f"{len(SHEET_COLUMNS)} columns")
+        # The notes are the last column, and a `|` in them splits them: put
+        # them back together as they were written.
+        raw = line.strip()[1:-1].split("|")
+        cells = cells[:len(SHEET_COLUMNS) - 1] + ["|".join(raw[len(SHEET_COLUMNS) - 1:]).strip()]
+        named = dict(zip(SHEET_COLUMNS, cells))
+        expected = len(rows) + 1
+        if named["#"] != str(expected):
+            raise SheetError(f"row {expected} is numbered {named['#']!r}; the rows run 1 to {len(SHEET_ROWS)} "
+                             "in order")
+        row: dict[str, Any] = {"turn": expected}
+        for column, key in SHEET_BOXES.items():
+            value = named[column].lower()
+            if value not in ("[x]", "[ ]", ""):
+                raise SheetError(f"row {expected}, {column}: {named[column]!r} is not [x], [ ] or empty")
+            row[key] = {"[x]": True, "[ ]": False, "": None}[value]
+        wait, tries = named["Wait (1 to 5)"], named["Tries"]
+        if wait and wait not in ("1", "2", "3", "4", "5"):
+            raise SheetError(f"row {expected}, Wait: {wait!r} is not a rating from 1 to 5")
+        if tries and not (tries.isdigit() and int(tries) >= 1):
+            raise SheetError(f"row {expected}, Tries: {tries!r} is not a whole number from 1")
+        row.update(wait=int(wait) if wait else None, tries=int(tries) if tries else None,
+                   notes=named["Notes"] or None)
+        rows.append({key: row[key] for key in ("turn", "asked", "whole", "held", "voice", "wait", "tries", "body",
+                                                "notes")})
+    if len(rows) != len(SHEET_ROWS):
+        raise SheetError(f"the sheet has {len(rows)} rows, and a sitting has {len(SHEET_ROWS)}")
+    return rows
+
+
+def sitting_record(rows: list[dict[str, Any]], records: list[dict[str, Any]] | None, release: str,
+                   problem: str | None = None) -> dict[str, Any]:
+    """sitting.json: the sheet's rows, each with `record`, the events file's
+    turn record for rows 3 to 10 in order. The ratings are kept whether or
+    not the turns join; a join needs exactly one turn record a joined row,
+    and anything else leaves every `record` null and says why."""
+    turns = [dict(row, record=None) for row in rows]
+    if problem is not None or records is None:
+        joined = f"not joined: {problem or 'no events file'}"
+    elif len(records) != len(JOINED_ROWS):
+        joined = f"not joined: {len(records)} turn records for {len(JOINED_ROWS)} rows"
+    else:
+        joined = "joined"
+        for turn, record in zip((t for t in turns if t["turn"] in JOINED_ROWS), records):
+            turn["record"] = record
+    return {"format": SITTING_FORMAT, "release": release, "joined": joined, "turns": turns}
 
 
 @dataclass
@@ -1836,6 +2112,8 @@ class BodyRun:
             "note": "not read: the run ended before the body's manifest was hashed",
         }
         self.out_dir: Path | None = None
+        #: Whether the body's engine has `--events`; prepare_body reads it.
+        self.events_ok = True
 
     # paths on the body, known once preflight has read $HOME
     @property
@@ -2066,21 +2344,24 @@ echo "swapped=yes"
 
     def install(self) -> Step:
         # The provider extras, piper among them, are in every install now, so
-        # --voice piper needs no other line and never reinstalls.
+        # --voice piper needs no other line and never reinstalls. pip itself
+        # is upgraded first (ledger L27), and its pin is part of the key.
         extras = list(INSTALL)
         quoted = " ".join(f"-e {shlex.quote(e)}" for e in extras)
         body = f"""cd "$CI/emet" || exit 3
-key=$( {{ printf '%s\\n' {shlex.quote(' '.join(extras))}; cat {' '.join(p + '/pyproject.toml' for p in PACKAGES)}; }} | sha256sum | cut -c1-64)
+key=$( {{ printf '%s\\n' {shlex.quote(' '.join([*extras, RUNNER_PIP]))}; cat {' '.join(p + '/pyproject.toml' for p in PACKAGES)}; }} | sha256sum | cut -c1-64)
 echo "key=$key"
 if [ ! -x "$PY" ]; then python3 -m venv "$CI/.venv" || exit 5; echo "venv=made"; fi
 if [ "$(cat "$CI/installed.key" 2>/dev/null)" != "$key" ]; then
   rm -f "$CI/installed.key"
-  "$PY" -m pip install --disable-pip-version-check -q {quoted} > "$RUN/install.txt" 2>&1 || {{ echo "pip=failed"; tail -n 5 "$RUN/install.txt" | sed 's/^/tail=/'; exit 6; }}
+  "$PY" -m pip install --disable-pip-version-check -q --upgrade {shlex.quote(RUNNER_PIP)} > "$RUN/install.txt" 2>&1 || {{ echo "upgrade=failed"; tail -n 5 "$RUN/install.txt" | sed 's/^/tail=/'; exit 6; }}
+  "$PY" -m pip install --disable-pip-version-check -q {quoted} >> "$RUN/install.txt" 2>&1 || {{ echo "pip=failed"; tail -n 5 "$RUN/install.txt" | sed 's/^/tail=/'; exit 6; }}
   echo "$key" > "$CI/installed.key"
   echo "installed=yes"
 else
   echo "installed=no"
 fi
+echo "pip_version=$("$PY" -m pip --version --disable-pip-version-check 2>/dev/null | cut -d' ' -f2)"
 "$PY" -m pip freeze --disable-pip-version-check > "$RUN/pip-freeze.txt" 2>&1
 "$PY" -c "import emet_sdk, emet_hal, emet_providers, emet_engine as e; print('versions=' + ' '.join(m.__version__ for m in (emet_sdk, emet_hal, emet_providers, e)))"
 """
@@ -2089,12 +2370,15 @@ fi
         seconds = time.monotonic() - start
         if done.code != 0 or not done.value("versions"):
             tail = " / ".join(done.values().get("tail", [])) or done.err.strip()[-200:]
-            return self.add(Step("install", "failed", f"the install exited {done.code}: {tail}", seconds))
-        how = "installed, a pyproject.toml or the extras changed" if done.value("installed") == "yes" \
+            why = (f"{RUNNER_PIP} could not be installed in the runner's venv (exit {done.code}): {tail}"
+                   if done.value("upgrade") == "failed" else f"the install exited {done.code}: {tail}")
+            return self.add(Step("install", "failed", why, seconds))
+        how = "installed, a pyproject.toml, the extras or the pip pin changed" if done.value("installed") == "yes" \
             else "kept, no pyproject.toml changed"
-        return self.add(Step("install", "passed", f"{how}; versions {done.value('versions')}", seconds,
-                             {"key": done.value("key"), "versions": done.value("versions").split(),
-                              "extras": extras}))
+        pip = done.value("pip_version") or None
+        return self.add(Step("install", "passed", f"{how}; versions {done.value('versions')}; pip {pip or 'unread'}",
+                             seconds, {"key": done.value("key"), "versions": done.value("versions").split(),
+                                       "extras": extras, "pip": pip}))
 
     # ------------------------------------------------------- the body's name
 
@@ -2251,14 +2535,29 @@ tail -n 5 "$RUN/bank-replay.txt" | sed 's/^/tail=/'
         """pip-audit over the runner's venv (BVP2 stage 2), run from a venv of
         its own, ~/emet-ci/audit-venv. Never a failure: the step passes when
         it audited, with findings or none, and is `not run` when it could
-        not, and `audit.status` says which."""
-        pinned = shlex.quote(PIP_AUDIT)
+        not, and `audit.status` says which.
+
+        pip-audit comes from the CI lock's hashed pins (ledger L21), written
+        to the audit's venv as requirements.txt and installed with
+        `--require-hashes`. The venv is made again when the pins change:
+        `installed` holds their sha256."""
+        start = time.monotonic()
+        try:
+            requirements, pin = audit_requirements(AUDIT_LOCK.read_text(encoding="utf-8"))
+        except (OSError, RunnerError) as exc:
+            why = f"no hashed pin of {AUDIT_TOOL} to install: {exc}"
+            self.audit_result = {"status": "not run", "reason": why, "tool": AUDIT_TOOL, "findings": []}
+            return self.add(Step("audit", "not run", why, time.monotonic() - start,
+                                 {"lock": relative(AUDIT_LOCK, REPO)}))
+        digest = hashlib.sha256(requirements.encode("utf-8")).hexdigest()
         body = f"""AV="$CI/{AUDIT_VENV}"
-if [ ! -x "$AV/bin/pip-audit" ] || [ "$(cat "$AV/installed" 2>/dev/null)" != {pinned} ]; then
+if [ ! -x "$AV/bin/pip-audit" ] || [ "$(cat "$AV/installed" 2>/dev/null)" != {digest} ]; then
   rm -rf "$AV"
   python3 -m venv "$AV" > "$RUN/audit-install.txt" 2>&1 || {{ echo "state=no-venv"; tail -n 3 "$RUN/audit-install.txt" | sed 's/^/tail=/'; exit 0; }}
-  "$AV/bin/python" -m pip install --disable-pip-version-check -q {pinned} >> "$RUN/audit-install.txt" 2>&1 || {{ echo "state=no-install"; tail -n 3 "$RUN/audit-install.txt" | sed 's/^/tail=/'; exit 0; }}
-  echo {pinned} > "$AV/installed"
+  cat > "$AV/requirements.txt" <<'EMET_LOCK'
+{requirements}EMET_LOCK
+  "$AV/bin/python" -m pip install --disable-pip-version-check -q --require-hashes -r "$AV/requirements.txt" >> "$RUN/audit-install.txt" 2>&1 || {{ echo "state=no-install"; tail -n 3 "$RUN/audit-install.txt" | sed 's/^/tail=/'; exit 0; }}
+  echo {digest} > "$AV/installed"
 fi
 site=$("$PY" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])" 2>/dev/null) || {{ echo "state=no-runner-venv"; exit 0; }}
 echo "version=$("$AV/bin/pip-audit" --version 2>&1 | head -n 1)"
@@ -2268,13 +2567,13 @@ tail -n 3 "$RUN/audit.txt" | sed 's/^/tail=/'
 "$AV/bin/python" - "$RUN/audit.json" <<'EMET_PY'
 {AUDIT_REPORT_PY}EMET_PY
 """
-        start = time.monotonic()
         done = self.remote.run(self.script("audit", body), timeout=900)
         values = done.values()
-        self.audit_result, reason = audit_record(values, done.value("code"))
+        self.audit_result, reason = audit_record(values, done.value("code"), pin)
         status = "passed" if self.audit_result["status"] == "ran" else "not run"
         details = {"code": done.value("code"), "tail": values.get("tail", []),
-                   "skipped": values.get("skipped", []), "findings": len(self.audit_result["findings"])}
+                   "skipped": values.get("skipped", []), "findings": len(self.audit_result["findings"]),
+                   "pin": pin, "lock_sha256": digest}
         return self.add(Step("audit", status, reason, time.monotonic() - start, details))
 
     # ------------------------------------------------------------ budgets
@@ -2735,6 +3034,10 @@ echo "during=$({PROBE})"
         def bounded(seconds: int, *command: str) -> list[str]:
             return ["timeout", "--foreground", "-s", "INT", "-k", "30", "--preserve-status", str(seconds), *command]
 
+        def events(step: str) -> list[str]:
+            # An engine from before 0.5.7 has no --events; prepare_body asks.
+            return ["--events", f"{self.run_dir}/{step}{EVENTS_SUFFIX}"] if self.events_ok else []
+
         plan = []
         if "speaker" in self.wanted:
             plan += [
@@ -2745,7 +3048,8 @@ echo "during=$({PROBE})"
                  bounded(REPLAY_LIMIT_S, listen, body, soul, "--replay", wav, "--speak", "--stats", *tail),
                  REPLAY_LIMIT_S),
                 ("speaker-talk", "emet-talk --replay, on the speaker",
-                 bounded(REPLAY_LIMIT_S, talk, body, soul, "--replay", wav, "--stats", *tail),
+                 bounded(REPLAY_LIMIT_S, talk, body, soul, "--replay", wav, "--stats", *events("speaker-talk"),
+                         *tail),
                  REPLAY_LIMIT_S),
             ]
         if "live" in self.wanted:
@@ -2758,7 +3062,8 @@ echo "during=$({PROBE})"
                 ("live-talk", "emet-talk with no flags, 60 s on the microphone",
                  bounded(PLAIN_S + BOOT_S, talk, body, soul, *tail), PLAIN_S + BOOT_S),
                 ("live-stats", "--stats, ten minutes on the microphone",
-                 bounded(STATS_S + BOOT_S, listen, body, soul, "--stats", *tail), STATS_S + BOOT_S),
+                 bounded(STATS_S + BOOT_S, listen, body, soul, "--stats", *events("live-stats"), *tail),
+                 STATS_S + BOOT_S),
             ]
         return plan
 
@@ -2799,6 +3104,8 @@ try:
     print("body=" + written["body"]["id"])
     print("state=" + str(state_path(written["body"]["id"])))
     print("models=" + json.dumps(written.get("models"), sort_keys=True))
+    import importlib.util
+    print("events=" + ("yes" if importlib.util.find_spec("emet_engine.events") else "no"))
 except Exception as exc:
     print("problem=" + type(exc).__name__)
     sys.exit(3)
@@ -2821,6 +3128,9 @@ EMET_PY
         if named is not None and read != named:
             raise RunnerError(f"the body's manifest changed during the run: its fingerprint is {named[:12]}, "
                               f"and the hardware steps read {read[:12] or 'one with no hash'}")
+        # An engine with no emet_engine.events (before 0.5.7) has no --events
+        # either, and its two steps run without one.
+        self.events_ok = done.value("events") != "no"
         return body_id, state
 
     def hardware(self) -> None:
@@ -2833,6 +3143,8 @@ EMET_PY
             for name, *_ in plan:
                 self.add(Step(name, "failed", str(exc)))
             return
+        # Again, now that the body has said whether its engine has --events.
+        plan = self.hardware_plan()
         for name, what, command, bound in plan:
             refusal = window_refusal(self.clock(), bound + MARGIN_S, self.args.window,
                                      allow_night=self.args.allow_night)
@@ -2846,6 +3158,9 @@ EMET_PY
     def hardware_step(self, name: str, what: str, command: list[str], body_id: str, state: str) -> Step:
         mark = f"$RUN/.mark-{name}"
         audio = " -o ".join(f"-iname '*{s}'" for s in AUDIO_SUFFIXES)
+        # A step given --events must leave its file, with the header at least.
+        events = command[command.index("--events") + 1] if "--events" in command[:-1] else ""
+        look = f'[ -s {shlex.quote(events)} ] || echo "events=missing"\n' if events else ""
         body = f"""cd "$CI/emet" || exit 3
 STATE={shlex.quote(state)}
 COPY="$RUN/state/{body_id}.json"
@@ -2862,7 +3177,7 @@ if [ -f "$STATE" ]; then echo "state_after=$(sha256sum < "$STATE" | cut -c1-64)"
 find "$CI" -newer "{mark}" -type f \\( {audio} \\) -print 2>/dev/null | sed 's/^/audio=/'
 find "$HOME" -maxdepth 1 -newer "{mark}" -type f \\( {audio} \\) -print 2>/dev/null | sed 's/^/audio=/'
 sed 's/\\x1b\\[[0-9;?]*[A-Za-z]//g' "$RUN/{name}.typescript" | tr '\\r' '\\n' | grep -E -c '^(stopped|source ended)\\.' | sed 's/^/ended=/'
-"""
+{look}"""
         start = time.monotonic()
         done = self.remote.run(self.script(name, body), timeout=STATS_S + BOOT_S + 300)
         seconds = time.monotonic() - start
@@ -2881,6 +3196,8 @@ sed 's/\\x1b\\[[0-9;?]*[A-Za-z]//g' "$RUN/{name}.typescript" | tr '\\r' '\\n' | 
             problems.append(f"the command exited {done.value('code') or 'without a code'}")
         if (done.value("ended", "0") or "0") == "0":
             problems.append("the typescript has no end line")
+        if done.value("events") == "missing":
+            problems.append(f"the events file {Path(events).name} was not written")
         if problems:
             return Step(name, "failed", "; ".join(problems), seconds, details)
         return Step(name, "passed", what, seconds, details)
@@ -2909,6 +3226,16 @@ sed 's/\\x1b\\[[0-9;?]*[A-Za-z]//g' "$RUN/{name}.typescript" | tr '\\r' '\\n' | 
                 name = self.fetch(path, out, problems)
                 if name:
                     kept.append(name)
+        # BVP12: each events file a hardware step wrote, read where it
+        # landed; the typescripts are still read as text below, as every
+        # earlier release's are.
+        for step in self.steps:
+            if step.name in EVENTS_STEPS and f"{step.name}{EVENTS_SUFFIX}" in kept:
+                try:
+                    step.details["events"] = events_summary(out / f"{step.name}{EVENTS_SUFFIX}")
+                except RunnerError as exc:
+                    problems.append(str(exc))
+        sitting = self.join_sitting(out, kept, problems) if getattr(self.args, "sheet_rows", None) else None
         logs = sorted(p for p in out.rglob("*") if p.suffix in (".typescript", ".log"))
         checks: dict[str, Any] = {}
         for log in logs:
@@ -2927,9 +3254,35 @@ sed 's/\\x1b\\[[0-9;?]*[A-Za-z]//g' "$RUN/{name}.typescript" | tr '\\r' '\\n' | 
             (name, (out / f"{name}.typescript").read_bytes().decode("utf-8", "replace"))
             for name in passed if f"{name}.typescript" in kept)
         details = {"files": sorted(kept), "log_checks": checks, "out": str(out)}
+        if sitting is not None:
+            details["sitting"] = sitting
         status = "failed" if problems else "passed"
         reason = "; ".join(problems) or f"{len(kept)} file(s) to {out}"
         return self.add(Step("collect", status, reason, time.monotonic() - start, details))
+
+    def join_sitting(self, out: Path, kept: list[str], problems: list[str]) -> dict[str, Any]:
+        """`--sheet` (EV4 stage 1): the sitting's ratings joined to its turns'
+        timings in sitting.json beside the typescript. The turns are the
+        fetched `sitting-*.events.jsonl`'s; the ratings are kept whether or
+        not they join. An events file the reader refuses is a problem of the
+        collect, as it would be for a hardware step's."""
+        files = sorted(n for n in kept if n.startswith("sitting-") and n.endswith(EVENTS_SUFFIX))
+        records: list[dict[str, Any]] | None = None
+        problem = None
+        if not files:
+            problem = f"no events file was fetched (--fetch '~/sitting-{self.args.release}{EVENTS_SUFFIX}')"
+        elif len(files) > 1:
+            problem = f"{len(files)} events files were fetched ({', '.join(files)}), and a sitting has one"
+        else:
+            try:
+                records = turn_records(out / files[0])
+            except RunnerError as exc:
+                problem = str(exc)
+                problems.append(problem)
+        doc = sitting_record(self.args.sheet_rows, records, self.args.release, problem)
+        (out / "sitting.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        return {"file": "sitting.json", "events": files[0] if len(files) == 1 else None, "joined": doc["joined"],
+                "rated": sum(1 for t in doc["turns"] if t["wait"] is not None)}
 
     def fetch_tar(self, step: str, folder: str, out: Path) -> tuple[list[str], list[str]]:
         """A folder of the body's as text files under `out`: the state
@@ -3167,6 +3520,17 @@ sed 's/\\x1b\\[[0-9;?]*[A-Za-z]//g' "$RUN/{name}.typescript" | tr '\\r' '\\n' | 
             lines.append(f"  {'flag this run exercised':<28} {'how':<11} step")
             for entry in self.flags_run:
                 lines.append(f"  {entry['flag']:<28} {entry['how']:<11} {entry['step']}")
+        events = [(s.name, s.details["events"]) for s in self.steps if isinstance(s.details.get("events"), dict)]
+        if events:
+            lines.append("")
+            for name, read in events:
+                lines.append(f"  events   {name}: {read['turns']} turn(s), turn gap median "
+                             f"{shown(read['gap_ms_median'], 'ms')} ({read['file']})")
+        collected = next((s for s in self.steps if s.name == "collect"), None)
+        if collected is not None and collected.details.get("sitting"):
+            sat = collected.details["sitting"]
+            lines.append("")
+            lines.append(f"  sitting  {sat['file']}: {sat['rated']} of {len(SHEET_ROWS)} turn(s) rated; {sat['joined']}")
         if self.audit_result is not None:
             a = self.audit_result
             lines.append("")
@@ -3380,8 +3744,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--bank", default=BANK)
     parser.add_argument("--bank-arg", action="append", default=[], help="passed on to replay.py")
     parser.add_argument("--fetch", action="append", default=[], metavar="~/FILE",
-                        help="copy this typescript from the body into the output: ~/sitting-X.Y.Z.log, or "
-                             "another ~/sitting-*.log or ~/pi-*.log; nothing else is fetched")
+                        help="copy this typescript or events file from the body into the output: "
+                             "~/sitting-X.Y.Z.log and ~/sitting-X.Y.Z.events.jsonl, or another ~/sitting-* or "
+                             "~/pi-* file ending .log or .events.jsonl; nothing else is fetched")
+    parser.add_argument("--sheet", metavar="PATH",
+                        help="with --collect-only: the release sitting's filled sheet, a Markdown file holding "
+                             "tools/body/sitting.md's table; its ratings and the fetched events file's turns go "
+                             "into sitting.json")
     parser.add_argument("--no-body-history", action="store_true",
                         help="read only the laptop's logs for the flag table")
     parser.add_argument("--out", help="the output directory; the default is releases/vX.Y.Z/body/<date>/")
@@ -3402,6 +3771,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         args.window = tuple(args.window)
         if args.window[1] <= args.window[0]:
             parser.error("--window ends before it starts")
+    # The sheet is read here, so one the runner cannot read stops the run
+    # before the body is reached.
+    args.sheet_rows = None
+    if args.sheet is not None:
+        if not args.collect_only:
+            parser.error("--sheet goes with --collect-only, which brings the sitting's files home")
+        try:
+            args.sheet_rows = read_sheet(Path(args.sheet).read_text(encoding="utf-8"))
+        except OSError as exc:
+            parser.error(f"--sheet {args.sheet} could not be read: {exc}")
+        except SheetError as exc:
+            parser.error(f"--sheet {args.sheet}: {exc}")
     return args
 
 

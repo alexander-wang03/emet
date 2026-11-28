@@ -16,6 +16,7 @@ No test reads the real repository: other work changes it every day, and the
 
 from __future__ import annotations
 
+import datetime
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ TOOLS = Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import release_check  # noqa: E402
+import release_check  # noqa: E402  a tool, imported by its bare name from tools/
 
 # `release_audit` and `tag_release` are imported by the two tests at the
 # end that use them, so a break in either leaves the rest of this file
@@ -146,9 +147,11 @@ PYSEC = "PYSEC-2026-4320"
 def empty_lists():
     release_check.problems.clear()
     release_check.notes.clear()
+    release_check.warned.clear()
     yield
     release_check.problems.clear()
     release_check.notes.clear()
+    release_check.warned.clear()
 
 
 @pytest.fixture
@@ -174,9 +177,13 @@ def tree(tmp_path: Path) -> Path:
     return root
 
 
-def run(root: Path) -> tuple[int, list[str], list[str]]:
+#: The day the lifecycle tests are run on, by UTC.
+TODAY = datetime.date(2026, 11, 27)
+
+
+def run(root: Path, today: datetime.date = TODAY) -> tuple[int, list[str], list[str]]:
     """The script's exit code, its problems and its notes."""
-    code = release_check.main(["release_check.py", str(root)])
+    code = release_check.main(["release_check.py", str(root)], today=today)
     return code, list(release_check.problems), list(release_check.notes)
 
 
@@ -319,6 +326,303 @@ def test_a_marker_left_in_shipped_source_is_refused(tree: Path) -> None:
     code, problems, _ = run(tree)
     assert code == 1
     assert only(problems).replace("\\", "/") == "marker left in shipped source: emet-engine/emet_engine/loop.py:2"
+
+
+# --------------------------------------------------------- the lifecycle (MC3)
+
+#: The four provider modules' defaults, as 8de8152 declares them.
+MODULE_DEFAULTS = {
+    "openai.py": "gpt-5.6-terra",
+    "anthropic.py": "claude-opus-5",
+    "deepgram.py": "nova-3",
+    "deepgram_voice.py": "aura-2-thalia-en",
+}
+
+SOUL = """\
+persona:
+  name: Emet
+
+models:
+  chat:  {provider: openai,   model: "gpt-5.6-terra", key_env: "EMET_OPENAI_KEY"}
+  stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}
+  # A cloud voice is one line: {provider: deepgram, model: "aura-2-nobody-en", key_env: "EMET_DEEPGRAM_KEY"}
+  tts:   {provider: piper,    model: "en_US-ljspeech-medium"}
+  micro: {provider: local,    model: "qwen3-0.6b-q4"}
+
+voice:
+  rate: 1.0
+"""
+
+
+def row(model: str, vendor: str, **fields: object) -> str:
+    """One `DefaultModel(...)` of the table, with keyword arguments only, as
+    contract §5.3 has A2 write them."""
+    values = {"vendor": vendor, "model": model, "used_by": ("models.chat",), "retires": None, "floor": None,
+              "pinned": None, "source": "https://example.com/deprecations", "read": "2026-11-27", **fields}
+    return "    DefaultModel(" + ", ".join(f"{k}={v!r}" for k, v in values.items()) + "),\n"
+
+
+def lifecycle_table(*rows: str) -> str:
+    return ('"""The defaults table."""\n\nfrom typing import NamedTuple\n\n\n'
+            'class DefaultModel(NamedTuple):\n    vendor: str\n    model: str\n\n\n'
+            "DEFAULTS: tuple[DefaultModel, ...] = (\n" + "".join(rows) + ")\n")
+
+
+FOUR_ROWS = (row("gpt-5.6-terra", "openai"), row("claude-opus-5", "anthropic", floor="2027-07-24", pinned=True),
+             row("nova-3", "deepgram"), row("aura-2-thalia-en", "deepgram"))
+
+
+@pytest.fixture
+def providers(tree: Path) -> Path:
+    """The least tree with the four provider modules, the reference soul
+    and a lifecycle table holding a row for each default."""
+    folder = tree / "emet-providers" / "emet_providers"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, model in MODULE_DEFAULTS.items():
+        (folder / name).write_text(f'"""A provider."""\n\nDEFAULT_MODEL = "{model}"\n', encoding="utf-8")
+    (folder / "lifecycle.py").write_text(lifecycle_table(*FOUR_ROWS), encoding="utf-8")
+    soul = tree / "emet-sdk" / "examples" / "emet-soul.yaml"
+    soul.parent.mkdir(parents=True, exist_ok=True)
+    soul.write_text(SOUL, encoding="utf-8")
+    return tree
+
+
+def test_every_default_with_a_row_and_runway_passes(providers: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    code, problems, notes = run(providers)
+    assert (code, problems) == (0, [])
+    assert "4 default model(s), each with a lifecycle row" in notes
+    assert "warning" not in capsys.readouterr().out
+
+
+def test_a_default_with_no_row_is_refused(providers: Path) -> None:
+    (providers / release_check.LIFECYCLE).write_text(lifecycle_table(*FOUR_ROWS[:3]), encoding="utf-8")
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert only(problems) == ("the default model 'aura-2-thalia-en' in deepgram_voice.py has no row in "
+                              "emet_providers/lifecycle.py")
+
+
+def test_no_table_refuses_every_default(providers: Path) -> None:
+    (providers / release_check.LIFECYCLE).unlink()
+    code, problems, _ = run(providers)
+    assert code == 1 and len(problems) == 6, problems
+    assert "the default model 'nova-3' in emet-sdk/examples/emet-soul.yaml:6 has no row" in problems[-1]
+
+
+def test_a_cloud_model_of_the_soul_needs_a_row_and_a_local_one_or_a_comment_does_not(providers: Path) -> None:
+    soul = providers / "emet-sdk" / "examples" / "emet-soul.yaml"
+    swap(soul, 'model: "nova-3", key_env', 'model: "nova-2", key_env')
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert only(problems) == ("the default model 'nova-2' in emet-sdk/examples/emet-soul.yaml:6 has no row in "
+                              "emet_providers/lifecycle.py")
+
+
+@pytest.mark.parametrize("days, refused", [(179, True), (180, False), (-3, True)])
+def test_a_retirement_inside_180_days_is_refused(providers: Path, days: int, refused: bool) -> None:
+    date = (TODAY + datetime.timedelta(days=days)).isoformat()
+    rows = (row("gpt-5.6-terra", "openai", retires=date), *FOUR_ROWS[1:])
+    (providers / release_check.LIFECYCLE).write_text(lifecycle_table(*rows), encoding="utf-8")
+    code, problems, _ = run(providers)
+    if not refused:
+        assert (code, problems) == (0, [])
+        return
+    assert code == 1
+    assert only(problems) == (
+        f"the default model 'gpt-5.6-terra' (openai) retires on {date}, {days} days from today, inside the 180 "
+        f"days of runway a release needs. Choose another default, or record a later date with its source.")
+
+
+def test_a_floor_inside_180_days_is_a_warning_and_passes(providers: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    table = providers / release_check.LIFECYCLE
+    table.write_text(table.read_text(encoding="utf-8").replace("2026-11-27", "2027-03-01"), encoding="utf-8")
+    code, problems, _ = run(providers, today=datetime.date(2027, 3, 1))
+    assert (code, problems) == (0, [])
+    assert release_check.warned == [
+        "the default model 'claude-opus-5' may be retired from 2027-07-24, 145 days from today (anthropic's "
+        "floor); no retirement is announced."]
+    assert f"release-check: warning: {release_check.warned[0]}" in capsys.readouterr().out.splitlines()
+
+
+def test_a_row_read_more_than_45_days_ago_is_a_warning(providers: Path) -> None:
+    code, problems, _ = run(providers, today=datetime.date(2027, 1, 12))
+    assert (code, problems) == (0, [])
+    assert release_check.warned[0] == ("the lifecycle row for 'gpt-5.6-terra' was last read 2026-11-27; read "
+                                       "https://example.com/deprecations again.")
+    assert len(release_check.warned) == 4
+    release_check.warned.clear()
+    release_check.notes.clear()
+    assert run(providers, today=datetime.date(2027, 1, 11))[0] == 0 and release_check.warned == []
+
+
+def test_a_row_that_is_not_literal_keywords_is_refused(providers: Path) -> None:
+    table = providers / release_check.LIFECYCLE
+    text = lifecycle_table(*FOUR_ROWS).replace("read='2026-11-27'),\n    DefaultModel(vendor='anthropic'",
+                                                "read=TODAY),\n    DefaultModel(vendor='anthropic'")
+    table.write_text(text, encoding="utf-8")
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert problems[0] == f"{release_check.LIFECYCLE}:{line_of(table, 'read=TODAY')} is a DEFAULTS row with a value that is not a literal"
+
+
+def test_a_date_that_is_not_a_date_is_refused(providers: Path) -> None:
+    rows = (row("gpt-5.6-terra", "openai", retires="next spring"), *FOUR_ROWS[1:])
+    (providers / release_check.LIFECYCLE).write_text(lifecycle_table(*rows), encoding="utf-8")
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert "gives 'gpt-5.6-terra' a retires of 'next spring'; a date is YYYY-MM-DD" in only(problems)
+
+
+# A default or a soul stage the check cannot read is refused, never skipped:
+# a skipped one is a default the 180 days no longer hold (review findings
+# checks-ci/code#2 and checks-ci/tests#1, 2026-11-27).
+
+@pytest.mark.parametrize("source", [
+    '_OPUS = "claude-opus-5"\nDEFAULT_MODEL = _OPUS\n',            # a name
+    'V = "5"\nDEFAULT_MODEL = f"claude-opus-{V}"\n',               # an f-string
+    'DEFAULT_MODEL = "claude-" + "opus-5"\n',                       # a sum
+    'DEFAULT_CHAT_MODEL = "claude-opus-5"\n',                       # renamed
+    'DEFAULT_MODEL = "claude-opus-5"\nif True\n',                   # does not parse
+], ids=["name", "f-string", "sum", "renamed", "syntax-error"])
+def test_a_default_the_check_cannot_read_is_refused(providers: Path, source: str) -> None:
+    # The row retires inside the runway, so a skipped default would hide it.
+    soon = (TODAY + datetime.timedelta(days=49)).isoformat()
+    rows = (FOUR_ROWS[0], row("claude-opus-5", "anthropic", retires=soon), *FOUR_ROWS[2:])
+    (providers / release_check.LIFECYCLE).write_text(lifecycle_table(*rows), encoding="utf-8")
+    (providers / "emet-providers" / "emet_providers" / "anthropic.py").write_text(source, encoding="utf-8")
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert only(problems) == ("emet-providers/emet_providers/anthropic.py has no DEFAULT_MODEL release_check.py "
+                              'can read without importing it: write it as one string literal, DEFAULT_MODEL = "..."')
+
+
+def test_a_provider_module_or_the_soul_gone_is_refused(providers: Path) -> None:
+    (providers / "emet-providers" / "emet_providers" / "deepgram_voice.py").unlink()
+    (providers / "emet-sdk" / "examples" / "emet-soul.yaml").unlink()
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert problems == [
+        "emet-providers/emet_providers/deepgram_voice.py is missing: release_check.py holds its DEFAULT_MODEL to a "
+        "row of emet_providers/lifecycle.py",
+        "emet-sdk/examples/emet-soul.yaml is missing: release_check.py holds its cloud models to a row of "
+        "emet_providers/lifecycle.py",
+    ]
+
+
+#: The soul's stt stage, naming a model with no row, in each layout YAML allows.
+STT_LAYOUTS = {
+    "block": ('  stt:\n    provider: deepgram\n    model: "nova-2"\n    key_env: "EMET_DEEPGRAM_KEY"\n', 'model: "nova-2"'),
+    "block-commented": ("  stt:   # the transcriber\n    provider: deepgram   # a vendor\n    model: nova-2   # no row\n",
+                        "model: nova-2"),
+    "block-nested": ('  stt:\n    provider: deepgram\n    params:\n      model: "x"\n    model: \'nova-2\'\n',
+                     "model: 'nova-2'"),
+    "model-first": ('  stt:   {model: "nova-2", provider: deepgram, key_env: "EMET_DEEPGRAM_KEY"}\n', "nova-2"),
+    "spaced": ('  stt : { provider : "deepgram" , model : "nova-2" }\n', "nova-2"),
+}
+
+
+@pytest.mark.parametrize("layout", STT_LAYOUTS)
+def test_a_soul_stage_in_any_layout_is_held_to_a_row(providers: Path, layout: str) -> None:
+    soul = providers / "emet-sdk" / "examples" / "emet-soul.yaml"
+    text, needle = STT_LAYOUTS[layout]
+    swap(soul, '  stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}\n', text)
+    code, problems, _ = run(providers)
+    assert code == 1
+    assert only(problems) == (f"the default model 'nova-2' in emet-sdk/examples/emet-soul.yaml:{line_of(soul, needle)} "
+                              f"has no row in emet_providers/lifecycle.py")
+
+
+@pytest.mark.parametrize("text, words", [
+    ("  stt:\n    provider: deepgram\n    model: *voice\n",
+     "emet-sdk/examples/emet-soul.yaml:8 gives the stt stage a deepgram model release_check.py cannot read: "
+     'write it as one string, model: "..."'),
+    ('  stt:   {provider: deepgram, model: [nova-2], key_env: "EMET_DEEPGRAM_KEY"}\n',
+     "emet-sdk/examples/emet-soul.yaml:6 gives the stt stage a deepgram model release_check.py cannot read: "
+     'write it as one string, model: "..."'),
+    ('  stt:   {provider: deepgram,\n          model: "nova-2"}\n',
+     "emet-sdk/examples/emet-soul.yaml:6 holds the stt stage in a flow mapping that does not close on its line: "
+     "write it on one line, or as a block mapping"),
+    ('  stt:\n    provider: !vendor deepgram\n    model: "nova-2"\n',
+     "emet-sdk/examples/emet-soul.yaml:7 gives the stt stage a provider release_check.py cannot read: "
+     "write it as one word"),
+], ids=["alias", "list", "unclosed", "tag"])
+def test_a_soul_stage_the_check_cannot_read_is_refused(providers: Path, text: str, words: str) -> None:
+    soul = providers / "emet-sdk" / "examples" / "emet-soul.yaml"
+    swap(soul, '  stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}\n', text)
+    code, problems, _ = run(providers)
+    assert code == 1 and only(problems) == words
+
+
+def test_a_cloud_stage_without_a_model_falls_to_the_modules_default_and_passes(providers: Path) -> None:
+    soul = providers / "emet-sdk" / "examples" / "emet-soul.yaml"
+    swap(soul, '  stt:   {provider: deepgram, model: "nova-3", key_env: "EMET_DEEPGRAM_KEY"}\n',
+         "  stt:\n    provider: deepgram\n    params:\n      model: \"anything\"\n")
+    code, problems, notes = run(providers)
+    assert (code, problems) == (0, [])
+    assert "4 default model(s), each with a lifecycle row" in notes
+
+
+# ---------------------------------------------- the future tense (D10 (g))
+
+
+def engine_module(tree: Path, text: str) -> Path:
+    path = tree / "emet-engine" / "emet_engine" / "speech.py"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_a_docstring_naming_a_shipped_release_as_to_come_is_refused(tree: Path) -> None:
+    """Ledger L34 found this line in session.py's `say` at 8de8152. The test
+    writes it into a module of its own, as the rule reads it there."""
+    engine_module(tree, 'def say():\n    """Play the audio.\n\n    0.4 puts speech synthesis in front of it.\n    """\n')
+    code, problems, _ = run(tree)
+    assert code == 1
+    assert only(problems) == ('emet-engine/emet_engine/speech.py:4 names 0.4, which has shipped, as still to come '
+                              '("0.4 puts speech synthesis in front of it."); say what the code does now')
+
+
+#: The words of the future tense, written out and never read from the script,
+#: so a word taken out of `FUTURE_WORDS` fails here (review finding
+#: checks-ci/tests#2). `until` is left out on purpose: the script says why.
+FUTURE_TENSE = ("will", "puts", "brings", "adds", "arrives", "lands", "planned", "later")
+
+
+def test_the_future_words_are_the_eight_written_here() -> None:
+    assert release_check.FUTURE_WORDS == FUTURE_TENSE
+
+
+@pytest.mark.parametrize("word", FUTURE_TENSE)
+def test_each_future_word_beside_a_shipped_release_in_a_comment_is_refused(tree: Path, word: str) -> None:
+    engine_module(tree, f"x = 1  # 0.5.6 {word} change this\n")
+    code, problems, _ = run(tree)
+    assert code == 1 and only(problems).startswith("emet-engine/emet_engine/speech.py:1 names 0.5.6, which has shipped")
+
+
+@pytest.mark.parametrize("text", [
+    "# 0.6 will change this, and 1.0 brings barge-in.\n",      # releases still to come
+    "# Until 0.5 the engine never started a capability plugin.\n",  # history
+    "# A pause of 0.5 s will end the turn later.\n",            # a measure
+    "# -6.0 dB will do; 0.08% later.\n",
+    "# The licence is GPL-3.0-or-later.\n",                       # a licence's number
+    'x = "0.4 will"  # a string that is no docstring\n',
+    "# 0.4 put speech synthesis in front of it.\n",              # the past tense
+])
+def test_what_is_no_shipped_release_in_the_future_tense_passes(tree: Path, text: str) -> None:
+    engine_module(tree, text)
+    assert run(tree)[:2] == (0, [])
+
+
+def test_the_future_tense_is_judged_against_the_declared_version(tree: Path) -> None:
+    engine_module(tree, "# 0.5.7 adds the turn gap.\n")
+    assert run(tree)[:2] == (0, [])
+    for pkg in release_check.PACKAGES:
+        swap(tree / pkg / "pyproject.toml", f'version = "{VERSION}"', 'version = "0.5.7"')
+    for pkg in ("emet-hal", "emet-providers", "emet-engine"):
+        path = tree / pkg / "pyproject.toml"
+        path.write_text(path.read_text(encoding="utf-8").replace(f">={VERSION}", ">=0.5.7"), encoding="utf-8")
+    swap(tree / "CHANGELOG.md", f"## [{VERSION}] - 2026-11-26", "## [0.5.7] - 2026-11-27")
+    code, problems, _ = run(tree)
+    assert code == 1 and only(problems).startswith("emet-engine/emet_engine/speech.py:1 names 0.5.7")
 
 
 # -------------------------------------------------------------- the floors
@@ -545,7 +849,7 @@ def test_a_stranger_whose_name_starts_like_ours_is_not_first_party(tree: Path) -
 
 
 def test_floors_are_not_judged_while_the_versions_disagree(tree: Path) -> None:
-    """There is no release version to hold them to: one problem, the versions'."""
+    """With no release version to hold them to, the one problem is the versions'."""
     swap(tree / "emet-hal" / "pyproject.toml", f'version = "{VERSION}"', 'version = "0.5.5"')
     swap(tree / "emet-engine" / "pyproject.toml", FLOOR, '"emet-sdk>=0.1"')
     code, problems, _ = run(tree)
@@ -614,7 +918,7 @@ def test_a_security_heading_with_no_line_is_refused(tree: Path) -> None:
 
 
 def test_prose_under_the_heading_is_no_list_item(tree: Path) -> None:
-    """A sentence with an id and no list mark: the section still has no item."""
+    """A sentence with an id and no list mark leaves the section with no item."""
     path = with_security(tree, f"### Security\nFixed {GHSA} in the manifest reader.\n")
     code, problems, _ = run(tree)
     assert code == 1
@@ -670,7 +974,7 @@ def test_a_numbered_or_nested_item_needs_its_own_id(tree: Path, second: str) -> 
 
 
 def test_a_numbered_list_holds_each_item_to_an_id(tree: Path) -> None:
-    """Every item numbered: the message names the item, never an empty heading."""
+    """With every item numbered, the message names the item and never an empty heading."""
     path = with_security(tree, f"### Security\n1. The first fix ({GHSA})\n2. The second fix, with no id\n")
     code, problems, _ = run(tree)
     assert code == 1

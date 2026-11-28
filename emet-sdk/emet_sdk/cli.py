@@ -88,7 +88,7 @@ def _validate_path(path: Path, registry: PluginRegistry) -> tuple[str, Validatio
 
 
 def _validate_bundle(path: Path, registry: PluginRegistry) -> tuple[str, ValidationReport]:
-    """Validate a *.emet directory: soul.yaml, memory.db, motion packs."""
+    """Validate a *.emet directory's soul.yaml, memory.db and motion packs."""
     report = ValidationReport()
 
     soul_path = path / "soul.yaml"
@@ -108,8 +108,13 @@ def _validate_bundle(path: Path, registry: PluginRegistry) -> tuple[str, Validat
     return "bundle", report
 
 
-def _print_human(path: Path, kind: str, report: ValidationReport, *, strict: bool) -> None:
-    label = f"{path}  ({kind})"
+def _print_human(
+    path: Path, kind: str, report: ValidationReport, *, strict: bool, pair: str | None = None
+) -> None:
+    """One document's verdict and findings. The pairing's verdict line names
+    the two files it checked (`pair`), where its `path` in `--json` stays
+    `(pairing)`."""
+    label = f"{pair if kind == 'pairing' and pair else path}  ({kind})"
     failed = report.errors or (strict and report.warnings)
     status = "FAIL" if failed else "ok"
 
@@ -171,8 +176,9 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         ]
         print(json.dumps(payload, indent=2))
     else:
+        pair = " and ".join(args.paths)
         for path, kind, report in results:
-            _print_human(path, kind, report, strict=args.strict)
+            _print_human(path, kind, report, strict=args.strict, pair=pair)
 
     failed = any(
         r.errors or (args.strict and r.warnings) for _, _, r in results
@@ -194,6 +200,11 @@ def _load_chains(extra: list[str] | None) -> dict:
     way at boot, through the same function.
     """
     return load_chains([Path(p) for p in extra or []])
+
+
+def _chain_files(extra: list[str] | None) -> str:
+    """The chain files a verdict line names, which are those given or else the SDK's own."""
+    return " and ".join(extra) if extra else "the SDK's own chains"
 
 
 def _fmt_params(params: dict) -> str:
@@ -245,7 +256,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     try:
         chains = _load_chains(args.chains)
     except Exception as exc:  # noqa: BLE001
-        print(f"FAIL  (chains)")
+        print(f"FAIL {_chain_files(args.chains)}  (chains)")
         print(f"     x chain_error")
         for line in f"{type(exc).__name__}: {exc}".splitlines():
             print(f"       {line}")

@@ -289,7 +289,7 @@ def test_one_plugins_carry_over_never_reaches_another():
 
 
 def test_a_plugin_that_learned_something_says_what_it_learned():
-    """The override the contract is for: an adapted mean, a calibration."""
+    """The override the contract is for, such as an adapted mean or a calibration."""
 
     class _AdaptingWake(_Wake):
         def carry_over(self) -> dict[str, Any]:

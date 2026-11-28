@@ -56,9 +56,11 @@ P0_INTENTS: Mapping[str, frozenset[str]] = MappingProxyType({
 
     # System state, not emotion. Distinct from `express` so that a soul
     # cannot suppress it: a muted robot must look muted regardless of taste.
+    # `unavailable` is a language model the vendor no longer serves, apart
+    # from `offline`, which is a network or a server that is down.
     "signal": frozenset({
         "booting", "listening", "thinking", "speaking",
-        "muted", "offline", "error",
+        "muted", "offline", "error", "unavailable",
     }),
 
     "idle": frozenset({"settle", "look_around", "fidget", "doze"}),
@@ -111,7 +113,7 @@ class UnknownIntentError(ValueError):
 
 
 def is_reserved(kind: str) -> bool:
-    """True if `kind` is reserved: accepted, but dropped by the P0 engine."""
+    """True if `kind` is reserved, which the P0 engine accepts and drops."""
     return kind in RESERVED_INTENTS
 
 

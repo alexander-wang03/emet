@@ -1,8 +1,8 @@
 {
  "format": "emet-bank-plan/1",
  "id": "v1-sitting-2",
- "title": "Bank v1, sitting 2 of 2: numbers, short answers, pauses and long turns in room A; a TV, facing away, about 5 m; room B near and about 3 m",
- "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). The table's room responses are left out too: the microphone's automatic gain control is on (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep; nothing reads a response before the generated bank of stage 2, which records them with that control off, if the maintainer decides so. Takes with a pause, wake_pause among them, are prompted every 8 s (verification-design.md 5.1); the first sitting, 2026-11-25, prompted wake_pause every 6 s.",
+ "title": "Bank v1, sitting 2 of 2: numbers, short answers, pauses and long turns in room A; a TV, facing away, about 5 m; room B near and about 3 m; and a block with the gain control off that holds the room responses",
+ "note": "Positions name the distances the design's table gives; write the measured metres into distance_m before the sitting if a tape was used. Each sitting records its own room tone, so either one stands without the other. The second voice's class is left out until someone gives written consent (D7, decided 2026-10-27). Takes with a pause, wake_pause among them, are prompted every 8 s (verification-design.md 5.1); the first sitting, 2026-11-25, prompted wake_pause every 6 s. The block with the gain control off (E13 (a), decided 2026-11-25; ledger L39 of 0.5.7) is the files whose ids end -gain-off, one unbroken stretch from the end of room A into room B. The microphone's automatic gain control is on as the body runs (amixer -c 3, read 2026-10-28), and a swept-sine response assumes a gain that holds still through the sweep, so the room responses are taken inside the block: two sweeps at each of the five talker positions, a-near, a-3m, a-5m, b-near and b-3m (verification-design.md 5.1, \"a 10 s sweep, twice, at each talker position\"). The sweep is sweep-100hz-8khz-10s.wav, written by tools/bank/sweep.py outside the repository, played on the phone at mouth height at one volume. The block also holds the same slots near and at 3 m as files recorded with the gain control on, so AF2 stage 2 can count what the control changes: v1s2-10 and v1s2-17 at 3 m, v1s2-02 and v1s2-19, v1s2-03 and v1s2-20, v1s2-04 and v1s2-21 near. The agent makes the amixer write over SSH while the maintainer attends, puts it back after the block and reads it back; record.py writes each file's capture controls into its manifest's capture_level, so the manifests say which files ran with it off.",
  "made_from": "research/references-2026-10-26/verification-design.md 5.1, the bank v1 table",
  "speaker": "s01",
  "device": "plughw:3,0",
@@ -430,6 +430,12 @@
    "text": "nobody speaks",
    "question": null,
    "first_sound": null
+  },
+  "rr": {
+   "kind": "room_response",
+   "text": "the sweep, once",
+   "question": null,
+   "first_sound": null
   }
  },
  "files": [
@@ -463,26 +469,7 @@
    ]
   },
   {
-   "id": "v1s2-03-a-near-numbers-2",
-   "at": "a-near",
-   "kind": "takes",
-   "takes": [
-    "nu12",
-    "nu11",
-    "nu10",
-    "nu09",
-    "nu08",
-    "nu07",
-    "nu06",
-    "nu05",
-    "nu04",
-    "nu03",
-    "nu02",
-    "nu01"
-   ]
-  },
-  {
-   "id": "v1s2-04-a-near-short-1",
+   "id": "v1s2-03-a-near-short-1",
    "at": "a-near",
    "kind": "takes",
    "takes": [
@@ -501,26 +488,7 @@
    ]
   },
   {
-   "id": "v1s2-05-a-near-short-2",
-   "at": "a-near",
-   "kind": "takes",
-   "takes": [
-    "sh04",
-    "sh03",
-    "sh02",
-    "sh01",
-    "sh01",
-    "sh02",
-    "sh03",
-    "sh04",
-    "sh05",
-    "sh06",
-    "sh07",
-    "sh08"
-   ]
-  },
-  {
-   "id": "v1s2-06-a-near-pauses-1",
+   "id": "v1s2-04-a-near-pauses-1",
    "at": "a-near",
    "kind": "takes",
    "takes": [
@@ -533,20 +501,7 @@
    "every_s": 8
   },
   {
-   "id": "v1s2-07-a-near-pauses-2",
-   "at": "a-near",
-   "kind": "takes",
-   "takes": [
-    "pa25",
-    "pa20",
-    "pa15",
-    "pa10",
-    "pa05"
-   ],
-   "every_s": 8
-  },
-  {
-   "id": "v1s2-08-a-near-long",
+   "id": "v1s2-05-a-near-long",
    "at": "a-near",
    "kind": "takes",
    "takes": [
@@ -556,7 +511,7 @@
    "every_s": 35
   },
   {
-   "id": "v1s2-09-a-near-tv-wake",
+   "id": "v1s2-06-a-near-tv-wake",
    "at": "a-near-tv",
    "kind": "takes",
    "takes": [
@@ -575,7 +530,7 @@
    "every_s": 8
   },
   {
-   "id": "v1s2-10-a-near-tv-one-breath",
+   "id": "v1s2-07-a-near-tv-one-breath",
    "at": "a-near-tv",
    "kind": "takes",
    "takes": [
@@ -592,7 +547,7 @@
    ]
   },
   {
-   "id": "v1s2-11-a-near-tv-tv-alone",
+   "id": "v1s2-08-a-near-tv-tv-alone",
    "at": "a-near-tv",
    "kind": "talk",
    "takes": [
@@ -601,7 +556,7 @@
    "every_s": 54
   },
   {
-   "id": "v1s2-12-a-near-tv-tv-alone",
+   "id": "v1s2-09-a-near-tv-tv-alone",
    "at": "a-near-tv",
    "kind": "talk",
    "takes": [
@@ -610,35 +565,21 @@
    "every_s": 54
   },
   {
-   "id": "v1s2-13-a-3m-numbers",
+   "id": "v1s2-10-a-3m-numbers-short-1",
    "at": "a-3m",
    "kind": "takes",
    "takes": [
     "nu01",
     "nu02",
-    "nu03",
     "nu04",
-    "nu05",
-    "nu06"
-   ]
-  },
-  {
-   "id": "v1s2-14-a-3m-short",
-   "at": "a-3m",
-   "kind": "takes",
-   "takes": [
     "sh01",
-    "sh02",
     "sh03",
-    "sh04",
     "sh05",
-    "sh06",
-    "sh07",
     "sh08"
    ]
   },
   {
-   "id": "v1s2-15-a-3m-away-wake",
+   "id": "v1s2-11-a-3m-away-wake",
    "at": "a-3m-away",
    "kind": "takes",
    "takes": [
@@ -656,7 +597,7 @@
    "every_s": 8
   },
   {
-   "id": "v1s2-16-a-3m-away-one-breath",
+   "id": "v1s2-12-a-3m-away-one-breath",
    "at": "a-3m-away",
    "kind": "takes",
    "takes": [
@@ -673,7 +614,7 @@
    ]
   },
   {
-   "id": "v1s2-17-a-5m-wake",
+   "id": "v1s2-13-a-5m-wake",
    "at": "a-5m",
    "kind": "takes",
    "takes": [
@@ -691,7 +632,7 @@
    "every_s": 8
   },
   {
-   "id": "v1s2-18-a-5m-one-breath",
+   "id": "v1s2-14-a-5m-one-breath",
    "at": "a-5m",
    "kind": "takes",
    "takes": [
@@ -708,7 +649,129 @@
    ]
   },
   {
-   "id": "v1s2-19-b-near-room-tone",
+   "id": "v1s2-15-a-5m-room-response-gain-off",
+   "at": "a-5m",
+   "kind": "takes",
+   "takes": [
+    "rr",
+    "rr"
+   ],
+   "every_s": 16,
+   "say": "The block with the gain control off starts here (E13). Before Enter, the agent turns the microphone's Auto Gain Control off over SSH and reads it back. Hold the phone at mouth height with sweep-100hz-8khz-10s.wav on it, at one volume for all ten sweeps."
+  },
+  {
+   "id": "v1s2-16-a-3m-room-response-gain-off",
+   "at": "a-3m",
+   "kind": "takes",
+   "takes": [
+    "rr",
+    "rr"
+   ],
+   "every_s": 16
+  },
+  {
+   "id": "v1s2-17-a-3m-numbers-short-2-gain-off",
+   "at": "a-3m",
+   "kind": "takes",
+   "takes": [
+    "sh08",
+    "sh05",
+    "sh03",
+    "sh01",
+    "nu04",
+    "nu02",
+    "nu01"
+   ],
+   "say": "the gain control off: the takes of v1s2-10, in the other order"
+  },
+  {
+   "id": "v1s2-18-a-near-room-response-gain-off",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "rr",
+    "rr"
+   ],
+   "every_s": 16
+  },
+  {
+   "id": "v1s2-19-a-near-numbers-2-gain-off",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "nu12",
+    "nu11",
+    "nu10",
+    "nu09",
+    "nu08",
+    "nu07",
+    "nu06",
+    "nu05",
+    "nu04",
+    "nu03",
+    "nu02",
+    "nu01"
+   ],
+   "say": "the gain control off: the takes of v1s2-02, in the other order"
+  },
+  {
+   "id": "v1s2-20-a-near-short-2-gain-off",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "sh04",
+    "sh03",
+    "sh02",
+    "sh01",
+    "sh01",
+    "sh02",
+    "sh03",
+    "sh04",
+    "sh05",
+    "sh06",
+    "sh07",
+    "sh08"
+   ],
+   "say": "the gain control off: the words of v1s2-03"
+  },
+  {
+   "id": "v1s2-21-a-near-pauses-2-gain-off",
+   "at": "a-near",
+   "kind": "takes",
+   "takes": [
+    "pa25",
+    "pa20",
+    "pa15",
+    "pa10",
+    "pa05"
+   ],
+   "every_s": 8,
+   "say": "the gain control off: the takes of v1s2-04, in the other order"
+  },
+  {
+   "id": "v1s2-22-b-3m-room-response-gain-off",
+   "at": "b-3m",
+   "kind": "takes",
+   "takes": [
+    "rr",
+    "rr"
+   ],
+   "every_s": 16,
+   "say": "Room B, the robot moved here, the gain control still off"
+  },
+  {
+   "id": "v1s2-23-b-near-room-response-gain-off",
+   "at": "b-near",
+   "kind": "takes",
+   "takes": [
+    "rr",
+    "rr"
+   ],
+   "every_s": 16,
+   "say": "The last file with the gain control off. After it, the agent turns Auto Gain Control back on over SSH and reads it back before the next file."
+  },
+  {
+   "id": "v1s2-24-b-near-room-tone",
    "at": "b-near",
    "kind": "room_tone",
    "takes": [
@@ -718,7 +781,7 @@
    "say": "the room as it is, nobody speaking, nothing switched on or off for it"
   },
   {
-   "id": "v1s2-20-b-near-wake",
+   "id": "v1s2-25-b-near-wake",
    "at": "b-near",
    "kind": "takes",
    "takes": [
@@ -736,7 +799,7 @@
    "every_s": 8
   },
   {
-   "id": "v1s2-21-b-near-one-breath",
+   "id": "v1s2-26-b-near-one-breath",
    "at": "b-near",
    "kind": "takes",
    "takes": [
@@ -753,7 +816,7 @@
    ]
   },
   {
-   "id": "v1s2-22-b-near-talk-read",
+   "id": "v1s2-27-b-near-talk-read",
    "at": "b-near",
    "kind": "talk",
    "takes": [
@@ -762,7 +825,7 @@
    "every_s": 54
   },
   {
-   "id": "v1s2-23-b-near-talk-phone",
+   "id": "v1s2-28-b-near-talk-phone",
    "at": "b-near",
    "kind": "talk",
    "takes": [
@@ -771,7 +834,7 @@
    "every_s": 54
   },
   {
-   "id": "v1s2-24-b-3m-wake",
+   "id": "v1s2-29-b-3m-wake",
    "at": "b-3m",
    "kind": "takes",
    "takes": [
@@ -789,7 +852,7 @@
    "every_s": 8
   },
   {
-   "id": "v1s2-25-b-3m-one-breath",
+   "id": "v1s2-30-b-3m-one-breath",
    "at": "b-3m",
    "kind": "takes",
    "takes": [

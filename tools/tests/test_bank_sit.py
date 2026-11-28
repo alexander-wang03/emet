@@ -25,7 +25,7 @@ import pytest
 BANK_TOOLS = Path(__file__).resolve().parents[1] / "bank"
 sys.path.insert(0, str(BANK_TOOLS))
 
-import sit  # noqa: E402
+import sit  # noqa: E402  a bank tool, imported by its bare name from tools/bank/
 
 
 @pytest.fixture(autouse=True)
@@ -243,7 +243,7 @@ def test_a_cue_that_comes_late_is_dropped_never_played_in_a_burst():
 
 
 def test_the_clocks_need_not_agree():
-    """The Pi's clock 40 s behind the laptop's: every cue is on time."""
+    """With the Pi's clock 40 s behind the laptop's, every cue is on time."""
     played: list[bytes] = []
     arrivals = iter([140.05, 141.06, 142.05, 143.07])
     state = sit.Cues(lambda: Tail(["ssh"], cue_lines(due=100.0)), played.append, io.StringIO(),

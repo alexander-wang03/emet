@@ -68,13 +68,13 @@ def manifest_with(*capabilities: dict) -> dict:
 def test_a_bodiless_body_binds_every_intent_to_the_voice():
     body = started(example("bodiless.yaml"))
     assert body.capabilities == () and body.locomotion is None
-    assert len(body.table) == 31
-    assert len(body.table.voice_bound) == 31 and not body.table.hardware_bound
+    assert len(body.table) == 32
+    assert len(body.table.voice_bound) == 32 and not body.table.hardware_bound
     assert body.faults == {}
 
 
 def test_the_boot_log_groups_the_table_by_what_performs_it():
-    """Thirty-one bindings as six groups, every intent exactly once, and no
+    """Thirty-two bindings as six groups, every intent exactly once, and no
     line wider than the header's indent leaves room for on 80 columns."""
     lines = format_bindings(started(example("bodiless.yaml")).table)
     groups = [line for line in lines if not line.startswith(" ")]
@@ -260,6 +260,28 @@ def test_a_driver_that_raises_something_else_is_bound_past_and_still_put_to_rest
     assert "head" in stopped
 
 
+def test_a_part_that_will_not_start_is_logged_at_info_since_the_boot_prints_its_fault(monkeypatch, caplog):
+    """Finding A6-F2 of 0.5.7 (L16): the boot prints `  fault    head: ...`
+    for the part, so the body's own record of it stays below WARNING, which
+    logging's last resort would print a second time."""
+    from emet_hal import mock
+
+    real_start = mock.MockActuator.start
+
+    async def start(self):
+        if self.capability_id == "head":
+            raise OSError(121, "Remote I/O error")
+        await real_start(self)
+
+    monkeypatch.setattr(mock.MockActuator, "start", start)
+    with caplog.at_level("DEBUG", logger="emet_engine.body"):
+        body = started(example("mock-scout.yaml"))
+        run(body.shutdown())
+    records = [r for r in caplog.records if "did not start" in r.getMessage()]
+    assert [(r.levelname, r.getMessage()) for r in records] == [
+        ("INFO", "body: head did not start: OSError: [Errno 121] Remote I/O error")]
+
+
 def test_a_boot_cancelled_while_a_part_starts_still_puts_it_to_rest(monkeypatch):
     from emet_hal import mock
 
@@ -304,7 +326,7 @@ def test_a_drives_locomotion_plugin_carries_over_under_its_own_key(tmp_path, mon
 
 
 def test_the_locomotion_plugin_is_not_handed_what_the_motor_driver_carried(tmp_path):
-    """The other direction: a name the two plugins share stays each one's."""
+    """In the other direction too, a name the two plugins share stays each one's."""
     from emet_hal import tracked
 
     state = BodyState.load("mock_scout", tmp_path / "s.json")

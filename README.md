@@ -38,18 +38,18 @@ $ cd emet-sdk
 $ emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml
 Emet is listening for 'hey emet'
   wake     pocketsphinx on microphone, 16000 Hz
-  words    deepgram, nova-3
-  answers  openai, gpt-5.6-terra
-  voice    piper, en_US-ljspeech-medium (22050 Hz)
+  words    deepgram, nova-3, at api.deepgram.com, key EMET_DEEPGRAM_KEY, from emet-providers 0.5.7
+  answers  openai, gpt-5.6-terra, at api.openai.com, key EMET_OPENAI_KEY, from emet-providers 0.5.7
+  voice    piper, en_US-ljspeech-medium (22050 Hz), on this body, from emet-providers 0.5.7
   patience 900 ms, extends once on a trailing clause
   body     a Raspberry Pi with a USB microphone and speaker (pi_speakerphone)
-  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+  chains   32 resolved at boot against 0 part(s): 0 to hardware, 32 to voice
              voice  utter        speak
              voice  inflect      express.affection express.amusement
              ...
   state    /home/pi/.local/state/emet/pi_speakerphone.json
   output   ... ms of stream latency, as the speaker reports it
-  self     13 sentence(s) about its body, 8 of them what it cannot do; tags offered: 9
+  self     14 sentence(s) about its body, 9 of them what it cannot do; tags offered: 9
   keys     EMET_DEEPGRAM_KEY, EMET_OPENAI_KEY from /home/pi/.config/emet/keys.env
   (ctrl-c to stop)
 ```
@@ -68,15 +68,15 @@ would each intent mean on it?**
 $ cd emet-sdk
 $ emet explain examples/bodiless.yaml
 BINDING TABLE  examples/bodiless.yaml   (body: bodiless, 'a speakerphone on a desk')
-0 capabilities, 31 intents, 0 bound to hardware, 31 to voice
+0 capabilities, 32 intents, 0 bound to hardware, 32 to voice
 
-  ~ express.curiosity  voice        inflect      filler=['hm?', 'hmm.'] preset=rising
+  ~ express.curiosity   voice        inflect      filler=['hm?', 'hmm.'] preset=rising
 
 $ emet explain examples/mock-scout.yaml
 BINDING TABLE  examples/mock-scout.yaml   (body: mock_scout, 'scout-01, simulated')
-5 capabilities, 31 intents, 30 bound to hardware, 1 to voice
+5 capabilities, 32 intents, 31 bound to hardware, 1 to voice
 
-    express.curiosity  head         tilt         angle_deg=12 hold_ms=700 speed=0.4
+    express.curiosity   head         tilt         angle_deg=12 hold_ms=700 speed=0.4
 ```
 
 Same personality, same configuration, two bodies. Nobody wrote an `if`

@@ -114,8 +114,8 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import plan_file  # noqa: E402
-from tag_release import PACKAGES, changelog_section, tag_message  # noqa: E402
+import plan_file  # noqa: E402  a tool beside this file, imported by its bare name
+from tag_release import PACKAGES, changelog_section, tag_message  # noqa: E402  a tool beside this file, imported by its bare name
 
 #: The first version under the rule (RELEASING.md). The tags before it keep
 #: their two-part names and their own notes.
@@ -730,7 +730,7 @@ class Audit:
         return f"move the run's folder from {self.shown(default / 'body')} to {self.shown(folder / 'body')}"
 
     def run_the_head(self, version: str, folder: Path, head: str) -> None:
-        """The fix for no passing run of the head: the body run of it."""
+        """The fix for a head with no passing run, which is the body run of it."""
         moved = self.moved(version, folder)
         then = f"  # then {moved}" if moved else ""
         self.fix(f"python tools/body/run.py --release {version} --commit {head}{then}")

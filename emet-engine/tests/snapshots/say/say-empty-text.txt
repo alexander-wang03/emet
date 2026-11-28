@@ -1,0 +1,6 @@
+$ emet-say body.yaml soul.yaml '   '
+exit 2
+--- stdout
+(nothing)
+--- stderr
+emet-say: the text to say is empty

@@ -27,9 +27,21 @@ Params, all optional:
     fail_on_start   bool. Pretend the service is unreachable. `start()`
                     completes and `describe()` reports unhealthy, which is
                     how a real provider reports a dead network.
+    fault_detail    str. With `fail_on_start`, the reason `health()` gives.
+    fault           str. With `fail_on_start`, the kind `health()` names,
+                    from `emet_sdk.types.FAULT_KINDS` (`out_of_credit`, say)
+                    or a plugin's own `x_` kind. Default `start_failed`. A
+                    kind `Health` refuses leaves the mock unhealthy, saying
+                    why.
     require_key     bool. Insist that the environment variable named by
                     `key_env` is set, and report unhealthy naming it when it
-                    is not. The BYOK failure path, without a vendor.
+                    is not. The BYOK failure path, without a vendor. The
+                    descriptor's `key_env` names that variable only when
+                    this is set, since otherwise no key is read.
+    endpoint        str. The URL the descriptor reports, as a cloud
+                    provider's does, so a test sees a host on the boot line
+                    and in what `--stats` counts as sent. Nothing is sent to
+                    it. Absent, the mock runs on this body.
     sample_rate     int. Report this rate instead of the one given, so a test
                     can watch the engine refuse a transcriber that would hear
                     speech at the wrong speed.
@@ -74,9 +86,18 @@ Params, all optional:
                     tool instead of answering, and stop with `tool`. Given a
                     tool result next, say what the tool said. The tool round
                     trip, without a vendor.
-    fail_on_start   bool. Pretend the service is unreachable.
-    require_key     bool. Insist on the environment variable `key_env`
-                    names.
+    reasoning_tokens
+                    int, default 0. Tokens the mock counts as spent thinking
+                    before its first word, the way a reasoning model spends
+                    them. They count against the prompt's `max_tokens` and
+                    into `output_tokens`. When they reach the cap the reply
+                    stops at `length` with no text, which is the empty reply
+                    at the cap; when the words would pass it, the reply is
+                    cut at the cap and stops at `length` with the words that
+                    fit. The mock counts a word as a token, and honours
+                    `max_tokens` with or without this param.
+    fail_on_start, fault_detail, fault, require_key, endpoint
+                    as the transcriber's.
 
 `MockVoice` speaks without a voice. The words it is given become the audio:
 one chunk per word, each chunk the word's bytes followed by zeros, which is
@@ -97,6 +118,14 @@ Params, all optional:
     fail_on_start   bool. Pretend the model is missing.
     require_key     bool. Insist on the environment variable `key_env`
                     names, the way a cloud voice would.
+    fault_detail, fault, endpoint
+                    as the transcriber's.
+
+Every mock logs a start refusal at INFO: the engine prints it through
+`health().detail`, and logging's last resort prints WARNING and above, so a
+WARNING would print it twice (contract 0.5.7 section 3.3, L16). What the
+engine does not print, a cassette with no turn for the request and a miss's
+reason, stays a WARNING.
 """
 
 from __future__ import annotations
@@ -126,6 +155,7 @@ from emet_sdk.types import (
 )
 
 from emet_providers import cassette as _cassette
+from emet_providers._http import endpoint_of
 
 __all__ = ["MockTranscriber", "MockLanguageModel", "MockVoice", "spelled", "read_back", "MIN_CHARS"]
 
@@ -148,6 +178,37 @@ def spelled(frame: bytes) -> str:
     if len(head) < MIN_CHARS or any(b < 0x20 or b > 0x7E for b in head):
         return ""
     return head.decode("ascii").strip()
+
+
+def _start_refusal(
+    params: Mapping[str, Any], key_env: str | None, *, unreachable: str, needs_key: str
+) -> tuple[str, str] | None:
+    """Why a mock will not start, with the fault kind `health()` names, or None.
+
+    `fail_on_start` gives `fault_detail` or `unreachable`, under `fault` or
+    `start_failed`. `require_key` gives `no_key` for an unset variable. The
+    kind is checked here, as `Health` checks it, so a test that names a kind
+    the SDK refuses learns so from `health()` and never from a traceback.
+    """
+    if params.get("fail_on_start"):
+        kind = str(params.get("fault") or "start_failed")
+        try:
+            Health(ok=False, faults=(kind,))
+        except ValueError as exc:
+            return f"params.fault is not a kind Health takes. {exc}", "start_failed"
+        return str(params.get("fault_detail") or unreachable), kind
+    if params.get("require_key"):
+        if not key_env:
+            return needs_key, "start_failed"
+        if not os.environ.get(key_env):
+            return f"no key: the environment variable {key_env} is not set", "no_key"
+    return None
+
+
+def _endpoint(params: Mapping[str, Any]) -> str | None:
+    """The endpoint a mock reports, `params.endpoint` made safe to print, or None."""
+    value = params.get("endpoint")
+    return endpoint_of(str(value)) if value else None
 
 
 def read_back(pcm: bytes) -> str:
@@ -186,6 +247,7 @@ class MockTranscriber(TranscriberPlugin):
         self._words: list[str] = []
         self._started = False
         self._fault: str | None = None
+        self._fault_kind = "start_failed"
         self._player: _cassette.Player | None = None
         self._turns_dir: Path | None = None
         self._turn = 0
@@ -196,16 +258,15 @@ class MockTranscriber(TranscriberPlugin):
     # ------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        if self.params.get("fail_on_start"):
-            self._fail(str(self.params.get("fault_detail") or "simulated: the service is unreachable"))
+        refused = _start_refusal(
+            self.params,
+            self.key_env,
+            unreachable="simulated: the service is unreachable",
+            needs_key="this provider needs a key and the soul names no key_env",
+        )
+        if refused:
+            self._fail(*refused)
             return
-        if self.params.get("require_key"):
-            if not self.key_env:
-                self._fail("this provider needs a key and the soul names no key_env")
-                return
-            if not os.environ.get(self.key_env):
-                self._fail(f"no key: the environment variable {self.key_env} is not set")
-                return
         reason = self._open_cassette() or self._open_turns_dir()
         if reason:
             self._fail(reason)
@@ -255,9 +316,10 @@ class MockTranscriber(TranscriberPlugin):
         self._turns_dir = directory
         return None
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, kind: str = "start_failed") -> None:
         self._fault = reason
-        log.warning("mock stt: %s", reason)
+        self._fault_kind = kind
+        log.info("mock stt: %s", reason)
 
     async def shutdown(self) -> None:
         self._started = False
@@ -280,11 +342,13 @@ class MockTranscriber(TranscriberPlugin):
             streaming=True,
             sample_rate=int(self.params.get("sample_rate") or self.format.sample_rate),
             healthy=self._started,
+            endpoint=_endpoint(self.params),
+            key_env=self.key_env if self.params.get("require_key") else None,
         )
 
     def health(self) -> Health:
         if self._fault:
-            return Health(ok=False, detail=self._fault, faults=("start_failed",))
+            return Health(ok=False, detail=self._fault, faults=(self._fault_kind,))
         return Health()
 
     # ---------------------------------------------------------- recognition
@@ -394,25 +458,33 @@ class MockLanguageModel(LanguageModelPlugin):
         self.prompts: list[Prompt] = []
         self._started = False
         self._fault: str | None = None
+        self._fault_kind = "start_failed"
+        #: `params.reasoning_tokens`, read at `start()`.
+        self._reasoning = 0
 
     # ------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        if self.params.get("fail_on_start"):
-            self._fail(str(self.params.get("fault_detail") or "simulated: the service is unreachable"))
+        refused = _start_refusal(
+            self.params,
+            self.key_env,
+            unreachable="simulated: the service is unreachable",
+            needs_key="this provider needs a key and the soul names no key_env",
+        )
+        if refused:
+            self._fail(*refused)
             return
-        if self.params.get("require_key"):
-            if not self.key_env:
-                self._fail("this provider needs a key and the soul names no key_env")
-                return
-            if not os.environ.get(self.key_env):
-                self._fail(f"no key: the environment variable {self.key_env} is not set")
-                return
+        spent = self.params.get("reasoning_tokens", 0)
+        if isinstance(spent, bool) or not isinstance(spent, int) or spent < 0:
+            self._fail(f"params.reasoning_tokens is a whole number of tokens, 0 or more, and it was given {spent!r}.")
+            return
+        self._reasoning = spent
         self._started = True
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, kind: str = "start_failed") -> None:
         self._fault = reason
-        log.warning("mock llm: %s", reason)
+        self._fault_kind = kind
+        log.info("mock llm: %s", reason)
 
     async def shutdown(self) -> None:
         self._started = False
@@ -426,12 +498,13 @@ class MockLanguageModel(LanguageModelPlugin):
             streaming=True,
             tools=True,
             healthy=self._started,
+            endpoint=_endpoint(self.params),
+            key_env=self.key_env if self.params.get("require_key") else None,
         )
 
     def health(self) -> Health:
         if self._fault:
-            fault = "no_key" if "no key" in self._fault else "start_failed"
-            return Health(ok=False, detail=self._fault, faults=(fault,))
+            return Health(ok=False, detail=self._fault, faults=(self._fault_kind,))
         return Health()
 
     # ---------------------------------------------------------------- reply
@@ -464,19 +537,29 @@ class MockLanguageModel(LanguageModelPlugin):
             heard = last.content if last is not None else ""
             text = f"You said: {heard}" if heard else "You said nothing."
 
-        for i, word in enumerate(_words(text)):
+        # A word is a token, and the thinking comes first, so the words get
+        # what is left of the cap. None left is the empty reply at the cap a
+        # reasoning model gives when it spends them all thinking.
+        words = _words(text)
+        cap = prompt.max_tokens
+        if self._reasoning + len(words) > cap:
+            words = words[: max(0, cap - self._reasoning)]
+            stop, spent = "length", cap
+        else:
+            stop, spent = "end", self._reasoning + len(words)
+        for i, word in enumerate(words):
             yield TextDelta(word if i == 0 else f" {word}")
         yield ReplyDone(
-            text=" ".join(_words(text)),
-            stop_reason="end",
+            text=" ".join(words),
+            stop_reason=stop,
             model="mock",
             input_tokens=input_tokens,
-            output_tokens=len(_words(text)),
+            output_tokens=spent,
         )
 
 
 class MockVoice(VoicePlugin):
-    """A voice with no voice in it: the words become the audio."""
+    """A voice with no voice in it, whose audio is the words themselves."""
 
     provider = "mock"
 
@@ -489,25 +572,26 @@ class MockVoice(VoicePlugin):
         self.said: list[str] = []
         self._started = False
         self._fault: str | None = None
+        self._fault_kind = "start_failed"
 
     # ------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        if self.params.get("fail_on_start"):
-            self._fail(str(self.params.get("fault_detail") or "simulated: the voice model is missing"))
+        refused = _start_refusal(
+            self.params,
+            self.key_env,
+            unreachable="simulated: the voice model is missing",
+            needs_key="this voice needs a key and the soul names no key_env",
+        )
+        if refused:
+            self._fail(*refused)
             return
-        if self.params.get("require_key"):
-            if not self.key_env:
-                self._fail("this voice needs a key and the soul names no key_env")
-                return
-            if not os.environ.get(self.key_env):
-                self._fail(f"no key: the environment variable {self.key_env} is not set")
-                return
         self._started = True
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, kind: str = "start_failed") -> None:
         self._fault = reason
-        log.warning("mock tts: %s", reason)
+        self._fault_kind = kind
+        log.info("mock tts: %s", reason)
 
     async def shutdown(self) -> None:
         self._started = False
@@ -521,12 +605,13 @@ class MockVoice(VoicePlugin):
             sample_rate=int(self.params.get("sample_rate") or 16000),
             streaming=True,
             healthy=self._started,
+            endpoint=_endpoint(self.params),
+            key_env=self.key_env if self.params.get("require_key") else None,
         )
 
     def health(self) -> Health:
         if self._fault:
-            fault = "no_key" if "no key" in self._fault else "start_failed"
-            return Health(ok=False, detail=self._fault, faults=(fault,))
+            return Health(ok=False, detail=self._fault, faults=(self._fault_kind,))
         return Health()
 
     # ---------------------------------------------------------------- speak

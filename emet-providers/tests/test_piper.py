@@ -388,3 +388,38 @@ def test_a_failure_after_the_first_sentence_keeps_what_was_already_made(monkeypa
         return out
 
     assert run(scenario()) == [b"first" + bytes(2)]
+
+
+# ------------------------------------------- 0.5.7: on this body, in plain words
+
+
+import logging  # noqa: E402
+
+
+def test_the_voice_runs_on_this_body_so_its_descriptor_names_no_endpoint_and_no_key(monkeypatch, tmp_path):
+    """SF2: the boot line reads `, on this body` and `--stats` counts no
+    characters as sent, from these two fields being None."""
+    d = started(monkeypatch, tmp_path).describe()
+    assert d.endpoint is None and d.key_env is None and d.host is None
+    soul_named_a_key = make(tmp_path, config={"key_env": "SOMEONES_KEY"}).describe()
+    assert soul_named_a_key.key_env is None, "Piper reads no key, whatever the soul names"
+
+
+def test_a_start_refusal_and_a_lost_sentence_are_logged_at_info(monkeypatch, tmp_path, caplog):
+    """L16: the engine prints a start refusal through `health().detail` and
+    a lost sentence through the `PluginError`, so neither is a WARNING,
+    which logging's last resort would print a second time."""
+    with caplog.at_level(logging.DEBUG, logger="emet_providers.piper"):
+        monkeypatch.setitem(sys.modules, "piper", None)
+        missing = make(tmp_path)
+        run(missing.start())
+        assert missing.health().faults == ("no_library",)
+        fake_piper(monkeypatch, fail_on="choke")
+        voice_files(tmp_path / "voices")
+        tts = make(tmp_path / "voices")
+        run(tts.start())
+        with pytest.raises(PluginError):
+            run(collect(tts.speak("Please choke now.")))
+    levels = [r.levelno for r in caplog.records]
+    assert logging.INFO in levels
+    assert all(level < logging.WARNING for level in levels), [(r.levelname, r.getMessage()) for r in caplog.records]

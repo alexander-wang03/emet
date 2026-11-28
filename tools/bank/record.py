@@ -496,7 +496,7 @@ class RealClock:
 
 
 class VirtualClock:
-    """The dry run's clock: sleeping moves it on at once."""
+    """The dry run's clock, which a sleep moves on at once."""
 
     def __init__(self) -> None:
         self.t = 0.0
@@ -580,7 +580,7 @@ class TerminalKeys:
 
 
 def next_line(entry: "Entry | None") -> str:
-    """The read-ahead under a prompt: the take the next slot asks for."""
+    """The read-ahead under a prompt, naming the take the next slot asks for."""
     if entry is None:
         return "next: nothing more in this file"
     return f"next{sheet_mark(entry)}: {prompt_words(entry.take, 1) if entry.take.kind == 'pause' else entry.take.text}"
@@ -1164,7 +1164,7 @@ class AgainError(Exception):
 
 
 def taken(bank: Path, file_id: str) -> bool:
-    """Whether an id is in use: its manifest or its audio exists."""
+    """Whether an id is in use, which it is when its manifest or its audio exists."""
     return (bank / "manifests" / f"{file_id}.json").exists() or (bank / "audio" / f"{file_id}.wav").exists()
 
 

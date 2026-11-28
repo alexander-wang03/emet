@@ -91,7 +91,7 @@ WARM_TEXT = "Ready."
 
 
 def user_voices_dir() -> Path:
-    """A person's voices: `$XDG_DATA_HOME/emet/voices`, or `~/.local/share/emet/voices`."""
+    """A person's voices folder, `$XDG_DATA_HOME/emet/voices` or else `~/.local/share/emet/voices`."""
     base = os.environ.get("XDG_DATA_HOME")
     root = Path(base) if base else Path.home() / ".local" / "share"
     return root / "emet" / "voices"
@@ -203,9 +203,12 @@ class PiperVoice(VoicePlugin):
         log.info("piper: ready, voice %s at %d Hz from %s", self.model_name, self._sample_rate, found)
 
     def _fail(self, reason: str, *, kind: str = "start_failed") -> None:
+        # INFO: the engine prints the reason through `health().detail`, so
+        # logging's last resort would print it twice (contract 0.5.7 section
+        # 3.3, L16).
         self._fault = reason
         self._fault_kind = kind
-        log.error("piper: %s", reason)
+        log.info("piper: %s", reason)
 
     async def shutdown(self) -> None:
         self._started = False
@@ -214,12 +217,16 @@ class PiperVoice(VoicePlugin):
     # ------------------------------------------------------------ reporting
 
     def describe(self) -> VoiceDescriptor:
+        # No endpoint and no key: the words are spoken on this body, and the
+        # boot line and `--stats` say so.
         return VoiceDescriptor(
             provider=self.provider,
             model=self.model_name,
             sample_rate=self._sample_rate,
             streaming=False,
             healthy=self._started,
+            endpoint=None,
+            key_env=None,
         )
 
     def health(self) -> Health:
@@ -252,7 +259,8 @@ class PiperVoice(VoicePlugin):
                 chunk = await asyncio.to_thread(step)
             except Exception as exc:  # noqa: BLE001 - one sentence lost, reported
                 self.last_error = f"{type(exc).__name__}: {exc}"
-                log.warning("piper: %s", self.last_error)
+                # INFO: the engine prints the lost sentence (L16).
+                log.info("piper: %s", self.last_error)
                 raise PluginError(f"piper could not say {text!r}: {self.last_error}") from exc
             if chunk is exhausted:
                 return

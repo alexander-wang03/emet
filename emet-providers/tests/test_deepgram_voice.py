@@ -396,3 +396,205 @@ def test_the_module_names_its_verification_and_prices():
     assert "$0.030" in doc and "2000 characters" in doc
     assert "/v2/speak" in doc, "Flux TTS is named as the protocol this file does not speak"
     assert "mip_opt_out=true" in doc and "read 2026-11-26" in doc
+
+
+# ------------------------------------- 0.5.7: where the words go, and refusals of a known kind
+
+
+import logging  # noqa: E402
+
+from emet_sdk.types import FAULT_KINDS  # noqa: E402
+
+from emet_providers.deepgram_voice import FAULT_CODES  # noqa: E402
+
+#: Deepgram's documented bodies (developers.deepgram.com/docs/errors and
+#: /reference/errors, read 2026-11-27). The page shows a 402 body for
+#: speech-to-text only; the speak API's is unverified, so the tests use
+#: that one and a bare 402.
+NO_CREDIT = {
+    "err_code": "ASR_PAYMENT_REQUIRED",
+    "err_msg": "Project does not have enough credits for an ASR request and does not have an overage agreement.",
+}
+NO_ACCESS = {"err_code": "INSUFFICIENT_PERMISSIONS", "err_msg": "Project does not have access to the requested model."}
+
+OUT_OF_CREDIT = (
+    "Deepgram says the account is out of credit (HTTP 402, ASR_PAYMENT_REQUIRED). "
+    "Add credit to the project in Deepgram's console. Retrying will not help."
+)
+NO_SUCH_VOICE = "Deepgram does not serve the voice 'aura-2-thalia-en' (HTTP 403). Choose another under models.tts.model."
+
+
+class Answers:
+    """Each request takes the next of `answers`: `(status, body)`, or 200 with
+    the text's bytes once they run out."""
+
+    def __init__(self, *answers: tuple[int, dict | None]) -> None:
+        self.answers = list(answers)
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.answers:
+            status, body = self.answers.pop(0)
+            if status != 200:
+                return httpx.Response(status, json=body) if body is not None else httpx.Response(status)
+        text = json.loads(request.content)["text"]
+        return httpx.Response(200, content=text.encode() + bytes(2), headers={"content-type": "audio/l16"})
+
+
+def voice_with(answers: Answers, monkeypatch, **params: Any) -> DeepgramVoice:
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    tts = DeepgramVoice({"provider": "deepgram", "params": params}, None, transport=httpx.MockTransport(answers))
+    run(tts.start())
+    return tts
+
+
+def test_the_descriptor_names_where_the_words_go_and_the_key_that_pays(monkeypatch):
+    """SF2: the boot line prints `, at api.deepgram.com, key ...`, and
+    `--stats` counts the characters sent to that host, from these fields."""
+    d = make(FakeSpeak()).describe()
+    assert d.endpoint == DEFAULT_URL and d.key_env == DEFAULT_KEY_ENV and d.host == "api.deepgram.com"
+    own = make(FakeSpeak(), config={"key_env": "MY_DG"}, url="https://u:secret@example.com:9000/v1/speak?tier=x")
+    assert own.describe().endpoint == "https://example.com:9000/v1/speak"
+    assert own.describe().host == "example.com:9000" and own.describe().key_env == "MY_DG"
+
+
+def test_every_kind_in_the_table_is_one_the_sdk_takes():
+    assert set(FAULT_CODES.values()) <= FAULT_KINDS
+
+
+@pytest.mark.parametrize(
+    "answer, detail",
+    [
+        ((402, NO_CREDIT), OUT_OF_CREDIT),
+        ((402, None), "Deepgram says the account is out of credit (HTTP 402). Add credit to the project in "
+                      "Deepgram's console. Retrying will not help."),
+    ],
+)
+def test_out_of_credit_at_the_preflight_refuses_the_boot_with_its_kind(monkeypatch, answer, detail):
+    """OC3: at 0.5.6 a 402 read "Check the voice name against Deepgram's
+    model list", which sent the owner to the wrong place."""
+    tts = voice_with(Answers(answer), monkeypatch)
+    assert not tts.describe().healthy
+    assert tts.health().faults == ("out_of_credit",) and tts.health().detail == detail
+    assert "voice name" not in tts.health().detail
+
+
+def test_a_voice_the_project_cannot_use_is_model_unavailable_at_boot(monkeypatch):
+    tts = voice_with(Answers((403, NO_ACCESS)), monkeypatch)
+    assert tts.health().faults == ("model_unavailable",) and tts.health().detail == NO_SUCH_VOICE
+
+
+def test_an_unknown_voice_stays_start_failed_since_its_code_is_generic(monkeypatch):
+    """Deepgram answers an unknown voice with 400 and `Bad Request`, a code
+    that also means empty text or a bad parameter, so no kind is read from
+    it and the refusal keeps the vendor's words."""
+    body = {"err_code": "Bad Request", "err_msg": "Bad Request: No such model/language/tier combination found."}
+    tts = voice_with(Answers((400, body)), monkeypatch)
+    assert tts.health().faults == ("start_failed",)
+    assert "No such model/language/tier combination found" in tts.health().detail
+
+
+def test_a_403_of_another_code_is_still_a_rejected_key(monkeypatch):
+    tts = voice_with(Answers((403, {"err_code": "INVALID_AUTH", "err_msg": "Invalid credentials."})), monkeypatch)
+    assert tts.health().faults == ("start_failed",) and "rejected the key" in tts.health().detail
+
+
+def test_at_another_url_the_server_is_named_by_its_host(monkeypatch):
+    tts = voice_with(Answers((402, NO_CREDIT)), monkeypatch, url="https://tts.internal:9000/v1/speak")
+    assert tts.health().detail == (
+        "the server at tts.internal:9000 says the account is out of credit (HTTP 402, ASR_PAYMENT_REQUIRED). "
+        "Retrying will not help."
+    )
+
+
+def test_out_of_credit_mid_reply_loses_the_sentence_and_clears_on_the_next_that_is_said(monkeypatch):
+    """A sentence the voice loses keeps today's line (contract 0.5.7 section
+    3.2), so the plain sentence rides in the `PluginError`, and `health()`
+    names the kind until a request succeeds."""
+    tts = voice_with(
+        Answers((402, NO_CREDIT), (500, {"err_code": "INTERNAL", "err_msg": "boom"}), (402, NO_CREDIT)),
+        monkeypatch,
+        preflight=False,
+    )
+    with pytest.raises(PluginError) as lost:
+        run(collect(tts.speak("First.")))
+    assert str(lost.value) == f"Deepgram could not say 'First.': {OUT_OF_CREDIT}"
+    assert tts.health().faults == ("out_of_credit",) and tts.last_error == OUT_OF_CREDIT
+    assert tts.describe().healthy
+    # Review finding providers/code#1 (contract 0.5.7 section 9, C15): a
+    # request that fails for a reason naming no kind ends the kind.
+    with pytest.raises(PluginError, match="HTTP 500 INTERNAL: boom"):
+        run(collect(tts.speak("Middle.")))
+    assert tts.health().ok and tts.health().faults == ()
+    with pytest.raises(PluginError):
+        run(collect(tts.speak("Later.")))
+    assert tts.health().faults == ("out_of_credit",) and tts.health().detail == OUT_OF_CREDIT
+    assert run(collect(tts.speak("Again."))) == [b"Again." + bytes(2)]
+    assert tts.health().ok
+
+
+def test_a_voice_withdrawn_mid_run_is_model_unavailable_for_the_rest_of_the_run(monkeypatch):
+    """Review finding providers/claims-scope#3: after the 403, each later
+    sentence is lost with the same sentence and no request is sent, as the
+    chat plugins send nothing for a model that cannot answer."""
+    answers = Answers((403, NO_ACCESS))
+    tts = voice_with(answers, monkeypatch, preflight=False)
+    with pytest.raises(PluginError, match="does not serve the voice"):
+        run(collect(tts.speak("First.")))
+    sent = len(answers.requests)
+    for text in ("Second.", "Third."):
+        with pytest.raises(PluginError) as lost:
+            run(collect(tts.speak(text)))
+        assert str(lost.value) == f"Deepgram could not say {text!r}: {NO_SUCH_VOICE}"
+    assert len(answers.requests) == sent == 1, "nothing is sent for a voice Deepgram has withdrawn"
+    assert tts.health().faults == ("model_unavailable",) and tts.health().detail == NO_SUCH_VOICE
+
+
+def test_each_start_refusal_names_its_kind_where_it_is_raised(monkeypatch):
+    monkeypatch.delenv(DEFAULT_KEY_ENV, raising=False)
+    no_key = make(FakeSpeak())
+    run(no_key.start())
+    assert no_key.health().faults == ("no_key",)
+
+    # Review finding providers/tests#7: an unreachable network is no account
+    # out of credit; the voice-out-of-credit-at-boot row prints the same words.
+    unreachable = make(FakeSpeak(raise_on_connect=httpx.ConnectError("no route")))
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    run(unreachable.start())
+    assert unreachable.health().faults == ("start_failed",)
+
+    monkeypatch.setitem(__import__("sys").modules, "httpx", None)
+    no_library = DeepgramVoice({"provider": "deepgram"})
+    run(no_library.start())
+    assert no_library.health().faults == ("no_library",)
+
+
+def test_a_password_in_the_url_reaches_no_boot_refusal(monkeypatch):
+    """Review finding providers/claims-scope#4."""
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    tts = make(FakeSpeak(raise_on_connect=httpx.ConnectError("refused")), url="https://owner:hunter2@example.com/v1/speak")
+    run(tts.start())
+    assert (tts.health().detail or "").startswith("could not reach https://example.com/v1/speak: ConnectError: refused.")
+    assert "hunter2" not in (tts.health().detail or "")
+
+
+def test_refusals_are_logged_at_info_and_a_clamped_rate_stays_a_warning(monkeypatch, caplog):
+    """L16: the engine prints a start refusal and a lost sentence, so they
+    are INFO; it prints nothing of a clamped rate, which stays a WARNING."""
+    with caplog.at_level(logging.DEBUG, logger="emet_providers.deepgram_voice"):
+        voice_with(Answers((402, NO_CREDIT)), monkeypatch)
+        tts = voice_with(Answers((500, {"err_code": "INTERNAL", "err_msg": "boom"})), monkeypatch, preflight=False)
+        with pytest.raises(PluginError):
+            run(collect(tts.speak("Hello.")))
+        # The network dropping mid-sentence, the other branch (review finding providers/tests#6).
+        dropped = started(FakeSpeak(raise_on_connect=httpx.ReadError("connection reset")), monkeypatch, preflight=False)
+        with pytest.raises(PluginError, match="ReadError: connection reset"):
+            run(collect(dropped.speak("Hello.")))
+        make(FakeSpeak(), voice={"rate": 3.0})
+    said = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert (logging.INFO, f"deepgram voice: {OUT_OF_CREDIT}") in said
+    assert (logging.INFO, "deepgram voice: HTTP 500 INTERNAL: boom") in said
+    assert (logging.INFO, "deepgram voice: ReadError: connection reset") in said
+    warnings = [text for level, text in said if level >= logging.WARNING]
+    assert len(warnings) == 1 and "is outside 0.7 to 1.5" in warnings[0]

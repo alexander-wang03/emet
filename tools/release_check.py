@@ -18,6 +18,13 @@ It checks the *cross-cutting* invariants:
     changelog     the declared version has its entry, dated, with a summary
     security      each line of a `### Security` section names its advisory id
     markers       no TODO or FIXME left in shipped source
+    lifecycle     every default model has a row in `emet_providers/lifecycle.py`
+                  with 180 days of runway (MC3)
+    future tense  no comment names a shipped release as still to come
+                  (0.5.7-D10 (g))
+
+A problem fails the check. A warning is printed as `release-check: warning:`
+and leaves the exit code alone.
 
 **Why this exists.** 0.3's scope was "audio in/out, wake word, VAD,
 endpointing". Audio *out* was not wired, and it went unnoticed for days because
@@ -34,8 +41,12 @@ Exit:   0 clean, 1 problems found.
 
 from __future__ import annotations
 
+import ast
+import datetime
+import io
 import re
 import sys
+import tokenize
 import tomllib
 from pathlib import Path
 
@@ -104,12 +115,47 @@ SECURITY_HEADING = re.compile(r"^ {0,3}###\s*security\b", re.IGNORECASE)
 #: spaces before its text.
 LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|(\d{1,9})([.)]))(\s+)\S")
 
+#: MC3 (contract §5.3). The defaults table, the four provider modules whose
+#: `DEFAULT_MODEL` it must hold, the vendor each module's default is
+#: offered by, and the soul whose cloud models it must hold too.
+LIFECYCLE = "emet-providers/emet_providers/lifecycle.py"
+PROVIDERS_PACKAGE = "emet-providers/emet_providers"
+DEFAULT_MODULES = (
+    ("emet-providers/emet_providers/openai.py", "openai"),
+    ("emet-providers/emet_providers/anthropic.py", "anthropic"),
+    ("emet-providers/emet_providers/deepgram.py", "deepgram"),
+    ("emet-providers/emet_providers/deepgram_voice.py", "deepgram"),
+)
+REFERENCE_SOUL = "emet-sdk/examples/emet-soul.yaml"
+#: The providers that send a stage off the body, each its vendor's.
+CLOUD_PROVIDERS = ("openai", "anthropic", "deepgram")
+#: A release needs this much runway before a default may be retired.
+RUNWAY_DAYS = 180
+#: A row read longer ago than this is read again.
+STALE_READ_DAYS = 45
+
+#: 0.5.7-D10 (g): the future tense of a shipped release. A release is
+#: `X.Y` or `X.Y.Z`, never a licence's (`GPL-3.0`) and never a measure (a
+#: number followed by a unit). The words are the ones a sentence about a
+#: release still to come uses. `until` was tried and left out: "Until 0.5
+#: the engine never started a capability plugin" (body.py's first lines) is
+#: history, and an `until` naming a shipped release is always history.
+FUTURE_WORDS = ("will", "puts", "brings", "adds", "arrives", "lands", "planned", "later")
+FUTURE_WORD = re.compile(r"\b(?:" + "|".join(FUTURE_WORDS) + r")\b", re.IGNORECASE)
+UNITS = r"(?:s|ms|us|ns|min|h|Hz|kHz|dB|dBFS|x|KB|kB|MB|GB|m|cm|mm|V|A|W|C)"
+RELEASE_NAMED = re.compile(r"(?<![\w.-])(\d+)\.(\d+)(?:\.(\d+))?(?![\w.])(?!\s*(?:%|" + UNITS + r"\b))")
+
 problems: list[str] = []
 notes: list[str] = []
+warned: list[str] = []
 
 
 def problem(msg: str) -> None:
     problems.append(msg)
+
+
+def warning(msg: str) -> None:
+    warned.append(msg)
 
 
 def declared_versions(root: Path) -> dict[str, str]:
@@ -503,7 +549,302 @@ def check_markers(root: Path) -> None:
         problem(f"marker left in shipped source: {hit}")
 
 
-def main(argv: list[str]) -> int:
+def literal_defaults(path: Path) -> list[tuple[int, dict]] | None:
+    """The rows of `DEFAULTS` in the lifecycle table, read with `ast` and
+    never imported: each `DefaultModel(...)` call's line and its keyword
+    arguments. None, after a problem, when the table cannot be read."""
+    rel = LIFECYCLE
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        problem(f"{rel}:{exc.lineno or 1} does not parse: {exc.msg}")
+        return None
+    value = None
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(t, ast.Name) and t.id == "DEFAULTS" for t in targets):
+            value = node.value
+    if not isinstance(value, (ast.Tuple, ast.List)):
+        problem(f"{rel} holds no DEFAULTS = (DefaultModel(...), ...): release_check.py reads the table without "
+                f"importing it")
+        return None
+    rows = []
+    for item in value.elts:
+        if not (isinstance(item, ast.Call) and isinstance(item.func, ast.Name) and item.func.id == "DefaultModel"
+                and not item.args):
+            problem(f"{rel}:{item.lineno} is a DEFAULTS row that is not DefaultModel(...) with keyword arguments")
+            continue
+        try:
+            fields = {kw.arg: ast.literal_eval(kw.value) for kw in item.keywords if kw.arg}
+        except ValueError:
+            problem(f"{rel}:{item.lineno} is a DEFAULTS row with a value that is not a literal")
+            continue
+        rows.append((item.lineno, fields))
+    return rows
+
+
+def module_default(path: Path) -> str | None:
+    """A provider module's `DEFAULT_MODEL = "..."`, read without importing it.
+    A module that does not parse, holds no `DEFAULT_MODEL`, or gives it as
+    anything but one string literal (a name, an f-string, a sum) gives None,
+    which the caller refuses."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(t, ast.Name) and t.id == "DEFAULT_MODEL" for t in targets):
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    return None
+
+
+def _scalar(text: str) -> str | None:
+    """One YAML value as a soul writes it, a plain word or a quoted string,
+    with any comment after it dropped. Anything else (a mapping, a list, an
+    anchor, an alias, a tag, a block scalar, nothing) gives None."""
+    text = text.strip()
+    if text[:1] in ("\"", "'"):
+        end = text.find(text[0], 1)
+        after = text[end + 1:].strip() if end > 0 else "x"
+        return text[1:end] if not after or after.startswith("#") else None
+    text = re.sub(r"(?:^|\s)#.*$", "", text).strip()
+    if not text or text[0] in "{[&*!|>%@`":
+        return None
+    return text
+
+
+def _split_flow(text: str) -> list[str] | None:
+    """The items of the flow mapping that starts `text`, split at its commas
+    outside quotes and brackets, or None when its braces do not close."""
+    items, depth, quote, start = [], 0, "", 1
+    for i, ch in enumerate(text):
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                items.append(text[start:i])
+                return [item for item in items if item.strip()]
+        elif ch == "," and depth == 1:
+            items.append(text[start:i])
+            start = i + 1
+    return None
+
+
+#: A `key: value` line of YAML, or a `key:` line that opens a block mapping.
+KEY_LINE = re.compile(r"^(\s*)([A-Za-z_][\w-]*)\s*:(?:\s+(.*?))?\s*$")
+
+#: The key a stage holds when its flow mapping does not close on its line.
+UNCLOSED = "{"
+
+
+def soul_stages(path: Path) -> list[tuple[int, str, dict[str, tuple[int, str | None]]]]:
+    """Each stage under the soul's top-level `models:`, as (line, stage, its
+    keys), each key with its own line and its value.
+
+    A stage is a flow mapping on its line, `chat: {provider: openai, model:
+    "x"}` with its keys in any order, or a block mapping on the lines below
+    it. A value `_scalar` cannot read is None, and a flow mapping that does
+    not close on its line holds the key `UNCLOSED`, so the caller refuses
+    what this reader cannot see. The standard library holds no YAML parser,
+    and this reads the part of YAML a soul is written in.
+    """
+    stages: list[tuple[int, str, dict[str, tuple[int, str | None]]]] = []
+    inside, indent, child = False, None, None
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if re.match(r"^models:\s*(#.*)?$", line):
+            inside, indent = True, None
+            continue
+        if not inside or not line.strip() or line.lstrip().startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        if depth == 0:
+            inside = False
+            continue
+        if indent is None:
+            indent = depth
+        m = KEY_LINE.match(line)
+        if m is None:
+            continue
+        if depth == indent:
+            rest = (m.group(3) or "").strip()
+            fields: dict[str, tuple[int, str | None]] = {}
+            if rest.startswith("{"):
+                items = _split_flow(rest)
+                if items is None:
+                    fields[UNCLOSED] = (n, None)
+                for item in items or []:
+                    key, sep, value = item.partition(":")
+                    if sep:
+                        fields[key.strip()] = (n, _scalar(value))
+            stages.append((n, m.group(2), fields))
+            child = None
+        elif depth > indent and stages and UNCLOSED not in stages[-1][2]:
+            child = depth if child is None else child
+            if depth == child:
+                stages[-1][2].setdefault(m.group(2), (n, _scalar(m.group(3) or "")))
+    return stages
+
+
+def _date(value: object) -> datetime.date | None:
+    try:
+        return datetime.date.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def check_lifecycle(root: Path, today: datetime.date) -> None:
+    """MC3 stage 1: every default model has a lifecycle row and the runway a
+    release needs.
+
+    A cloud default the vendor retires leaves every robot that never named a
+    model saying "Say it again?" to each wake, and the vendors announce
+    retirements months ahead. So each `DEFAULT_MODEL` of the four provider
+    modules, and each cloud model the reference soul names, is held to a
+    row of `emet_providers/lifecycle.py`, read with `ast` (contract §5.3).
+    A module, a default or a soul stage that cannot be read that way is a
+    problem as well, so a refactor cannot take a default out of the rule.
+    A retirement date fewer than 180 days from today, by UTC, is a problem;
+    a policy floor that close is a warning, since nothing is announced; and
+    a row read more than 45 days ago is a warning to read its source again.
+    The monthly canary asks each vendor for the same rows.
+    """
+    wanted: list[tuple[str, str, str]] = []           # (model, where, vendor)
+    # A source this cannot read is a problem, never a skip: a skipped
+    # default is one the 180 days no longer hold (review finding
+    # checks-ci/code#2, 2026-11-27). A tree without the providers' package
+    # is no repository's shape, and holds no default to read.
+    shipped = (root / PROVIDERS_PACKAGE).is_dir()
+    for rel, vendor in DEFAULT_MODULES if shipped else ():
+        path = root / rel
+        model = module_default(path) if path.is_file() else None
+        if model:
+            wanted.append((model, rel.rsplit("/", 1)[1], vendor))
+        elif path.is_file():
+            problem(f"{rel} has no DEFAULT_MODEL release_check.py can read without importing it: write it as one "
+                    f"string literal, DEFAULT_MODEL = \"...\"")
+        else:
+            problem(f"{rel} is missing: release_check.py holds its DEFAULT_MODEL to a row of "
+                    f"emet_providers/lifecycle.py")
+    soul = root / REFERENCE_SOUL
+    if shipped and not soul.is_file():
+        problem(f"{REFERENCE_SOUL} is missing: release_check.py holds its cloud models to a row of "
+                f"emet_providers/lifecycle.py")
+    for n, stage, fields in soul_stages(soul) if soul.is_file() else ():
+        if UNCLOSED in fields:
+            problem(f"{REFERENCE_SOUL}:{n} holds the {stage} stage in a flow mapping that does not close on its "
+                    f"line: write it on one line, or as a block mapping")
+            continue
+        line, provider = fields.get("provider", (n, ""))
+        if provider is None:
+            problem(f"{REFERENCE_SOUL}:{line} gives the {stage} stage a provider release_check.py cannot read: "
+                    f"write it as one word")
+        elif provider in CLOUD_PROVIDERS and "model" in fields:
+            line, model = fields["model"]
+            if model is None:
+                problem(f"{REFERENCE_SOUL}:{line} gives the {stage} stage a {provider} model release_check.py "
+                        f"cannot read: write it as one string, model: \"...\"")
+            else:
+                wanted.append((model, f"{REFERENCE_SOUL}:{line}", provider))
+    if not wanted:
+        return
+    table = root / LIFECYCLE
+    rows = literal_defaults(table) if table.is_file() else []
+    if rows is None:
+        return
+    by_model: dict[str, tuple[int, dict]] = {}
+    for n, fields in rows:
+        by_model.setdefault(str(fields.get("model")), (n, fields))
+    seen: set[str] = set()
+    for model, where, offered_by in wanted:
+        if model not in by_model:
+            problem(f"the default model {model!r} in {where} has no row in emet_providers/lifecycle.py")
+            continue
+        if model in seen:
+            continue
+        seen.add(model)
+        n, row = by_model[model]
+        vendor = row.get("vendor") or offered_by
+        for name in ("retires", "floor", "read"):
+            if row.get(name) is not None and _date(row.get(name)) is None:
+                problem(f"{LIFECYCLE}:{n} gives {model!r} a {name} of {row.get(name)!r}; a date is YYYY-MM-DD")
+        retires, floor, read = _date(row.get("retires")), _date(row.get("floor")), _date(row.get("read"))
+        if read is None and row.get("read") is None:
+            problem(f"{LIFECYCLE}:{n} gives {model!r} no read date: write the day the row was read at its source")
+        if retires is not None:
+            days = (retires - today).days
+            if days < RUNWAY_DAYS:
+                problem(f"the default model {model!r} ({vendor}) retires on {retires}, {days} days from today, "
+                        f"inside the {RUNWAY_DAYS} days of runway a release needs. Choose another default, or "
+                        f"record a later date with its source.")
+        elif floor is not None and (floor - today).days < RUNWAY_DAYS:
+            warning(f"the default model {model!r} may be retired from {floor}, {(floor - today).days} days from "
+                    f"today ({vendor}'s floor); no retirement is announced.")
+        if read is not None and (today - read).days > STALE_READ_DAYS:
+            warning(f"the lifecycle row for {model!r} was last read {read}; read {row.get('source')} again.")
+    if seen:
+        notes.append(f"{len(seen)} default model(s), each with a lifecycle row")
+
+
+def prose_lines(text: str) -> list[tuple[int, str]]:
+    """A module's comments and docstring lines, each with its line number."""
+    out = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                out.append((tok.start[0], tok.string))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return out
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return out
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                out.extend((first.value.lineno + i, line) for i, line in enumerate(first.value.value.splitlines()))
+    return sorted(out)
+
+
+def _release(text: str) -> tuple[int, int, int] | None:
+    parts = [int(p) for p in text.split(".")]
+    return (parts + [0, 0])[:3] if len(parts) in (2, 3) else None
+
+
+def check_future_tense(root: Path, version: str | None) -> None:
+    """0.5.7-D10 (g): no comment or docstring line in shipped source names a
+    release at or below the declared version beside a word of the future
+    tense. "0.4 puts speech synthesis in front of it" was true when 0.3
+    wrote it and false once 0.4 shipped (ledger L34)."""
+    declared = _release(version) if version else None
+    if declared is None:
+        return
+    for pkg in PACKAGES:
+        source = root / pkg / pkg.replace("-", "_")
+        if not source.is_dir():
+            continue
+        for py in sorted(source.rglob("*.py")):
+            rel = py.relative_to(root).as_posix()
+            for n, line in prose_lines(py.read_text(encoding="utf-8")):
+                if not FUTURE_WORD.search(line):
+                    continue
+                for m in RELEASE_NAMED.finditer(line):
+                    named = _release(m.group(0))
+                    if named is not None and named <= declared:
+                        problem(f'{rel}:{n} names {m.group(0)}, which has shipped, as still to come '
+                                f'("{line.strip()}"); say what the code does now')
+                        break
+
+
+def main(argv: list[str], today: datetime.date | None = None) -> int:
     root = Path(argv[1] if len(argv) > 1 else ".").resolve()
     if not (root / "emet-sdk").exists():
         print(f"release-check: {root} does not look like the Emet repository", file=sys.stderr)
@@ -519,9 +860,13 @@ def main(argv: list[str]) -> int:
     check_changelog(root, version)
     check_security_sections(root, version)
     check_markers(root)
+    check_lifecycle(root, today or datetime.datetime.now(datetime.timezone.utc).date())
+    check_future_tense(root, version)
 
     for note in notes:
         print(f"release-check: {note}")
+    for caution in warned:
+        print(f"release-check: warning: {caution}")
     if not problems:
         print("release-check: ok")
         print(

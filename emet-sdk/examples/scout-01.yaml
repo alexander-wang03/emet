@@ -43,6 +43,14 @@ audio:
       # fewer false wakes, more missed ones. Lower fires more easily.
       threshold: 1.0e-15
 
+# The body names no chat provider, so the soul's runs, and `params` tune it,
+# as in `pi-speakerphone.yaml`: `reasoning_effort` is OpenAI's and `effort`
+# Anthropic's, and each plugin ignores the other's. `low` was measured for
+# the reference soul's model on 2026-11-27 (`pi-speakerphone.yaml` says how).
+models:
+  chat:
+    params: {reasoning_effort: low, effort: low}
+
 capabilities:
   - id: head
     type: joint_group

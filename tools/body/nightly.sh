@@ -19,9 +19,10 @@
 #   tree the runner's venv is installed from; the record in
 #   ~/emet-ci/source.json then says "nightly", so a later run.py that does
 #   not sync names what it ran on. No GitHub credential is needed or read;
-# - installs with run.py's install line when a pyproject.toml changed, and
-#   runs the four suites, the checks and tools/bank/replay.py over
-#   ~/voicebank with the runner's venv. None of them opens an audio device:
+# - installs as run.py does, pip upgraded to run.py's RUNNER_PIP first and
+#   then run.py's install line, when a pyproject.toml, the line or the pin
+#   changed, and runs the four suites, the checks and tools/bank/replay.py
+#   over ~/voicebank with the runner's venv. None of them opens an audio device:
 #   the tests declare the null sink, the checks read files, and replay.py
 #   replays into the null sink. The PCM check runs again at the end and its
 #   lines go in the report;
@@ -46,9 +47,11 @@ KEEP=30
 BANK="$HOME/voicebank"
 # Where the kernel lists the sound cards' PCMs; a test points it elsewhere.
 ASOUND=/proc/asound
-# run.py's INSTALL, joined by spaces: the same line gives the same install
-# key, so a nightly and a run.py never reinstall for each other.
+# run.py's INSTALL, joined by spaces, and its RUNNER_PIP: the same line and
+# the same pin give the same install key, so a nightly and a run.py never
+# reinstall for each other, and a venv either one made has the pinned pip.
 EXTRAS="emet-sdk[dev] emet-hal[dev,audio,wake] emet-providers[dev,deepgram,anthropic,openai,piper] emet-engine[dev]"
+RUNNER_PIP="pip==26.2"
 PACKAGES="emet-sdk emet-hal emet-providers emet-engine"
 
 # run.py's BUSY, as an extended regular expression: the programs that mean
@@ -144,16 +147,18 @@ sync_master() {
 }
 
 install_tree() {
-  # run.py's install step: again only when a pyproject.toml or the line changed.
+  # run.py's install step: again only when a pyproject.toml, the line or the
+  # pin changed, and its key is run.py's, byte for byte.
   local key args="" extra
   cd "$CI/emet" || return 1
-  key=$( { printf '%s\n' "$EXTRAS"; for p in $PACKAGES; do cat "$p/pyproject.toml"; done; } | sha256sum | cut -c1-64)
+  key=$( { printf '%s\n' "$EXTRAS $RUNNER_PIP"; for p in $PACKAGES; do cat "$p/pyproject.toml"; done; } | sha256sum | cut -c1-64)
   if [ ! -x "$PY" ]; then python3 -m venv "$CI/.venv" || return 1; fi
   if [ "$(cat "$CI/installed.key" 2>/dev/null)" != "$key" ]; then
     rm -f "$CI/installed.key"
     for extra in $EXTRAS; do args="$args -e $extra"; done
+    "$PY" -m pip install --disable-pip-version-check -q --upgrade "$RUNNER_PIP" > "$RUN/install.txt" 2>&1 || return 1
     # shellcheck disable=SC2086
-    "$PY" -m pip install --disable-pip-version-check -q $args > "$RUN/install.txt" 2>&1 || return 1
+    "$PY" -m pip install --disable-pip-version-check -q $args >> "$RUN/install.txt" 2>&1 || return 1
     echo "$key" > "$CI/installed.key"
     say installed yes
   else

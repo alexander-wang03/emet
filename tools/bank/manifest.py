@@ -187,7 +187,7 @@ def _check_manifest(doc: dict, out: list[str]) -> None:
     _keys(doc, MANIFEST_FIELDS, "manifest", out, optional=("generated",))
     mid = doc.get("id")
     if not isinstance(mid, str) or not _ID.match(mid):
-        out.append("manifest: id is lowercase letters, digits, dots, dashes and underscores")
+        out.append("manifest: id is lowercase letters, digits, dots, dashes and '_'")
         mid = None
     if not _relative(doc.get("path")):
         out.append("manifest: path is relative to the bank's root, in forward slashes")
@@ -468,7 +468,7 @@ def dump(doc: dict[str, Any]) -> str:
 
 
 def write(path: Path | str, doc: dict[str, Any], kind: str) -> Path:
-    """Write `doc` after checking it: an unsound document is never written."""
+    """Write `doc` after checking it, so an unsound document is never written."""
     found = problems(doc, kind)
     if found:
         raise BankError(path, found)

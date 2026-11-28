@@ -201,7 +201,7 @@ def test_a_file_that_is_no_database_raises_and_is_closed(tmp_path, opened):
 
 
 def test_nothing_is_written_to_the_database(tmp_path, opened):
-    """The connection is read-only: validating a bundle must never change it."""
+    """The connection is read-only, since validating a bundle must never change it."""
     db = make_db(tmp_path / "memory.db", *SOUL_TABLES)
     before = db.read_bytes()
 

@@ -120,13 +120,13 @@ def test_a_failed_reading_is_unknown_and_never_a_verdict():
 
 
 def test_without_vcgencmd_or_a_load_average_there_is_no_line():
-    """Windows: neither reader exists, so the footer is as it was."""
+    """On Windows neither reader exists, so the footer is as it was."""
     nothing = BoardReading(vcgencmd=False)
     assert footer_lines(nothing, nothing) == []
 
 
 def test_without_vcgencmd_only_the_load_is_printed():
-    """A Linux laptop or CI: no temperature, no flags, no verdict line."""
+    """A Linux laptop or CI prints no temperature, no flags and no verdict line."""
     lines = footer_lines(BoardReading(vcgencmd=False, load=LOAD), BoardReading(vcgencmd=False, load=(1.0, 0.5, 0.25)))
     assert lines == [
         "  board         at start: load 0.07 0.06 0.05",

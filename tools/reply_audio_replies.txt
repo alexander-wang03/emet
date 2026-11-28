@@ -1,0 +1,9 @@
+# The replies tools/reply_audio.py says through emet-say, one a line, two to
+# four sentences each. They are fixed, so a voice's gaps, joins and loudness
+# steps can be compared from one run to the next. The third carries a tag,
+# so the filler its chain says sits between two sentences.
+It is twenty past four in the afternoon. You have about an hour before it gets dark.
+The moon is about three hundred and eighty four thousand kilometres away. Light covers that in a little over a second. Would you like to know how long a rocket takes?
+[express.curiosity] That is a good question. I do not know the answer yet. Can you tell me where you heard it?
+My name is Emet. I sit on this desk and listen for my name. Say hey emet, then ask me something.
+Seven times eight is fifty six. Eight times eight is sixty four. Nine times eight is seventy two. Shall I keep going?

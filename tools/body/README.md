@@ -31,6 +31,13 @@ USB microphone and a USB speaker:
   vendor tests, where it skipped 9 in 0.5.5. No vendor is reached all the
   same: every program the runner starts gets `--keys` naming an empty file
   it made, and every command on the body unsets each `EMET_` variable first.
+- **pip comes first.** Before the install line the runner upgrades its
+  venv's pip to `RUNNER_PIP` in `run.py`, `pip==26.2`: the venv's pip 25.1.1
+  had six advisories of its own, which pip-audit gives 26.2 as the fix for
+  (the audit on the body, 2026-11-26). The pin is part of the install's key,
+  so a new pin installs again, and the step's `details.pip` is the version
+  the venv then has. `nightly.sh` holds the same pin and hashes the same
+  key, so neither reinstalls after the other on one tree.
 - **Piper is GPL-3.0.** It is installed on the body through the `piper`
   extra, as an owner would install it, and imported from there; Emet never
   bundles it (`CITATIONS.md`). The budget's first chunk on the local path
@@ -45,6 +52,7 @@ python tools/body/run.py --release 0.5.5 --tree
 python tools/body/run.py --release 0.5.5 --commit 1a2b3c4
 python tools/body/run.py --release 0.5.5 --tree --window 2026-10-28T14:00 2026-10-28T15:00
 python tools/body/run.py --release 0.5.5 --collect-only --fetch '~/sitting-0.5.5.log'
+python tools/body/run.py --release 0.5.7 --collect-only --fetch '~/sitting-0.5.7.log' --fetch '~/sitting-0.5.7.events.jsonl' --sheet ../releases/v0.5.7/sitting-sheet.md
 python tools/body/run.py --release 0.5.6 --commit 1a2b3c4 --soak 60 --repeat 5
 python tools/body/run.py --release 0.5.6 --soak-collect
 python tools/body/run.py --release 0.5.6 --nightly-report
@@ -60,9 +68,14 @@ python tools/body/run.py --release 0.5.6 --budget-table
   branches and tags are fetched, and a commit none of them holds is
   refused: a pull request is anyone's code, and the body would run it as
   the maintainer's user, who can read the keys file.
-- `--fetch` copies a typescript from the body's home folder into the
-  output: `~/sitting-*.log` or `~/pi-*.log`, and nothing else, so a keys
-  file or an SSH key never reaches `releases/`.
+- `--fetch` copies a typescript or an events file from the body's home
+  folder into the output: `~/sitting-*` or `~/pi-*` ending `.log` or
+  `.events.jsonl`, and nothing else, so a keys file or an SSH key never
+  reaches `releases/`.
+- `--sheet PATH`, with `--collect-only`, reads the release sitting's filled
+  sheet and writes `sitting.json` (below, the release sitting). A sheet it
+  cannot read stops the run before the body is reached, naming the row and
+  the column.
 - `--steps` picks among `sync`, `install`, `audit`, `suites`, `checks`,
   `bank`, `budgets`, `speaker`, `live`, `netcut` and `soak`, the order they
   run in. Without it every step runs except `speaker`, `live`, `netcut` and
@@ -115,7 +128,12 @@ The steps, in `steps`, each `{"name", "status", "reason", "seconds",
 | `live-plain`, `live-talk`, `live-stats` | in place of `live`, when the run took that step |
 | `netcut` | with `--netcut SECONDS` |
 | `soak` | with `--soak MINUTES` |
-| `collect` | every run that was done |
+| `collect` | every run that was done; with `--sheet`, its `details.sitting` is `{"file", "events", "joined", "rated"}` |
+
+`speaker-talk` and `live-stats` also write an events file, and once it is
+home their `details.events` is `{"file", "turns", "gap_ms_median"}`, read
+with `tools/events_file.py`. The other steps' typescripts are read as text,
+as every release's before 0.5.7 are.
 
 A run that was not done still writes `run.json`, with `body` unread and its
 note saying so.
@@ -203,15 +221,21 @@ is EasyNavigation's roadmap item RD032, a configuration fingerprint
 |---|---|---|
 | `speaker-echo` | `emet-listen --replay ~/one-breath.wav --echo --stats` | 300 s |
 | `speaker-speak` | `emet-listen --replay ~/one-breath.wav --speak --stats` | 300 s |
-| `speaker-talk` | `emet-talk --replay ~/one-breath.wav --stats` | 300 s |
+| `speaker-talk` | `emet-talk --replay ~/one-breath.wav --stats --events <run>/speaker-talk.events.jsonl` | 300 s |
 | `live-plain` | `emet-listen`, stopped with SIGINT after 60 s of listening | 80 s |
 | `live-talk` | `emet-talk` with no flags, stopped with SIGINT after 60 s of listening | 80 s |
-| `live-stats` | `emet-listen --stats`, stopped with SIGINT after ten minutes | 620 s |
+| `live-stats` | `emet-listen --stats --events <run>/live-stats.events.jsonl`, stopped with SIGINT after ten minutes | 620 s |
 
 Each runs under `script -qae` into its own typescript, with the runner's
 manifest (the maintainer's `~/pi-speakerphone.yaml` with a mock for every
 model stage), the reference soul from the synced tree, `--keys` naming an
 empty file, and `--state` naming a fresh copy of the carried state.
+
+The two with `--events` fail when no events file was written. The file is
+numbers and verdicts, never a word, and comes home beside the typescript.
+An engine from before 0.5.7 has no `--events`; the runner asks the body's
+venv whether `emet_engine.events` is there, and without it the two run as
+they did before.
 
 The three live steps run with nobody speaking, and each bound is the 60 s
 or the ten minutes of listening and 20 s to boot.
@@ -251,12 +275,24 @@ golden, and `unreleased`, the ids of recordings named and held to nothing.
 
 `audit` runs pip-audit 2.10.1 (Apache-2.0, verified 2026-11-26 on PyPI) over
 the runner's venv after the install. pip-audit lives in a venv of its own,
-`~/emet-ci/audit-venv/`, made once and again when the pinned version
-changes, and reads the runner's packages with `--path`; installed in the
-runner's venv, its own dependencies would join the venv the suites run in
-and be audited as the robot's. The four Emet packages are editable installs,
-which `--skip-editable` leaves out; each is named in the step's
-`details.skipped`.
+`~/emet-ci/audit-venv/`, and reads the runner's packages with `--path`;
+installed in the runner's venv, its own dependencies would join the venv the
+suites run in and be audited as the robot's. The four Emet packages are
+editable installs, which `--skip-editable` leaves out; each is named in the
+step's `details.skipped`.
+
+- **It installs from the CI lock.** The laptop reads pip-audit's pin in
+  `tools/ci/requirements.txt`, and every pin the lock holds for it, each
+  with its hashes, and sends those lines, one requirement a line; the body
+  writes them to `audit-venv/requirements.txt` and installs them with
+  `pip install --require-hashes`. So pip-audit's version is the one CI's
+  weekly audit runs, Dependabot moves both, and a file PyPI serves that the
+  lock never hashed is refused. The venv is made again when those lines
+  change: `audit-venv/installed` holds their sha256, which the step's
+  `details.lock_sha256` records with `details.pin`. On 2026-11-27 that part
+  of the lock was 30 requirements, `pip-audit==2.10.1` among them, and a
+  dry run of it for the body (aarch64, Python 3.13) found a hashed wheel
+  for each.
 
 - **It never fails the run.** With findings or none the step passes and
   `audit.status` is `ran`; with no network, or a pip-audit that would not
@@ -274,6 +310,7 @@ which `--skip-editable` leaves out; each is named in the step's
 |---|---|
 | Boot to first frame | the time from starting `emet-listen --replay <the bank's ten minutes> --transcribe --stats` to its first frame |
 | First chunk at the null sink after the final, local path | the engine's `voice first` mean: one breath, the mock transcriber and language model, Piper speaking into the null sink |
+| Turn gap, median, local path | the median of each turn's gap on the same one breath, last loud frame to first sound (`TurnRecord.gap_ms`); DESIGN.md §13 gives it a budget of 2.0 s at the median. 0.5.7 records the first value |
 | Per-frame mean, Per-frame 99th percentile, Frames over 80 ms | the ten minutes, as fast as the loop goes |
 | Resident memory after boot | at the first frame |
 | Resident memory at the end | the soak's last sample; only a run with `--soak` has it |
@@ -283,9 +320,10 @@ which `--skip-editable` leaves out; each is named in the step's
 Each run is the engine's own `emet-listen`, as `cli.main` in a small driver
 (`BUDGET_PY` in `run.py`) that wraps two methods of `SessionStats`,
 `record_frame` and `report`, to read what the engine already measures: the
-footer prints no 99th percentile and no time of the first frame. Both
-wrapped methods call the engine's own; a wrapped method the engine stopped
-calling leaves its measure null. Every run has the null sink, `--keys`
+footer prints no 99th percentile and no time of the first frame. `report`
+also reads each turn's gap from `SessionStats.turn_records`. Both wrapped
+methods call the engine's own; a wrapped method the engine stopped calling,
+or an engine with no `turn_records`, leaves its measure null. Every run has the null sink, `--keys`
 naming an empty file and a fresh copy of the carried state.
 
 - **The last value** is read from the newest passing `run.json` of the
@@ -379,8 +417,9 @@ the run's last step on the body, after the speaker and the microphone, so a
 
 `nightly.sh` (P11) runs on the body each night from master: it fetches the
 public repository anonymously into the runner's bare clone, swaps master
-into `~/emet-ci/emet`, installs with the runner's line when a
-`pyproject.toml` changed, and runs the four suites, the checks and the
+into `~/emet-ci/emet`, installs as the runner does, pip upgraded to
+`RUNNER_PIP` first and then the runner's line, when a `pyproject.toml`, the
+line or the pin changed, and runs the four suites, the checks and the
 bank's replays with the runner's venv. It is replay-only and opens no audio
 device, gives way exactly as the runner's preflight does (a program that
 means the robot is in use, an open PCM, a held lock), takes the lock with a
@@ -485,3 +524,62 @@ window shows all eight rows:
 
 The bank's replays add nothing to it, and neither does a typescript of the
 maintainer's or one fetched with `--fetch`.
+
+`--events` is never one of the flags the table reads: a run with
+`--stats --events` counts as a run with `--stats`.
+
+## The release sitting
+
+`sitting.md` is the sheet the maintainer reads at the robot. Turns 1 and 2
+run with no flags; turns 3 to 10 run with `--stats --events
+~/sitting-X.Y.Z.events.jsonl`. Its Wait column is a rating from 1 to 5,
+with the anchors "1, I would stop talking to it; 3, acceptable; 5, as quick
+as a person", and its Tries column a number, 1 when it woke the first time.
+
+After the sitting the agent writes the maintainer's answers into a copy of
+the sheet and runs `--collect-only` with both files fetched and `--sheet`
+naming the copy. `sitting.json`, beside the log:
+
+```json
+{"format": "emet-sitting/1", "release": "0.5.7", "joined": "joined",
+ "turns": [{"turn": 3, "asked": true, "whole": true, "held": null, "voice": true, "wait": 4, "tries": 1,
+            "body": null, "notes": null, "record": {"kind": "turn", "turn": 1, "gap_ms": 2260, "...": "..."}}]}
+```
+
+- A box is true for `[x]`, false for `[ ]` and null when left empty, a box
+  that turn does not have; `wait` and `tries` are null when left empty.
+- `record` is the events file's `turn` record, for rows 3 to 10 in order,
+  and null for rows 1 and 2.
+- `joined` is `joined` only when the events file holds exactly eight turn
+  records. Otherwise it is `not joined: N turn records for 8 rows` (a false
+  wake adds one, and a run started again leaves fewer), or names the file
+  that was missing or could not be read, and every `record` is null. The
+  ratings are kept either way.
+- An events file the reader refuses fails the collect, naming the file.
+
+## The real-vendor replay
+
+The runner's steps run every stage on a mock with an empty keys file
+(`check_models`), so none of them can show real tokens or name a host that
+was sent anything. A release whose done-when asks for that on the body
+(0.5.7's: "one run on the body prints the turn gap, the tokens and what
+left the body under `--stats`") takes this replay once, at Stage 4, after a
+run that synced the release's head into `~/emet-ci/emet`. It is paid: 10
+OpenAI turns and about 0.41 minutes of Deepgram for `~/one-breath.wav`
+(0.5.7-D6), so it takes a row of the plan's paid runs and one ledger line.
+It opens no sound device: the microphone is the recording, and the soul's
+Piper voice says each reply into the null sink. The keys are the owner's,
+`~/.config/emet/keys.env`, and the maintainer's state file is copied and
+left as it was.
+
+```sh
+ssh emet-pi 'cd ~/emet-ci/emet && sed "s/^  output:\$/  output:\n    sink: \"null\"/" emet-sdk/examples/pi-speakerphone.yaml > ~/pi-done-when-body.yaml && ~/emet-ci/.venv/bin/emet validate ~/pi-done-when-body.yaml && cp ~/.local/state/emet/pi_speakerphone.json ~/pi-done-when-state.json && script -qa ~/pi-done-when-X.Y.Z.log -c "~/emet-ci/.venv/bin/emet-listen ~/pi-done-when-body.yaml emet-sdk/examples/emet-soul.yaml --replay ~/one-breath.wav --transcribe --reply --speak --stats --events ~/pi-done-when-X.Y.Z.events.jsonl --state ~/pi-done-when-state.json"'
+python tools/body/run.py --release X.Y.Z --collect-only --fetch '~/pi-done-when-X.Y.Z.log' --fetch '~/pi-done-when-X.Y.Z.events.jsonl'
+```
+
+The manifest is the branch's reference manifest with `sink: "null"` added
+under `audio.output`, its model settings as shipped. The typescript's footer
+and `python tools/events_file.py` on the fetched events file each show the
+turn gap, the tokens, and a `sent` line naming `api.deepgram.com` and
+`api.openai.com`; a run whose `sent` line reads "nothing left the body" ran
+on mocks and shows nothing the done-when asks for.

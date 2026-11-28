@@ -1,4 +1,4 @@
-"""The keys file: bring your own key, once, and keep it out of the shell."""
+"""The keys file lets a person bring their own key once and keep it out of the shell."""
 
 from __future__ import annotations
 
@@ -354,7 +354,7 @@ models:
 
 
 def _quiet_take() -> bytes:
-    """Three frames of silence at 16 kHz: a run that boots, hears nothing, ends."""
+    """Three frames of silence at 16 kHz, for a run that boots, hears nothing and ends."""
     import io
 
     out = io.BytesIO()

@@ -99,7 +99,7 @@ DATA = HERE / "generated"
 sys.path.insert(0, str(HERE))
 
 import check as bank_check  # noqa: E402  the standard library only
-import manifest as bank_files  # noqa: E402
+import manifest as bank_files  # noqa: E402  the bank's one reader and writer, beside this file
 
 __all__ = [
     "GenerateError", "load_inputs", "plan", "build", "verify_voices", "PiperTool", "fetch", "pack",
@@ -210,7 +210,7 @@ def resample_kernel(up: int, down: int) -> list[list[int]]:
 
 
 def _mix(z: int) -> int:
-    """SplitMix64's output function: 64 bits in, 64 well-stirred bits out."""
+    """SplitMix64's output function, which takes 64 bits in and gives 64 well-stirred bits out."""
     z &= _MASK
     z = ((z ^ (z >> 30)) * _MIX_1) & _MASK
     z = ((z ^ (z >> 27)) * _MIX_2) & _MASK
@@ -226,7 +226,7 @@ def derive_seed(seed: int, *names: Any) -> int:
 
 
 class _Plain:
-    """The arithmetic in plain Python: lists of whole numbers."""
+    """The arithmetic in plain Python, on lists of whole numbers."""
 
     name = "python"
 
@@ -413,7 +413,7 @@ def backend(plain: bool = False) -> Any:
 
 
 def resample(x: Any, source_rate: int, rate: int = RATE, *, be: Any = None) -> Any:
-    """`x` at `rate`: a windowed-sinc resampler in whole numbers."""
+    """`x` at `rate`, by a windowed-sinc resampler in whole numbers."""
     be = be or backend()
     if source_rate == rate:
         return x
@@ -643,7 +643,7 @@ def spoken(piece: str, end: str, say_as: dict[str, str]) -> str:
 
 
 def segments(group: dict[str, Any], phrase: dict[str, Any], say_as: dict[str, str]) -> list[dict[str, Any]]:
-    """What a take is made of, in order: pieces to say and pauses between."""
+    """What a take is made of in order, the pieces to say and the pauses between them."""
     pieces = [p for p in phrase["text"].split(" ... ") if p.strip()]
     asked = (phrase.get("question") or phrase["text"]).split()
     last = phrase.get("ends") or ("?" if asked and asked[0].lower() in QUESTION_WORDS else ".")

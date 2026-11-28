@@ -1,0 +1,7 @@
+$ emet-say body.yaml soul.yaml Hello.
+exit 1
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the voice 'mock' cannot start, so there is nothing to say the words with. It will not run. simulated: the voice model is missing

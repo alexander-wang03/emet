@@ -23,7 +23,7 @@ FB = 2 * FS
 
 
 def noise(seconds: float, seed: int = 1) -> bytes:
-    """Random samples: no two frames of a test recording alike."""
+    """Random samples, so no two frames of a test recording are alike."""
     rnd = random.Random(seed)
     n = int(seconds * RATE)
     return b"".join(rnd.randrange(-3000, 3000).to_bytes(2, "little", signed=True) for _ in range(n))
@@ -171,6 +171,38 @@ def test_the_header_must_say_wav_and_mock(run):
         replay.read_run(doc, pcm, console.replace("stt      mock", "stt      deepgram"), turns)
     with pytest.raises(replay.RunProblem, match="source is 'microphone'"):
         replay.read_run(doc, pcm, console.replace("source   wav", "source   microphone"), turns)
+
+
+@pytest.mark.parametrize("line, provider", [
+    ("  stt      mock (streaming)", "mock"),
+    ("  stt      mock (streaming), on this body, from emet-providers 0.5.7", "mock"),
+    ("  stt      mock, model nova-3 (streaming)", "mock"),
+    ("  stt      mock(batch)", "mock"),
+    ("  stt      deepgram (streaming), model nova-3, at api.deepgram.com, key EMET_DEEPGRAM_KEY, "
+     "from emet-providers 0.5.7", "deepgram"),
+    ("  stt      ", None),
+])
+def test_the_stt_line_names_its_provider_up_to_a_space_a_comma_or_a_bracket(line, provider):
+    """Contract 0.5.7 section 3.1: the line goes on after the mode with its
+    place and origin, and a comma straight after the name never joins it,
+    as `body_log_check.py` and `run.py` read the same lines."""
+    assert replay.read_console(line)["header"]["stt"] == provider
+    assert replay.provider_of(line) == provider
+
+
+def test_a_run_whose_boot_lines_name_their_place_and_origin_is_read(run):
+    doc, pcm, console, turns = run
+    console = console.replace("  stt      mock (streaming)",
+                              "  stt      mock (streaming), on this body, from emet-providers 0.5.7")
+    console = console.replace("  source   wav", "  source   wav, recording.wav")
+    assert replay.read_run(doc, pcm, console, turns)["footer"]["wakes"] == 2
+    with pytest.raises(replay.RunProblem, match="transcriber is 'deepgram', not mock"):
+        replay.read_run(doc, pcm, console.replace("stt      mock (", "stt      deepgram, model nova-3 ("), turns)
+
+
+def test_the_footers_stt_line_is_never_the_boot_line():
+    footer = "  stt final     mean 410 ms   max 520   (2 turn(s))"
+    assert replay.read_console(footer)["header"]["stt"] is None
 
 
 def test_a_wake_outside_every_slot_has_no_take(run):
@@ -362,7 +394,7 @@ def test_the_guards_refuse_the_network_and_portaudio_and_keep_loopback(tmp_path)
 
 
 def fake_child(tmp_path: Path, monkeypatch, result: dict) -> None:
-    """replay_one's child process, faked: it writes `result` and exits 0."""
+    """A fake of replay_one's child process, which writes `result` and exits 0."""
 
     def run(cmd, **kwargs):
         cfg = json.loads(Path(cmd[-1]).read_text(encoding="utf-8"))
@@ -457,7 +489,17 @@ def tiny_bank(tmp_path: Path) -> Path:
 def test_a_bank_and_the_other_kinds_golden_folder_are_refused_before_any_replay(tmp_path, monkeypatch, capsys):
     """A generated bank against bank v0's folder would print NO GOLDEN for
     every recording, and with --update write gen-*.json among bank v0's:
-    each pairing the wrong way round is refused, naming the right one."""
+    each pairing the wrong way round is refused, naming the right one.
+
+    The folder is named from the repository's root, so the expected words
+    are built from the folder the bank tools sit in: `tools/bank` in the
+    tree, and `mutants/bank` in mutmut's copy, where the tools' entries sit
+    at the copy's root (0.5.6 ledger L127, 0.5.7 L28)."""
+    bank = Path(replay.__file__).resolve().parent
+    shown = (bank / "golden" / "generated").relative_to(bank.parent.parent).as_posix()
+    assert shown.endswith("bank/golden/generated")
+    if bank.parent.name == "tools":
+        assert shown == "tools/bank/golden/generated"
     root = tiny_bank(tmp_path)
     ran: list = []
 
@@ -468,14 +510,14 @@ def test_a_bank_and_the_other_kinds_golden_folder_are_refused_before_any_replay(
     monkeypatch.setattr(replay, "replay_one", fake)
     index = json.loads((root / "bank.json").read_text(encoding="utf-8"))
     assert replay.main([str(root), "--golden", str(replay.GENERATED_GOLDEN)]) == 1
-    assert ("tools/bank/golden/generated holds the generated bank's goldens, and this bank is a recorded one"
+    assert (f"{shown} holds the generated bank's goldens, and this bank is a recorded one"
             in capsys.readouterr().err)
     index["speakers"] = {"g01": {"voice": "voices/g01.json"}}
     (root / "bank.json").write_text(json.dumps(index), encoding="utf-8")
     for update in ([], ["--update"]):
         assert replay.main([str(root), *update]) == 1
-        assert ("a generated bank's goldens are in tools/bank/golden/generated; give --golden "
-                "tools/bank/golden/generated" in capsys.readouterr().err)
+        assert (f"a generated bank's goldens are in {shown}; give --golden {shown}"
+                in capsys.readouterr().err)
     assert ran == [], "nothing was replayed"
     assert replay.main([str(root), "--golden", str(tmp_path / "scratch-golden")]) == 1
     assert len(ran) == 1, "a folder of the caller's own is taken as given"

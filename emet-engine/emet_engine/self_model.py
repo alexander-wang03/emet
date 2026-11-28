@@ -57,8 +57,10 @@ __all__ = ["BODY_TOPICS", "compile_self_model"]
 
 #: Explain topics that are facts about the body. Each has a fact of the same
 #: key exactly when it has an explanation, and the fact quotes it verbatim.
-#: The other topics (`offline`, `error`) are the robot's state, the soul's
-#: words for failure or the parts that are not working, and have no fact.
+#: The other topics (`offline`, `error`, `unavailable`) are the robot's
+#: state, the soul's words for failure, the parts that are not working, or
+#: the engine's line for a language model that cannot answer, and have no
+#: fact.
 BODY_TOPICS: tuple[str, ...] = ("cannot_move", "cannot_turn")
 
 # Capability types the schema accepts with no plugin category yet (`DESIGN.md`
@@ -128,7 +130,7 @@ _MOUNTS: Mapping[tuple[str, str], str] = {
 
 @dataclass(frozen=True, slots=True)
 class _Part:
-    """One declared part: what its plugin reported, and the block behind it."""
+    """One declared part, with what its plugin reported and the block behind it."""
 
     descriptor: CapabilityDescriptor
     block: Mapping[str, Any] = field(default_factory=dict)
@@ -164,7 +166,7 @@ def _number(n: int) -> str:
 
 
 def _article(said: str) -> str:
-    """The article before a number as it is said: an eight, an 11, an 18, an 80."""
+    """The article before a number as it is said, as in an eight, an 11, an 18 and an 80."""
     if said == "eight" or said.startswith("8"):
         return "an"
     if said.isdigit() and len(said) % 3 == 2 and said.startswith(("11", "18")):
@@ -271,9 +273,12 @@ def compile_self_model(
     part; None compiles the manifest alone, with every part assumed to work.
     `locomotion` is the started drive's report, or None when there is no
     drive, the drive failed, or nothing was started. `lines` are the soul's
-    persona lines (`declined`, `failed`, `nothing_heard`); None means the
-    engine's defaults. A field that is missing or unknown is skipped, never
-    raised on: a manifest with no `body` block still compiles.
+    persona lines (`declined`, `failed`, `nothing_heard`) and the engine's
+    own (`unavailable`, `out_of_credit`), as `persona_lines()` gives them;
+    None means the engine's defaults, and a mapping without `unavailable`
+    gets the engine's line for it. A field that is missing or unknown is
+    skipped, never raised on: a manifest with no `body` block still
+    compiles.
     """
     manifest = _mapping(manifest)
     lines = DEFAULT_LINES if lines is None else lines
@@ -344,6 +349,20 @@ def compile_self_model(
         fact("direction", "You cannot tell which direction a voice comes from.", False)
 
     fact("voice", "You speak through a speaker.")
+
+    # A body with no echo cancellation would hear its own voice, and the
+    # loop does not read the microphone while the robot speaks, so the
+    # person must wait for the end of a sentence to be heard. `aec` is read
+    # as `ListenSession._echo_ms()` reads it, absent meaning `none`. A body
+    # that declares `hardware` or `software` gets no sentence: the task's
+    # first stage names `aec: none` alone, though no body reads its
+    # microphone while it speaks yet. The words are decision N22's.
+    if str(heard.get("aec") or "none") == "none":
+        fact(
+            "hearing_while_speaking",
+            "You cannot hear anyone while you are speaking, so a person has to wait until you finish.",
+            False,
+        )
 
     if moving:
         fact("locomotion", _moving(wheels, locomotion, drive.block))
@@ -420,6 +439,10 @@ def _explanations(
         out["cannot_turn"] = f"I cannot turn toward you. {no_drive}, and {no_head}."
 
     out["offline"] = lines.get("failed")
+    # The engine's words for a chat model that cannot answer, what the voice
+    # rung of `signal.unavailable` says. `persona_lines()` keeps them
+    # whatever the soul writes.
+    out["unavailable"] = lines["unavailable"] if "unavailable" in lines else DEFAULT_LINES.get("unavailable")
     broken = _broken(parts, wheels)
     out["error"] = f"Part of me is not working: {_join(broken, serial=False)}." if broken else lines.get("failed")
 
@@ -495,7 +518,7 @@ def _eyes(screens: Sequence[_Part], faces: Sequence[_Part], lamps: Sequence[_Par
 
 
 def _lights(lights: Sequence[_Part]) -> tuple[str, bool]:
-    """One fact for every light that is not an eye: the first ambient one, else status."""
+    """One fact for every light that is not an eye, from the first ambient one or else from status."""
     working = [p for p in lights if p.healthy]
     if not working:
         return "Your lights are not working right now.", False

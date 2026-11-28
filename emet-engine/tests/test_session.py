@@ -352,7 +352,7 @@ def test_the_reported_version_matches_the_installed_distribution():
 
 
 def test_a_file_overflows_nothing(tmp_path):
-    """`overflows` is read defensively like `dropped`: a file has no card."""
+    """`overflows` is read defensively like `dropped`, since a file has no card."""
     session = ListenSession(body(write_wav(tmp_path / "o.wav", silence(1280))), soul())
 
     async def scenario():
@@ -2161,3 +2161,987 @@ def test_a_sentence_counts_as_sound_when_any_of_its_audio_played():
     assert session._playbacks == 1
     session._count_playback([SpokenSentence("Hi.", 3200)])
     assert session._playbacks == 2
+
+
+# ------------------------------------------------- how a turn ends (0.5.7)
+
+
+from emet_sdk.discovery import PluginRegistry  # noqa: E402
+from emet_sdk.types import Health, Transcript  # noqa: E402
+
+from emet_engine.prompting import DEFAULT_LINES  # noqa: E402
+from emet_engine.session import TurnEnd, read_health  # noqa: E402
+
+#: A chat model's detail as a plugin writes it (contract 0.5.7 section 3.3).
+UNKNOWN_MODEL = (
+    "OpenAI does not know the model 'gpt-4-0314' (HTTP 404). It is retired, misspelt, "
+    "or not open to this key. Choose another under models.chat.model."
+)
+OUT_OF_CREDIT = "OpenAI says the account is out of credit (HTTP 429, insufficient_quota). Retrying will not help."
+TWO_TURNS = spoken(b"hello", b"there") + spoken(b"once", b"again")
+
+
+def unavailable_talk(tmp_path, pcm: bytes, **kw) -> ListenSession:
+    """Every stage a mock, the chat model one its vendor does not know."""
+    manifest = body(write_wav(tmp_path / "u.wav", pcm))
+    manifest["models"] = {
+        "stt": {"provider": "mock"},
+        "chat": {"provider": "mock", "params": {
+            "fail_on_start": True, "fault": "model_unavailable", "fault_detail": UNKNOWN_MODEL}},
+        "tts": {"provider": "mock"},
+    }
+    return ListenSession(manifest, soul(), transcribe=True, reply=True, speak=True, **kw)
+
+
+def spy_on_the_transcriber(session: ListenSession) -> dict:
+    """Count what reaches the started transcriber."""
+    seen = {"bytes": 0, "finals": 0}
+    feed, finish = session._stt.feed, session._stt.finish
+
+    async def fed(frame):
+        seen["bytes"] += len(frame)
+        return await feed(frame)
+
+    async def finished():
+        seen["finals"] += 1
+        return await finish()
+
+    session._stt.feed, session._stt.finish = fed, finished
+    return seen
+
+
+def said(spoken_sentences) -> str:
+    return " ".join(s.text for s in spoken_sentences)
+
+
+def test_a_model_its_vendor_does_not_know_boots_and_each_wake_gets_one_line(tmp_path):
+    """E17 (c) with 0.5.7-D4: the robot boots, says why at each wake once the
+    person stops, and sends nothing to the transcriber or the model."""
+    performed = []
+    session = unavailable_talk(tmp_path, TWO_TURNS, on_performed=performed.append)
+
+    async def scenario():
+        async with session:
+            seen = spy_on_the_transcriber(session)
+            exchanges = [x async for x in session.talk()]
+            return exchanges, seen, list(session._llm.prompts)
+
+    exchanges, seen, prompts = run(scenario())
+    assert session.chat_unavailable == UNKNOWN_MODEL
+    assert session.notices == [
+        "the language model 'mock' cannot answer, so each wake gets one line and nothing is sent to the "
+        f"transcriber or the model. {UNKNOWN_MODEL}"
+    ]
+    assert len(exchanges) == 2
+    for exchange in exchanges:
+        assert exchange.outcome == "unavailable" and exchange.failure.case == "llm-unavailable-before"
+        assert exchange.reply is None and exchange.utterance.transcript is None
+        assert exchange.line == DEFAULT_LINES["unavailable"] == said(exchange.spoken)
+        record = exchange.record
+        assert record.outcome == "unavailable" and record.final_ms is None and record.reply_first_ms is None
+        assert record.stt_audio_s == 0 and record.llm_chars == 0
+        assert record.voice_chars == sum(len(s.text) for s in exchange.spoken) > 0
+        assert record.voice_first_ms is not None and record.gap_ms is not None, "the wait to the line is the gap"
+    assert seen == {"bytes": 0, "finals": 0}, "no transcription spent on a turn no model can answer"
+    assert prompts == [], "and nothing sent to the model"
+    assert [p.intent.name for p in performed].count("signal.unavailable") == 2
+    assert "signal.offline" not in [p.intent.name for p in performed]
+
+
+def test_on_a_body_with_a_status_light_the_unavailable_line_is_still_said(tmp_path):
+    """Finding A7 F1 of 0.5.7: a status light takes `signal.unavailable`, so
+    the chain's voice rung never runs, and the session says the line itself
+    after the light has shown it."""
+    performed = []
+    session = unavailable_talk(tmp_path, spoken(b"hello", b"there"), on_performed=performed.append)
+    session.manifest["capabilities"] = [{
+        "id": "ring", "type": "light", "role": "status", "form": "ring", "count": 16,
+        "driver": {"plugin": "emet_hal.mock", "params": {}},
+    }]
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    shown = [p for p in performed if p.intent.name == "signal.unavailable"]
+    assert len(shown) == 1 and shown[0].outcome == "done" and not shown[0].binding.is_voice
+    assert shown[0].binding.capability_id == "ring" and shown[0].said is None
+    assert exchange.line == DEFAULT_LINES["unavailable"] == said(exchange.spoken)
+
+
+def test_the_wake_is_answered_at_its_endpoint_after_the_person_stops(tmp_path):
+    """Contract 0.5.7 section 9, C5 (a): at the end of the turn, never over
+    the question."""
+    session = unavailable_talk(tmp_path, spoken(b"hello", b"there"))
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.utterance.had_speech and exchange.utterance.tail_ms == 960.0
+    assert exchange.record.tail_ms == 960.0
+
+
+def test_a_reply_that_finds_the_model_unavailable_sends_nothing_after_it(tmp_path):
+    performed = []
+    session = talking(tmp_path, "m.wav", TWO_TURNS, on_performed=performed.append)
+    calls = []
+
+    async def scenario():
+        async with session:
+            async def retired(prompt):
+                calls.append(prompt)
+                session._llm.health = lambda: Health(ok=False, detail=UNKNOWN_MODEL, faults=("model_unavailable",))
+                yield ReplyDone(text="", stop_reason="error", error=UNKNOWN_MODEL, model="mock")
+
+            session._llm.reply = retired
+            return [x async for x in session.talk()]
+
+    first, second = run(scenario())
+    assert first.outcome == "unavailable" and first.failure.case == "llm-unavailable-on-reply"
+    assert first.line == DEFAULT_LINES["unavailable"]
+    assert first.record.stt_audio_s > 0 and first.record.llm_chars > 0
+    assert session.chat_unavailable == UNKNOWN_MODEL
+    assert second.failure.case == "llm-unavailable-before" and second.reply is None
+    assert second.utterance.transcript is None and second.record.stt_audio_s == 0
+    assert len(calls) == 1
+    assert [p.intent.name for p in performed].count("signal.unavailable") == 2
+
+
+def failing_reply(session: ListenSession, faults: tuple[str, ...], detail: str = "boom"):
+    """Every reply fails, and the model's report names `faults`."""
+
+    async def reply(prompt):
+        yield ReplyDone(text="", stop_reason="error", error=detail, model="mock")
+
+    session._llm.reply = reply
+    session._llm.health = lambda: Health(ok=not faults, detail=detail if faults else None, faults=faults)
+
+
+def test_an_unpaid_account_gets_its_own_line_and_no_offline_signal(tmp_path):
+    """OC3: "ask me again" asks for a retry that cannot help, and the network
+    is up, so `signal.offline` would say the wrong thing."""
+    performed = []
+    session = talking(tmp_path, "c.wav", TWO_TURNS, on_performed=performed.append)
+
+    async def scenario():
+        async with session:
+            failing_reply(session, ("out_of_credit",), OUT_OF_CREDIT)
+            return [x async for x in session.talk()]
+
+    first, second = run(scenario())
+    for exchange in (first, second):
+        assert exchange.outcome == "out_of_credit" and exchange.failure.case == "llm-out-of-credit"
+        assert exchange.line == DEFAULT_LINES["out_of_credit"] == said(exchange.spoken)
+    assert second.record.llm_chars > 0, "credit can come back, so the next turn is still asked"
+    assert session.chat_unavailable is None
+    assert "signal.offline" not in [p.intent.name for p in performed]
+
+
+def test_a_plain_failure_is_still_offline_with_the_souls_line(tmp_path):
+    performed = []
+    soul_doc = soul()
+    soul_doc["persona"] = {"lines": {"failed": "Lost it."}}
+    session = talking(tmp_path, "f.wav", spoken(b"hello", b"there"), soul_doc=soul_doc, on_performed=performed.append)
+
+    async def scenario():
+        async with session:
+            failing_reply(session, ())
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.outcome == "failed" and exchange.failure.case == "llm-failed"
+    assert exchange.line == "Lost it."
+    assert "signal.offline" in [p.intent.name for p in performed]
+
+
+def test_a_report_that_raises_after_a_failed_reply_is_a_plain_failure(tmp_path):
+    session = talking(tmp_path, "h.wav", spoken(b"hello", b"there"))
+
+    async def scenario():
+        async with session:
+            failing_reply(session, ())
+
+            def broken():
+                raise ValueError("unknown fault kind 'overcurrent'")
+
+            session._llm.health = broken
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.outcome == "failed" and exchange.failure.case == "llm-failed"
+
+
+def test_a_model_whose_report_names_both_kinds_is_unavailable(tmp_path):
+    """Contract 0.5.7 section 3.2: `model_unavailable` before `out_of_credit`,
+    since a retired model stays retired once the account is paid."""
+    session = talking(tmp_path, "b.wav", spoken(b"hello", b"there"))
+
+    async def scenario():
+        async with session:
+            failing_reply(session, ("out_of_credit", "model_unavailable"), UNKNOWN_MODEL)
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.outcome == "unavailable" and exchange.failure.case == "llm-unavailable-on-reply"
+    assert session.chat_unavailable == UNKNOWN_MODEL
+
+
+@pytest.mark.parametrize(
+    "spent, outcome, case, line",
+    [(300, "empty_at_cap", "llm-empty-at-cap", "failed"), (299, "cut_at_cap", "llm-cut-at-cap", None)],
+)
+def test_a_reply_stopped_at_its_cap(tmp_path, spent, outcome, case, line):
+    """DL1: all of the cap spent thinking leaves no words, and the person is
+    told something; a reply cut part way keeps its words and says nothing more."""
+    performed = []
+    manifest = body(write_wav(tmp_path / "cap.wav", spoken(b"hello", b"there")))
+    manifest["models"] = {"chat": {"provider": "mock", "params": {"reasoning_tokens": spent}}}
+    session = talking(tmp_path, "cap.wav", b"", manifest=manifest, on_performed=performed.append)
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert session.reply_cap == 300
+    assert exchange.reply.stop_reason == "length"
+    assert exchange.outcome == outcome and exchange.failure.case == case
+    assert exchange.line == (DEFAULT_LINES[line] if line else None)
+    assert "signal.offline" not in [p.intent.name for p in performed]
+
+
+@pytest.mark.parametrize("written", ["[express.curiosity]", "**", "\N{SLIGHTLY SMILING FACE}"])
+def test_a_reply_at_its_cap_with_no_word_to_hear_is_empty(tmp_path, written):
+    """Review finding engine-core/code#6 of 0.5.7: a reply that wrote only a
+    tag, or only marks the cleaning empties, before its cap has no words, so
+    the person is told why in place of hearing a filler or nothing."""
+    session = talking(tmp_path, "e.wav", spoken(b"hello", b"there"))
+
+    async def scenario():
+        async with session:
+            async def capped(prompt):
+                yield TextDelta(written)
+                yield ReplyDone(text=written, stop_reason="length", model="mock")
+
+            session._llm.reply = capped
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.outcome == "empty_at_cap" and exchange.failure.case == "llm-empty-at-cap"
+    assert exchange.line == DEFAULT_LINES["failed"]
+
+
+@pytest.mark.parametrize(
+    "faults, outcome, case, offline",
+    [
+        ((), "words_lost", "stt-words-lost", True),
+        (("out_of_credit",), "out_of_credit", "stt-out-of-credit", False),
+        (("model_unavailable",), "words_lost", "stt-model-rejected", False),
+        # Contract 0.5.7 section 3.2: `model_unavailable` is read first,
+        # wherever the report lists it.
+        (("out_of_credit", "model_unavailable"), "words_lost", "stt-model-rejected", False),
+    ],
+)
+def test_words_that_never_arrived_take_their_row_from_the_transcribers_report(tmp_path, faults, outcome, case, offline):
+    performed = []
+    session = talking(tmp_path, "w.wav", spoken(b"hello", b"there"), on_performed=performed.append)
+
+    async def scenario():
+        async with session:
+            async def lost():
+                return Transcript(text="", final=True, error="the words went nowhere")
+
+            session._stt.finish = lost
+            session._stt.health = lambda: Health(ok=not faults, detail="x" if faults else None, faults=faults)
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.outcome == outcome and exchange.failure.case == case
+    assert exchange.line == DEFAULT_LINES["failed"], "the hearing's own words wait on the maintainer (C6)"
+    assert ("signal.offline" in [p.intent.name for p in performed]) is offline
+
+
+def test_without_a_voice_a_turn_still_ends_and_says_nothing(tmp_path):
+    """`emet-listen --reply`: the outcome and the row, the signal's other
+    rungs, and no line."""
+    performed = []
+    session = answering(tmp_path, "q.wav", TWO_TURNS, on_performed=performed.append)
+
+    async def scenario():
+        async with session:
+            ends = []
+            async for _, utterance in session.turns():
+                if not ends:
+                    failing_reply(session, ())
+                done = [e async for e in session.answer_acted(utterance.transcript.text)][-1]
+                ends.append(await session.finish_turn(utterance, done))
+            return ends
+
+    first, second = run(scenario())
+    assert first == TurnEnd(outcome="failed", failure=first.failure, line=None, spoken=())
+    assert first.failure.case == "llm-failed"
+    assert "signal.offline" in [p.intent.name for p in performed]
+    assert session.stats.turn_records[0].outcome == "failed"
+
+
+def test_a_turn_with_no_row_is_named_and_left_as_it_was(tmp_path):
+    """No words after speech, no speech at all, and words with no reply
+    asked: three outcomes, no failure line, no spoken line."""
+    pcm = frame() + frame(PHRASE.encode()) + loud_frame() * 4 + frame() * 20 + false_wake_pcm() + spoken(b"what")
+    session = transcribing(tmp_path, "n.wav", pcm)
+
+    async def scenario():
+        async with session:
+            return [await session.finish_turn(u, None) async for _, u in session.turns()]
+
+    ends = run(scenario())
+    assert [e.outcome for e in ends] == ["nothing_heard", "no_speech", "not_answered"]
+    assert all(e.failure is None and e.line is None for e in ends)
+    assert [r.outcome for r in session.stats.turn_records] == ["nothing_heard", "no_speech", "not_answered"]
+
+
+def test_a_model_that_cannot_answer_is_sent_nothing_even_when_asked(tmp_path):
+    session = answering(tmp_path, "g.wav", frame())
+
+    async def scenario():
+        async with session:
+            session.chat_unavailable = UNKNOWN_MODEL
+            return await drain(session.answer("hello"))
+
+    (done,) = run(scenario())
+    assert done.stop_reason == "error" and done.error == UNKNOWN_MODEL
+    assert session.conversation.messages == []
+
+
+# ------------------------------------------------------------ read_health
+
+
+def test_read_health_passes_a_report_through():
+    class Plugin:
+        def health(self):
+            return Health(ok=False, detail="no key", faults=("no_key",))
+
+    assert read_health(Plugin()) == Health(ok=False, detail="no key", faults=("no_key",))
+
+
+def test_read_health_turns_a_report_that_raises_into_a_refusal():
+    class Plugin:
+        def health(self):
+            return Health(ok=False, faults=("overcurrent",))
+
+    health = read_health(Plugin())
+    assert not health.ok and health.faults == ("health",)
+    assert health.detail.startswith("ValueError: unknown fault kind 'overcurrent'.")
+
+
+def test_a_language_model_whose_report_raises_at_boot_is_refused_in_one_line(tmp_path, monkeypatch):
+    """An outside plugin that named its own kind without `x_`: the boot's
+    refusal, with the `ValueError`'s words, and no traceback."""
+    cls = PluginRegistry.discover().load_llm("mock")
+    monkeypatch.setattr(cls, "health", lambda self: Health(ok=False, faults=("overcurrent",)))
+    manifest = body(write_wav(tmp_path / "r.wav", frame()))
+    manifest["models"] = {"chat": {"provider": "mock", "params": {"fail_on_start": True}}}
+    session = answering(tmp_path, "r.wav", frame(), manifest=manifest)
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError) as raised:
+        run(scenario())
+    assert str(raised.value).startswith(
+        "the language model 'mock' cannot start, so the robot would hear questions it can never answer. "
+        "It will not run. ValueError: unknown fault kind 'overcurrent'."
+    )
+
+
+@pytest.mark.parametrize(
+    "stage, refusal",
+    [
+        ("wake", "the wake engine 'mock' cannot hear 'hey emet', so this robot would never answer to its own name."),
+        ("stt", "the speech recognition provider 'mock' cannot start, so what people say would go nowhere."),
+        ("tts", "the voice 'mock' cannot start, so the robot would answer and never be heard."),
+    ],
+)
+def test_a_report_that_raises_at_boot_is_refused_in_one_line_at_every_stage(tmp_path, monkeypatch, stage, refusal):
+    """Contract 0.5.7 section 3.2 (C9): every boot report is read through
+    `read_health`, the wake engine's, the transcriber's and the voice's as
+    well as the language model's (review finding engine-core/tests#3)."""
+    registry = PluginRegistry.discover()
+    cls = {"wake": registry.load_wake, "stt": registry.load_stt, "tts": registry.load_tts}[stage]("mock")
+    monkeypatch.setattr(cls, "health", lambda self: Health(ok=False, faults=("overcurrent",)))
+    pcm = frame()
+    if stage == "wake":
+        manifest = body(write_wav(tmp_path / "r.wav", pcm), fail_on_start=True)
+    else:
+        manifest = body(write_wav(tmp_path / "r.wav", pcm))
+        manifest["models"] = {stage: {"provider": "mock", "params": {"fail_on_start": True}}}
+    session = ListenSession(manifest, soul(), transcribe=stage == "stt", speak=stage == "tts")
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError) as raised:
+        run(scenario())
+    assert str(raised.value).startswith(refusal)
+    assert "ValueError: unknown fault kind 'overcurrent'." in str(raised.value)
+
+
+@pytest.mark.parametrize("load", ["load_stt", "load_llm", "load_tts"])
+def test_a_healthy_providers_notice_is_kept_for_the_boot_to_print(tmp_path, monkeypatch, load):
+    """Contract 0.5.7 section 3.1 (a): every provider's, the transcriber's and
+    the voice's as well as the language model's (review finding
+    engine-core/tests#8)."""
+    notice = "the language model 'mock-1' retires on 2027-07-24 at Anthropic. Choose another under models.chat.model before then."
+    cls = getattr(PluginRegistry.discover(), load)("mock")
+    monkeypatch.setattr(cls, "health", lambda self: Health(ok=True, detail=notice))
+    session = talking(tmp_path, "o.wav", frame())
+
+    async def scenario():
+        async with session:
+            return list(session.notices), session.chat_unavailable
+
+    assert run(scenario()) == ([notice], None)
+
+
+# --------------------------------------------------------- the turn record
+
+
+def test_a_turn_fills_its_record_where_each_figure_is_made(tmp_path):
+    """TT8 and OC1: one record a turn, appended at the endpoint and filled in
+    place; the exchange carries it."""
+    session = talking(tmp_path, "rec.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            seen = spy_on_the_transcriber(session)
+            exchanges = [x async for x in session.talk()]
+            return exchanges, seen, list(session._llm.prompts)
+
+    (exchange,), seen, (prompt,) = run(scenario())
+    record = exchange.record
+    assert record is session.last_turn is session.stats.turn_records[0]
+    assert record.turn == 1 and record.outcome == "answered" == exchange.outcome and exchange.failure is None
+    assert record.tail_ms == exchange.utterance.tail_ms == 960.0
+    assert record.final_ms is not None and record.reply_first_ms is not None and record.voice_first_ms is not None
+    assert record.input_tokens == exchange.reply.input_tokens and record.output_tokens == exchange.reply.output_tokens
+    assert record.stt_audio_s == seen["bytes"] / (2 * 16000) > 0
+    assert record.llm_chars == len(prompt.system) + sum(len(m.content) for m in prompt.messages)
+    assert record.voice_chars == len("You said: what time")
+    assert (record.sentences, record.cleaned) == (1, 0)
+    assert (record.stt_host, record.llm_host, record.voice_host) == (None, None, None), "every mock runs on this body"
+
+
+def test_the_transcribers_seconds_include_the_audio_handed_over_with_the_name(tmp_path):
+    said_with_it = b"what".ljust(FRAME_BYTES, b" ")
+    pcm = frame() + frame(PHRASE.encode()) + said_with_it + frame(b"time") + frame() * 20
+    manifest = body(write_wav(tmp_path / "w.wav", pcm), lag_frames=1)
+    session = transcribing(tmp_path, "w.wav", pcm, manifest=manifest)
+
+    async def scenario():
+        async with session:
+            seen = spy_on_the_transcriber(session)
+            turns = [u async for _, u in session.turns()]
+            return turns, seen
+
+    (utterance,), seen = run(scenario())
+    assert utterance.transcript.text == "what time"
+    record = session.last_turn
+    assert record.stt_audio_s == seen["bytes"] / 32000
+    turn_frames = len(utterance.audio) // FRAME_BYTES
+    assert seen["bytes"] > turn_frames * FRAME_BYTES, "the handover is counted with the turn's own frames"
+
+
+def test_a_host_off_the_body_is_named_on_the_record(tmp_path):
+    manifest = body(write_wav(tmp_path / "e.wav", spoken(b"hi", b"there")))
+    manifest["models"] = {"chat": {"provider": "mock", "params": {"endpoint": "https://api.example.com/v1"}}}
+    session = talking(tmp_path, "e.wav", b"", manifest=manifest)
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert exchange.record.llm_host == "api.example.com"
+
+
+def test_every_stage_off_the_body_is_named_on_the_record_and_its_line(tmp_path):
+    """Review finding engine-core/tests#1 of 0.5.7: the transcriber's and the
+    voice's hosts, which the sent part of the line is built from."""
+    manifest = body(write_wav(tmp_path / "h.wav", spoken(b"hi", b"there")))
+    manifest["models"] = {
+        "stt": {"provider": "mock", "params": {"endpoint": "wss://stt.example.com/v1/listen"}},
+        "chat": {"provider": "mock", "params": {"endpoint": "https://llm.example.com/v1"}},
+        "tts": {"provider": "mock", "params": {"endpoint": "https://tts.example.com/v1/speak"}},
+    }
+    session = talking(tmp_path, "h.wav", b"", manifest=manifest)
+
+    async def scenario():
+        async with session:
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    record = exchange.record
+    assert (record.stt_host, record.llm_host, record.voice_host) == (
+        "stt.example.com", "llm.example.com", "tts.example.com"
+    )
+    assert record.stt_audio_s > 0 and record.llm_chars > 0 and record.voice_chars > 0
+    assert record.line().split("; sent ")[1] == (
+        f"{record.stt_audio_s:.1f} s of audio to stt.example.com, "
+        f"{record.llm_chars} characters to llm.example.com, {record.voice_chars} characters to tts.example.com"
+    )
+
+
+def slow_final(session: ListenSession, seconds: float, transcript: Transcript | None = None) -> None:
+    """The started transcriber's final takes `seconds`, and is `transcript`
+    when one is given."""
+    finish = session._stt.finish
+
+    async def slow():
+        final = await finish()
+        await asyncio.sleep(seconds)
+        return transcript or final
+
+    session._stt.finish = slow
+
+
+def test_a_line_after_a_slow_final_is_timed_from_the_final(tmp_path):
+    """Contract 0.5.7 section 2.1: the first sound is counted from the final
+    transcript, so a slow final is not counted twice in the gap (review
+    finding engine-core/tests#2)."""
+    session = talking(tmp_path, "s.wav", spoken(b"hello", b"there"))
+
+    async def scenario():
+        async with session:
+            slow_final(session, 0.2, Transcript(text="", final=True, error="the words went nowhere"))
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    record = exchange.record
+    assert exchange.failure.case == "stt-words-lost" and exchange.line
+    assert record.final_ms >= 190 and record.reply_first_ms is None
+    assert record.voice_first_ms < record.final_ms - 100, (record.final_ms, record.voice_first_ms)
+
+
+def test_a_reply_is_timed_from_the_final_and_its_first_sound_from_the_final_too(tmp_path):
+    session = talking(tmp_path, "r.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            slow_final(session, 0.2)
+
+            async def slow_reply(prompt):
+                await asyncio.sleep(0.1)
+                yield TextDelta("It is noon.")
+                yield ReplyDone(text="It is noon.", model="mock")
+
+            session._llm.reply = slow_reply
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    record = exchange.record
+    assert record.final_ms >= 190
+    assert 90 <= record.reply_first_ms < record.final_ms
+    assert record.reply_first_ms <= record.voice_first_ms < record.final_ms
+
+
+def test_a_filler_is_counted_with_what_the_voice_was_handed(tmp_path):
+    """Contract 0.5.7 section 2.1: lines and fillers included (review finding
+    engine-core/tests#4). On the bodiless test body a tag is a filler."""
+    session = talking(tmp_path, "f.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            async def tagged(prompt):
+                yield TextDelta("[express.curiosity] Hello there.")
+                yield ReplyDone(text="[express.curiosity] Hello there.", model="mock")
+
+            session._llm.reply = tagged
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert [s.from_reply for s in exchange.spoken] == [False, True]
+    assert exchange.record.voice_chars == sum(len(s.text) for s in exchange.spoken) > len("Hello there.")
+    assert (exchange.record.sentences, exchange.record.cleaned) == (1, 0)
+
+
+def test_a_sentence_the_cleaning_changed_is_counted_on_the_record(tmp_path):
+    session = talking(tmp_path, "m.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            async def marked(prompt):
+                yield TextDelta("It is **noon**. Fine.")
+                yield ReplyDone(text="It is **noon**. Fine.", model="mock")
+
+            session._llm.reply = marked
+            return [x async for x in session.talk()]
+
+    (exchange,) = run(scenario())
+    assert (exchange.record.sentences, exchange.record.cleaned) == (2, 1)
+    assert exchange.record.voice_chars == len("It is noon.") + len("Fine.")
+
+
+def test_a_turn_is_closed_once_it_is_finished(tmp_path):
+    """`finish_turn`'s docstring: the turn is over when it returns, so speech
+    after it, a goodbye or a shutdown's signal, joins no printed record
+    (review finding engine-core/tests#11)."""
+    session = talking(tmp_path, "c.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            async for exchange in session.talk():
+                before = exchange.record.voice_chars
+                await session.speak_text("Goodbye for now.")
+                return exchange.record, before
+
+    record, before = run(scenario())
+    assert record.voice_chars == before > 0
+
+
+def test_the_tokens_of_every_reply_in_a_turn_are_summed(tmp_path):
+    """And the characters of every prompt; the first reply's first word is
+    the turn's (review finding engine-core/tests#5)."""
+    session = answering(tmp_path, "k.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            async for _, utterance in session.turns():
+                first = (await drain(session.answer(utterance.transcript.text)))[-1]
+                second = (await drain(session.answer("and again")))[-1]
+                return first, second, list(session._llm.prompts)
+
+    first, second, prompts = run(scenario())
+    record = session.last_turn
+    assert record.input_tokens == first.input_tokens + second.input_tokens
+    assert record.output_tokens == first.output_tokens + second.output_tokens
+    assert len(prompts) == 2
+    assert record.llm_chars == sum(len(p.system) + sum(len(m.content) for m in p.messages) for p in prompts)
+    assert len(session.stats.reply_first_ms) == 2 and record.reply_first_ms == session.stats.reply_first_ms[0]
+
+
+def test_a_turn_no_reply_counted_keeps_no_token_count(tmp_path):
+    session = answering(tmp_path, "z.wav", spoken(b"what", b"time"))
+
+    async def scenario():
+        async with session:
+            async def uncounted(prompt):
+                yield TextDelta("Hi.")
+                yield ReplyDone(text="Hi.", model="mock")
+
+            session._llm.reply = uncounted
+            async for _, utterance in session.turns():
+                await drain(session.answer(utterance.transcript.text))
+
+    run(scenario())
+    assert (session.last_turn.input_tokens, session.last_turn.output_tokens) == (None, None)
+
+
+# ---------------------------------------------------------- the live hook
+
+
+def test_the_frame_hook_fires_once_a_frame_with_the_turn_so_far(tmp_path):
+    calls = []
+    pcm = frame() + frame(PHRASE.encode()) + loud_frame() * 4 + frame() * 20
+    session = ListenSession(
+        body(write_wav(tmp_path / "live.wav", pcm)), soul(), on_frame=lambda *a: calls.append(a)
+    )
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    (utterance,) = run(scenario())
+    assert len(calls) == session.stats.frames
+    silence, phrase = calls[:2]
+    assert silence == (-99.9, None, None), "digital silence, outside a turn, at the floor"
+    assert -99.9 < phrase[0] < 0 and phrase[1:] == (None, None), "the wake's own frame is still outside the turn"
+    inside, after = calls[2:18], calls[18:]
+    assert len(inside) == 4 + 12, "four loud frames, then twelve quiet ones to the endpoint at 900 ms"
+    assert inside[0][0] == pytest.approx(20 * __import__("math").log10(4000 / 32768))
+    assert all(isinstance(speech, float) and isinstance(quiet, float) for _, speech, quiet in inside)
+    assert inside[3][1:] == (4 * 80.0, 0.0) and inside[-2][1:] == (4 * 80.0 + 11 * 80.0, 11 * 80.0)
+    assert inside[-1][1:] == (utterance.duration_ms, utterance.tail_ms), "the last frame shows the turn as it ended"
+    assert after and all(c[1:] == (None, None) for c in after), "waiting for the name again"
+
+
+def test_the_frame_hook_runs_outside_the_per_frame_timing(tmp_path, monkeypatch):
+    """Its cost never reaches `per frame` or the budget rows."""
+    import emet_engine.session as session_module
+
+    open_watches = [0]
+
+    class Watch(session_module.Stopwatch):
+        def __enter__(self):
+            open_watches[0] += 1
+            return super().__enter__()
+
+        def __exit__(self, *exc):
+            open_watches[0] -= 1
+            return super().__exit__(*exc)
+
+    monkeypatch.setattr(session_module, "Stopwatch", Watch)
+    inside = []
+    pcm = spoken(b"what", b"time")
+    session = transcribing(tmp_path, "t.wav", pcm, on_frame=lambda *a: inside.append(open_watches[0]))
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()]
+
+    run(scenario())
+    assert inside and set(inside) == {0}
+
+
+def test_without_the_hook_no_level_is_worked_out(tmp_path, monkeypatch):
+    import emet_engine.session as session_module
+
+    measured = []
+    real = session_module._frame_level
+    monkeypatch.setattr(session_module, "_frame_level", lambda f: measured.append(1) or real(f))
+    pcm = frame() + frame(PHRASE.encode()) + loud_frame() * 4 + frame() * 20
+    session = ListenSession(body(write_wav(tmp_path / "q.wav", pcm)), soul())
+
+    async def scenario():
+        async with session:
+            return [u async for _, u in session.turns()], [e async for e in session.wakes()]
+
+    run(scenario())
+    assert measured == []
+
+
+def test_the_frame_hook_fires_in_wakes_too_outside_the_per_frame_timing(tmp_path, monkeypatch):
+    """The class's docstring: once for every frame the loop reads, `wakes()`
+    as well as `turns()` (review finding engine-core/tests#10)."""
+    import emet_engine.session as session_module
+
+    open_watches = [0]
+
+    class Watch(session_module.Stopwatch):
+        def __enter__(self):
+            open_watches[0] += 1
+            return super().__enter__()
+
+        def __exit__(self, *exc):
+            open_watches[0] -= 1
+            return super().__exit__(*exc)
+
+    monkeypatch.setattr(session_module, "Stopwatch", Watch)
+    calls = []
+    session = ListenSession(
+        body(write_wav(tmp_path / "w.wav", saying(2))), soul(),
+        on_frame=lambda *a: calls.append((open_watches[0], *a)),
+    )
+
+    async def scenario():
+        async with session:
+            return [e async for e in session.wakes()]
+
+    events = run(scenario())
+    assert len(events) == 2 and len(calls) == session.stats.frames > 0
+    assert all(c[0] == 0 and c[2:] == (None, None) for c in calls)
+
+
+def test_a_wake_with_no_transcriber_names_no_words(tmp_path):
+    """Contract 0.5.7 section 2.1: `nothing_heard` is an empty final, and with
+    no transcriber there is none, so speech after the wake is `not_answered`
+    (review finding engine-core/claims-scope#11)."""
+    pcm = frame() + frame(PHRASE.encode()) + loud_frame() * 4 + frame() * 20 + false_wake_pcm()
+    session = ListenSession(body(write_wav(tmp_path / "x.wav", pcm)), soul())
+
+    async def scenario():
+        async with session:
+            return [await session.finish_turn(u, None) async for _, u in session.turns()]
+
+    ends = run(scenario())
+    assert [e.outcome for e in ends] == ["not_answered", "no_speech"]
+    assert all(e.failure is None and e.line is None for e in ends)
+
+
+# -------------------------------------------------- the audio plugins' start
+
+
+def test_a_source_that_cannot_start_is_refused_in_one_line(tmp_path):
+    """A missing replay file printed a traceback of about 40 lines (L11)."""
+    missing = str(tmp_path / "nothere.wav")
+    session = ListenSession(body(missing), soul())
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError) as raised:
+        run(scenario())
+    assert str(raised.value).startswith(
+        "the audio source 'wav' cannot start, so the robot would listen to nothing. It will not run. "
+        f"could not open {missing!r}"
+    )
+    assert isinstance(raised.value.__cause__, PluginError)
+
+
+def test_a_sink_that_cannot_start_is_refused_in_one_line(tmp_path):
+    out = str(tmp_path / "no" / "such" / "folder" / "out.wav")
+    session = ListenSession(wav_body(write_wav(tmp_path / "s.wav", frame()), out), soul())
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError) as raised:
+        run(scenario())
+    assert str(raised.value).startswith(
+        "the audio sink 'wav' cannot start, so nothing the robot says could be heard. It will not run. "
+    )
+    assert repr(out) in str(raised.value)
+
+
+def test_a_plugin_error_with_no_words_is_named_by_its_type(tmp_path, monkeypatch):
+    cls = PluginRegistry.discover().load_audio("wav")
+
+    async def silent(self):
+        raise PluginError()
+
+    monkeypatch.setattr(cls, "start", silent)
+    session = ListenSession(body(write_wav(tmp_path / "p.wav", frame())), soul())
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError, match=r"It will not run\. PluginError$"):
+        run(scenario())
+
+
+@pytest.mark.parametrize("load, name", [("load_audio", "wav"), ("load_audio_out", "null")])
+def test_an_audio_plugins_own_bug_keeps_its_traceback(tmp_path, monkeypatch, load, name):
+    """Only a `PluginError` is the plugin saying the hardware will not start;
+    anything else is a bug, and a one-line refusal would hide where it is.
+    The sink's as well as the source's (review finding engine-core/tests#9)."""
+    cls = getattr(PluginRegistry.discover(), load)(name)
+
+    async def buggy(self):
+        raise KeyError("frame_samples")
+
+    monkeypatch.setattr(cls, "start", buggy)
+    session = ListenSession(body(write_wav(tmp_path / "b.wav", frame())), soul())
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(KeyError):
+        run(scenario())
+
+
+@pytest.mark.parametrize(
+    "load, name, refusal",
+    [
+        ("load_audio", "wav", "the audio source 'wav' cannot start, so the robot would listen to nothing. It will not run. "),
+        ("load_audio_out", "null", "the audio sink 'null' cannot start, so nothing the robot says could be heard. It will not run. "),
+    ],
+)
+def test_an_audio_plugin_that_refuses_its_block_as_it_is_built_is_refused_in_one_line(
+    tmp_path, monkeypatch, load, name, refusal
+):
+    """Review finding engine-core/code#2 of 0.5.7: the speaker refuses a
+    `gain_db` that is not a finite number as it is built, and the refusal
+    printed a traceback of 38 lines."""
+    cls = getattr(PluginRegistry.discover(), load)(name)
+    reason = "audio.output.gain_db is inf; it has to be a finite number of decibels, such as -6.0"
+
+    def refuses(self, config=None, fmt=None):
+        raise PluginError(reason)
+
+    monkeypatch.setattr(cls, "__init__", refuses)
+    session = ListenSession(body(write_wav(tmp_path / "g.wav", frame())), soul())
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError) as raised:
+        run(scenario())
+    assert str(raised.value) == refusal + reason
+    assert isinstance(raised.value.__cause__, PluginError)
+
+
+def a_second(group: str, name: str) -> PluginRegistry:
+    """The installed plugins, and a second `name` in `group` from an entry
+    point no distribution declared, so the name has two claimants."""
+    from importlib import metadata
+    from importlib.metadata import EntryPoint
+
+    from emet_sdk import discovery
+
+    groups = [value for key, value in vars(discovery).items() if key.startswith("GROUP_")]
+    assert len(groups) == 9
+    installed = [ep for group_name in groups for ep in metadata.entry_points(group=group_name)]
+    return PluginRegistry.from_entry_points([*installed, EntryPoint(name, "emet_fork:Plugin", group)])
+
+
+@pytest.mark.parametrize("group", ["emet.audio", "emet.audio_out"])
+def test_an_audio_plugin_two_distributions_offer_is_refused_before_anything_starts(tmp_path, group):
+    """Contract 0.5.7 section 1: the clash is refused before any device
+    opens. Review finding engine-core/code#1: the source's was found after
+    the sink had opened and the boot tone had played, and the sink's after
+    the providers and the body had started."""
+    from emet_sdk.validate import DuplicatePluginError
+
+    out = tmp_path / "out.wav"
+    manifest = wav_body(write_wav(tmp_path / "d.wav", frame()), str(out))
+    manifest["models"] = {"tts": {"provider": "mock"}}
+    performed = []
+    session = ListenSession(
+        manifest, soul(), registry=a_second(group, "wav"), speak=True, on_performed=performed.append
+    )
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(DuplicatePluginError, match=f"in the group {group}"):
+        run(scenario())
+    assert performed == [] and not out.exists(), "no tone played, and the sink never opened"
+    assert session.descriptor is None and session._tts is None and session.body is None
+
+
+@pytest.mark.parametrize(("group", "stage"), [("emet.stt", "transcriber"), ("emet.llm", "model")])
+def test_a_provider_two_distributions_offer_is_refused_before_any_stage_starts(tmp_path, group, stage):
+    """Review finding sdk/code#7: the language model's name was found only
+    after the transcriber had started and sent its preflight, and every
+    provider's after the wake engine. Now every name the run loads is asked
+    for its origin first, so nothing starts and nothing is sent."""
+    from emet_sdk.validate import DuplicatePluginError
+
+    session = answering(tmp_path, "c.wav", frame(), registry=a_second(group, "mock"))
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(DuplicatePluginError, match=f"in the group {group}"):
+        run(scenario())
+    assert session._stt is None and session._llm is None, f"no stage started before the {stage}'s clash"
+    assert session.descriptor is None, "the wake engine did not start either"
+
+
+def test_a_driver_two_distributions_offer_is_refused_before_any_stage_starts(tmp_path):
+    """sdk/code#7's driver half: a part's driver is found among the
+    actuators, then the sensors, before the providers start."""
+    from emet_sdk.validate import DuplicatePluginError
+
+    manifest = body(write_wav(tmp_path / "p.wav", frame()))
+    manifest["capabilities"] = [{"id": "lamp", "type": "light", "role": "ambient", "driver": {"plugin": "emet_hal.mock"}}]
+    session = answering(tmp_path, "p.wav", frame(), manifest=manifest, registry=a_second("emet.actuators", "emet_hal.mock"))
+
+    async def scenario():
+        async with session:
+            pass
+
+    with pytest.raises(DuplicatePluginError, match="in the group emet.actuators"):
+        run(scenario())
+    assert session._stt is None and session.body is None

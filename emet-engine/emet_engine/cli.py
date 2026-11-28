@@ -23,12 +23,23 @@ those sentences, and the whole system prompt when a language model is
 running. Since 0.5.5 the first line of a run, before anything boots, is its
 identity: the four packages' versions and the revision of the tree they ran
 from (`identity_line`).
+
+**Since 0.5.7.** Each provider line also says where the stage runs (`at`
+the host it sends to, or `on this body`), which key it read by the
+variable's name, and which installed package offered the plugin
+(`provider_lines`). A failure a person must be told about prints the line
+`emet_engine.failures` holds for it, chosen by the session from what
+failed and never from an error's wording. Under `--stats` each turn ends
+with its own line, `turn gap ... ms`, and at a terminal a live line under
+the header shows what the ears hear now (`live_line`). `--events PATH`
+writes what `--stats` prints as JSON records, one a line.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import copy
 import os
 import re
@@ -37,9 +48,9 @@ import subprocess
 import sys
 from importlib import metadata
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Iterator, TextIO
 
-from emet_sdk.discovery import PluginRegistry
+from emet_sdk.discovery import GROUP_LLM, GROUP_STT, GROUP_TTS, PluginRegistry
 from emet_sdk.types import ReplyDone, TextDelta, Transcript, WakeEvent
 from emet_sdk.validate import (
     MissingPluginError,
@@ -51,12 +62,30 @@ from emet_sdk.validate import (
 
 from emet_engine import board
 from emet_engine.body import format_bindings
+from emet_engine.failures import Failure
 from emet_engine.keys import load_keys
-from emet_engine.metrics import Handover
-from emet_engine.session import EngineError, ListenSession
-from emet_engine.turn import EndReason
+from emet_engine.live import LiveLine
+from emet_engine.metrics import Handover, TurnRecord
+from emet_engine.session import EngineError, ListenSession, TurnEnd
+from emet_engine.turn import EndReason, Utterance
 
-__all__ = ["main", "print_run_footer", "boot_lines", "identity_line", "revision", "Caption"]
+__all__ = [
+    "main",
+    "print_run_footer",
+    "boot_lines",
+    "place_line",
+    "provider_lines",
+    "failure_text",
+    "print_failure",
+    "identity_line",
+    "revision",
+    "Caption",
+    "StatsLines",
+    "add_events_flag",
+    "events_refused",
+    "live_line",
+    "open_events",
+]
 
 #: The four distributions a run is made of, in the order the identity line
 #: names them.
@@ -253,14 +282,6 @@ def _on_wake(event: WakeEvent) -> None:
     print(f"  heard {event.phrase!r}  (confidence {event.confidence:.2f})")
 
 
-def _on_handover(handover: Handover) -> None:
-    """Under `--stats`, the line under each wake that handed audio over: the
-    lag, the end of the name written as silence, and what the level stop
-    alone would have written. It prints before the first partial, so an odd
-    first word can be read against its cut."""
-    print(f"    {handover.text()}")
-
-
 class Caption:
     """The live caption while somebody is speaking.
 
@@ -273,10 +294,17 @@ class Caption:
     """
 
     def __init__(self, stream: TextIO | None = None, *, tty: bool | None = None) -> None:
-        self.stream = stream if stream is not None else sys.stdout
+        self._stream = stream
         isatty = getattr(self.stream, "isatty", None)
         self.tty = bool(isatty()) if tty is None and callable(isatty) else bool(tty)
         self._width = 0
+
+    @property
+    def stream(self) -> TextIO:
+        """The stream given, or `sys.stdout` as it is at each write, so a
+        caption drawn while the live line wraps stdout clears that line
+        first."""
+        return self._stream if self._stream is not None else sys.stdout
 
     def show(self, transcript: Transcript) -> None:
         line = f"    hearing {transcript.text!r}"
@@ -304,6 +332,247 @@ def _on_extended(caption: Caption) -> Any:
         print("    (sounds unfinished; waiting one more window)")
 
     return announce
+
+
+#: The distributions Emet's own plugins come in, as PEP 503 normalises a
+#: name. Every plugin of theirs fills its descriptor's `endpoint`, so one
+#: with none runs on the body. A plugin of another distribution may have been
+#: written before the field existed (0.5.6's SDK), and its None says nothing.
+OWN_DISTRIBUTIONS = frozenset({"emet-hal", "emet-providers"})
+
+
+def place_line(described: Any, origin: Any) -> str:
+    """Where a provider's stage runs, as its boot line says it.
+
+    `, at HOST` for a provider that sends to an address; `, on this body`
+    for one of Emet's own plugins that sends nowhere; `, where it sends is
+    not stated` for a plugin from any other distribution that names no
+    address, since the engine cannot tell whether it sends anything.
+    `origin` is the plugin's `PluginOrigin`, or None when discovery does not
+    know it.
+    """
+    endpoint = getattr(described, "endpoint", None)
+    if endpoint:
+        return f", at {getattr(described, 'host', None) or endpoint}"
+    distribution = getattr(origin, "distribution", None)
+    if distribution and re.sub(r"[-_.]+", "-", distribution).lower() in OWN_DISTRIBUTIONS:
+        return ", on this body"
+    return ", where it sends is not stated"
+
+
+def _where(session: ListenSession, described: Any, group: str, name: str | None) -> str:
+    """How a provider line ends, saying where its stage runs and what it was
+    started with.
+
+    The place (`place_line`), then `, key NAME` when it read a key (the
+    variable's name; a key's value is never printed), then `, from
+    DISTRIBUTION VERSION`, the installed package that offered the plugin,
+    when discovery knows it.
+    """
+    origin = session.registry.origin(group, name) if name else None
+    place = place_line(described, origin)
+    key_env = getattr(described, "key_env", None)
+    if key_env:
+        place += f", key {key_env}"
+    if origin is not None and origin.label is not None:
+        place += f", from {origin.label}"
+    return place
+
+
+def _provider_line(
+    session: ListenSession, label: str, name: str | None, described: Any, group: str, named: str,
+    *, mode: str = "", rate: str = "",
+) -> str:
+    model = getattr(described, "model", None)
+    text = f"  {label:<8} {name}{mode}" + (f"{named}{model}" if model else "") + rate
+    return text + _where(session, described, group, name)
+
+
+def provider_lines(
+    session: ListenSession, program: str, *, transcribe: bool = True, reply: bool = True, speak: bool = True
+) -> list[str]:
+    """The boot lines that name each provider stage (SF2 stage 1 of 0.5.7).
+
+    Each says which plugin runs the stage and which model, then where it
+    runs, which key it read and which package offered it (`_where`).
+    `emet-listen` labels them `stt`, `llm` and `voice` and writes `, model
+    M`; `emet-talk` labels them `words`, `answers` and `voice` and writes
+    `, M`. On `emet-listen`'s `stt` line the mode comes straight after the
+    provider's name, so a space follows the name and never a comma:
+    `tools/bank/replay.py` reads the line's second word as the provider and
+    refuses any but `mock`. Values start at column 11.
+    """
+    listen = program == "emet-listen"
+    labels = ("stt", "llm", "voice") if listen else ("words", "answers", "voice")
+    named = ", model " if listen else ", "
+    lines: list[str] = []
+    if transcribe:
+        stt = session.stt_descriptor
+        mode = f" ({'streaming' if stt is not None and stt.streaming else 'batch'})" if listen else ""
+        lines.append(_provider_line(session, labels[0], session.stt_name, stt, GROUP_STT, named, mode=mode))
+    if reply:
+        lines.append(_provider_line(session, labels[1], session.chat_name, session.llm_descriptor, GROUP_LLM, named))
+    if speak:
+        tts = session.tts_descriptor
+        rate = f" ({tts.sample_rate} Hz)" if tts is not None else ""
+        lines.append(_provider_line(session, labels[2], session.tts_name, tts, GROUP_TTS, named, rate=rate))
+    return lines
+
+
+def failure_text(
+    session: ListenSession, failure: Failure, program: str, utterance: Utterance, reply: ReplyDone | None
+) -> str:
+    """The line `program` prints for a turn's failure row.
+
+    Its `{detail}` is the failed stage's own sentence, written whole by the
+    plugin: the reply's `error` for the language model (or, for a wake the
+    model could not answer, the detail it was found unavailable with), the
+    final transcript's `error` for the transcriber. Nothing here reads the
+    sentence; the row was chosen before it was printed.
+    """
+    detail: str | None = None
+    if failure.stage == "llm":
+        detail = (reply.error if reply is not None else None) or session.chat_unavailable
+    elif failure.stage == "stt" and utterance.transcript is not None:
+        detail = utterance.transcript.error
+    names = {"stt": session.stt_name, "llm": session.chat_name, "voice": session.tts_name}
+    return failure.text(program, name=names.get(failure.stage) or "", detail=detail or "", cap=session.reply_cap)
+
+
+def print_failure(text: str, failure: Failure) -> None:
+    """A failure line, on the stream its row names."""
+    print(text, file=sys.stderr if failure.stream == "stderr" else sys.stdout, flush=True)
+
+
+class StatsLines:
+    """What `--stats` prints under each wake and at the end of each turn,
+    and, with `--events`, the same as records in the events file.
+
+    The per-wake line is the session's `on_handover`; the per-turn line is
+    the turn's last, from its `TurnRecord`. `emet-listen` indents both as
+    notes, `emet-talk` puts them in brackets. A wake or turn record is
+    written only with the line it repeats, and the console prints the same
+    with the file or without it. A record holds every field of its
+    `TurnRecord` or `Handover`, so the file keeps figures the line rounds
+    or leaves out, as `emet_engine.events` says.
+    """
+
+    def __init__(self, program: str, *, stats: bool, events: Any = None) -> None:
+        self.listen = program == "emet-listen"
+        self.stats = stats
+        self.events = events
+        self._confidence: float | None = None
+        self._wakes = 0
+
+    def _show(self, text: str) -> str:
+        return f"    {text}" if self.listen else f"  ({text})"
+
+    def wake(self, event: WakeEvent) -> None:
+        """Count the wake and note its score, which its events record carries."""
+        self._wakes += 1
+        self._confidence = event.confidence
+
+    def handover(self, handover: Handover) -> None:
+        print(self._show(handover.text()), flush=True)
+        if self.events is not None:
+            self.events.wake(handover, self._confidence, number=self._wakes)
+
+    def turn(self, record: TurnRecord | None) -> None:
+        line = record.line() if self.stats and record is not None else None
+        if line is None:
+            return
+        print(self._show(line), flush=True)
+        if self.events is not None:
+            self.events.turn(record)
+
+
+def add_events_flag(parser: argparse.ArgumentParser) -> None:
+    """`--events PATH`, shared by `emet-listen` and `emet-talk`."""
+    parser.add_argument(
+        "--events",
+        metavar="PATH",
+        help="with --stats, also write what it prints to PATH as JSON records, one a "
+        "line: a header naming the packages and the platform, a record for each "
+        "line under a wake and each turn's line, and the footer's numbers. Numbers "
+        "and verdicts only, never a word anybody said. The file is written afresh "
+        "each run",
+    )
+
+
+def events_refused(args: argparse.Namespace, program: str) -> bool:
+    """`--events` without `--stats`, refused on stderr: the file writes what
+    `--stats` prints, so on its own it would stay empty."""
+    if getattr(args, "events", None) and not args.stats:
+        print(f"{program}: --events writes what --stats prints; add --stats", file=sys.stderr)
+        return True
+    return False
+
+
+def open_events(path: str | None, program: str) -> Any:
+    """The events file `--events` names, opened afresh, or None without the
+    flag. A file that cannot be written is the writer's refusal, an
+    `EngineError` naming the program, the path and the reason, printed
+    before anything boots.
+
+    The writer is imported here, for a run that asked for one: a run
+    without the flag never loads it.
+    """
+    if not path:
+        return None
+    from emet_engine.events import EventWriter
+
+    return EventWriter(path, program)
+
+
+def _isatty(stream: Any) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return bool(isatty()) if callable(isatty) else False
+    except (OSError, ValueError):
+        return False
+
+
+@contextlib.contextmanager
+def live_line(session: ListenSession, *, stats: bool) -> Iterator[LiveLine]:
+    """The live line under `--stats` at a terminal (BVB3 stage 1 of 0.5.7),
+    for the length of the run.
+
+    Built once. The session's `on_frame` draws it, and its `on_wake` notes
+    each wake's score after the program's own line. For the run
+    `sys.stdout` is the line's guarded stdout, so every other write clears
+    it first, and so is `sys.stderr` when stderr is a terminal too, since
+    logging's last resort reads `sys.stderr` at each record. Both are put
+    back at exit, after the line is cleared. Off a terminal or without
+    `--stats` nothing is drawn or wrapped, and the session computes no
+    level.
+    """
+    live = LiveLine(
+        sys.stdout,
+        patience_ms=session.patience_ms,
+        enabled=stats,
+        err=sys.stderr if _isatty(sys.stderr) else None,
+    )
+    if not live.drawing:
+        yield live
+        return
+    heard = session.on_wake
+
+    def on_wake(event: WakeEvent) -> None:
+        if heard is not None:
+            heard(event)
+        live.wake(event)
+
+    session.on_wake = on_wake
+    session.on_frame = live.frame
+    saved = sys.stdout, sys.stderr
+    sys.stdout = live.out  # type: ignore[assignment]
+    if live.err is not None:
+        sys.stderr = live.err  # type: ignore[assignment]
+    try:
+        yield live
+    finally:
+        live.close()
+        sys.stdout, sys.stderr = saved
 
 
 def boot_lines(session: ListenSession, *, reply: bool) -> list[str]:
@@ -352,7 +621,7 @@ def boot_lines(session: ListenSession, *, reply: bool) -> list[str]:
 
 
 def print_explanation(session: ListenSession, *, reply: bool) -> None:
-    """`--explain`: what the robot was told, word for word."""
+    """Print what the robot was told, word for word, for `--explain`."""
     if reply:
         print("\n  SYSTEM PROMPT\n")
         text = session.system_prompt
@@ -365,9 +634,15 @@ def print_explanation(session: ListenSession, *, reply: bool) -> None:
 
 
 def state_warnings(session: ListenSession) -> None:
+    """The boot's warnings, on stderr before it listens: what the state
+    file said, then each notice a provider gave at boot (a model's
+    retirement date, a chat model that cannot answer), one `  ! ` line
+    each."""
     state = session.body_state
     for warning in (state.warnings if state is not None else []):
         print(f"  ! {warning}", file=sys.stderr)
+    for notice in session.notices:
+        print(notice if notice.startswith("  ! ") else f"  ! {notice}", file=sys.stderr)
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -375,6 +650,15 @@ async def _run(args: argparse.Namespace) -> int:
     # The board as the run found it, before the models load. The footer
     # reads it again; nothing reads it in between.
     board_start = board.read_board() if args.stats else None
+    events = open_events(getattr(args, "events", None), "emet-listen")
+    try:
+        return await _listen(args, board_start, events)
+    finally:
+        if events is not None:
+            events.close()
+
+
+async def _listen(args: argparse.Namespace, board_start: board.BoardReading | None, events: Any) -> int:
     install_stop_signals()
     registry = PluginRegistry.discover()
     if not registry:
@@ -416,6 +700,7 @@ async def _run(args: argparse.Namespace) -> int:
     reply = args.reply or args.speak
     transcribe = args.transcribe or reply
     caption = Caption()
+    out = StatsLines("emet-listen", stats=args.stats, events=events)
     session = ListenSession(
         manifest,
         soul,
@@ -423,13 +708,29 @@ async def _run(args: argparse.Namespace) -> int:
         transcribe=transcribe,
         reply=reply,
         speak=args.speak,
-        on_wake=_on_wake,
-        on_handover=_on_handover if args.stats else None,
+        on_wake=lambda event: (_on_wake(event), out.wake(event)),
+        on_handover=out.handover if args.stats else None,
         on_partial=caption.show if transcribe else None,
         on_extended=_on_extended(caption) if transcribe else None,
         chains=getattr(args, "chains", None) or (),
         state=getattr(args, "state", None),
     )
+    with live_line(session, stats=args.stats):
+        return await _listen_to(session, args, board_start, events, caption=caption, out=out, loaded=loaded)
+
+
+async def _listen_to(
+    session: ListenSession,
+    args: argparse.Namespace,
+    board_start: board.BoardReading | None,
+    events: Any,
+    *,
+    caption: Caption,
+    out: StatsLines,
+    loaded: Any,
+) -> int:
+    reply = args.reply or args.speak
+    transcribe = args.transcribe or reply
     async with session:
         assert session.descriptor is not None and session.format is not None
         state_warnings(session)
@@ -442,20 +743,7 @@ async def _run(args: argparse.Namespace) -> int:
             + (", extends once on a trailing clause" if transcribe and session.extend_on_incomplete else ""),
         ]
         lines += boot_lines(session, reply=reply)
-        if transcribe:
-            described = session.stt_descriptor
-            model = f", model {described.model}" if described and described.model else ""
-            mode = "streaming" if described and described.streaming else "batch"
-            lines.append(f"  stt      {session.stt_name}{model} ({mode})")
-        if reply:
-            described_llm = session.llm_descriptor
-            model = f", model {described_llm.model}" if described_llm and described_llm.model else ""
-            lines.append(f"  llm      {session.chat_name}{model}")
-        if args.speak:
-            described_tts = session.tts_descriptor
-            model = f", model {described_tts.model}" if described_tts and described_tts.model else ""
-            rate = f" ({described_tts.sample_rate} Hz)" if described_tts else ""
-            lines.append(f"  voice    {session.tts_name}{model}{rate}")
+        lines += provider_lines(session, "emet-listen", transcribe=transcribe, reply=reply, speak=args.speak)
         for entry in loaded:
             names = ", ".join(entry.names) or "nothing new"
             lines.append(f"  keys     {names} from {entry.path}")
@@ -470,29 +758,7 @@ async def _run(args: argparse.Namespace) -> int:
             async for event, utterance in session.turns():
                 heard += 1
                 caption.close()
-                if utterance.had_speech:
-                    print(
-                        f"    then {utterance.duration_ms / 1000:.1f}s of speech, "
-                        f"ended on {utterance.reason.value}"
-                    )
-                    if args.echo:
-                        await session.say(utterance.audio)
-                        print("    played it back")
-                elif utterance.reason is EndReason.SOURCE_ENDED:
-                    print("    the recording ended before anything followed.")
-                else:
-                    print("    then nothing. probably a false wake.")
-                if utterance.transcript is not None:
-                    if utterance.transcript.text:
-                        print(f"    said {utterance.transcript.text!r}")
-                    elif utterance.transcript.error:
-                        print(f"    the words never arrived: {utterance.transcript.error}")
-                    else:
-                        print("    said nothing the provider could make out")
-                    if utterance.transcript.text and utterance.transcript.error:
-                        print(f"    and may be cut short: {utterance.transcript.error}")
-                if reply and utterance.transcript is not None and utterance.transcript.text.strip():
-                    await _print_reply(session, utterance.transcript.text, speak=args.speak)
+                await _print_turn(session, utterance, args, reply=reply, out=out)
         except asyncio.CancelledError:
             # Ctrl-C. `asyncio.run` answers SIGINT by cancelling this task, and
             # a microphone never ends on its own, so this is how every live
@@ -510,37 +776,104 @@ async def _run(args: argparse.Namespace) -> int:
             print(f"\nstopped. heard it {heard} time(s).")
         else:
             print(f"\nsource ended. heard it {heard} time(s).")
-        print_run_footer(session, stats=args.stats, board_start=board_start)
+        print_run_footer(session, stats=args.stats, board_start=board_start, events=events)
     return 0
 
 
-async def _print_reply(session: ListenSession, text: str, *, speak: bool = False) -> None:
+async def _print_heard(session: ListenSession, utterance: Utterance, *, echo: bool) -> None:
+    """What followed the wake, played back with `--echo`, and the words the
+    transcriber made of it."""
+    if utterance.had_speech:
+        print(f"    then {utterance.duration_ms / 1000:.1f}s of speech, ended on {utterance.reason.value}")
+        if echo:
+            await session.say(utterance.audio)
+            print("    played it back")
+    elif utterance.reason is EndReason.SOURCE_ENDED:
+        print("    the recording ended before anything followed.")
+    else:
+        print("    then nothing. probably a false wake.")
+    transcript = utterance.transcript
+    if transcript is None:
+        return
+    if transcript.text:
+        print(f"    said {transcript.text!r}")
+    elif not transcript.error:
+        # Words that never arrived are the failure line's to say.
+        print("    said nothing the provider could make out")
+    if transcript.text and transcript.error:
+        print(f"    and may be cut short: {transcript.error}")
+
+
+async def _print_turn(
+    session: ListenSession, utterance: Utterance, args: argparse.Namespace, *, reply: bool, out: StatsLines
+) -> None:
+    """One turn, printed as its notes: what was heard, the reply, the turn's
+    end as the session found it, and under `--stats` the turn's own line.
+
+    The session ends every turn (`finish_turn`), with or without `--reply`:
+    it names the outcome, picks the failure row, and with `--speak` says
+    the row's line, as `emet-talk` does. The failure line comes after the
+    reply, then the sentences spoken and lost, then the line said aloud.
+    """
+    await _print_heard(session, utterance, echo=args.echo)
+    transcript = utterance.transcript
+    done: ReplyDone | None = None
+    spoken: list[Any] = []
+    if reply and transcript is not None and transcript.text.strip():
+        done, spoken = await _print_reply(session, transcript.text, speak=args.speak)
+    end: TurnEnd = await session.finish_turn(utterance, done)
+    if end.failure is not None:
+        print_failure(failure_text(session, end.failure, "emet-listen", utterance, done), end.failure)
+    _print_spoken(spoken if done is not None and args.speak else None, end)
+    out.turn(session.last_turn)
+
+
+def _said(spoken: list[Any]) -> int:
+    """The reply's sentences the speaker played; a filler for a tag was
+    heard and is not one."""
+    return sum(1 for s in spoken if s.ok and s.audio_bytes and s.from_reply)
+
+
+def _print_spoken(spoken: list[Any] | None, end: TurnEnd) -> None:
+    """The reply's sentences said, when a reply was spoken; every sentence
+    the voice lost, the reply's and the line's; and the line said aloud."""
+    if spoken is not None:
+        print(f"    spoke {_said(spoken)} sentence(s)")
+    for lost in (s for s in (*(spoken or ()), *end.spoken) if not s.ok):
+        print(f"    the voice could not say {lost.text!r}: {lost.error}")
+    if end.line:
+        print(f"    spoke the line: {end.line}")
+
+
+async def _print_reply(session: ListenSession, text: str, *, speak: bool = False) -> tuple[ReplyDone | None, list[Any]]:
     """Stream the reply to the console as the model produces it, and with
-    `speak`, out of the speaker as each sentence completes."""
-    print("    reply: ", end="", flush=True)
+    `speak`, out of the speaker as each sentence completes.
+
+    The `    reply: ` tag is printed with the first word, so a reply that
+    failed before any text leaves no empty tag above its failure line.
+    Returns the reply's end and what was said of it; the failure line, if
+    any, is the turn's end to print.
+    """
+    started = False
+    done: ReplyDone | None = None
     events = session.answer_aloud(text) if speak else session.answer_acted(text)
     async for event in events:
-        if isinstance(event, TextDelta):
+        if isinstance(event, TextDelta) and event.text:
+            if not started:
+                print("    reply: ", end="", flush=True)
+                started = True
             print(event.text, end="", flush=True)
         elif isinstance(event, ReplyDone):
-            print()
-            if event.stop_reason == "error":
-                print(f"    the language model failed: {event.error}")
-            elif event.stop_reason == "refusal":
+            done = event
+            if started:
+                print()
+            if event.stop_reason == "refusal":
                 print("    (the provider declined to answer)")
-            elif event.stop_reason == "length":
-                print("    (cut off at the reply's token cap)")
-    if speak:
-        spoken = session.last_spoken
-        # The reply's sentences; a filler for a tag was heard and is not one.
-        said = [s for s in spoken if s.ok and s.audio_bytes and s.from_reply]
-        print(f"    spoke {len(said)} sentence(s)")
-        for lost in (s for s in spoken if not s.ok):
-            print(f"    the voice could not say {lost.text!r}: {lost.error}")
+    return done, (list(session.last_spoken) if speak else [])
 
 
 def print_run_footer(
-    session: ListenSession, *, stats: bool, board_start: board.BoardReading | None = None
+    session: ListenSession, *, stats: bool, board_start: board.BoardReading | None = None, events: Any = None
 ) -> None:
     """Report what the run cost, if asked, and always report what it lost.
 
@@ -554,13 +887,19 @@ def print_run_footer(
 
     `board_start` is the board as the run found it; with `stats`, the board
     is read a second time here and both readings go above the verdict.
+    `events`, the `--events` writer, gets the footer's record as the
+    footer is printed.
     """
     if stats:
-        lines = board.footer_lines(board_start, board.read_board()) if board_start is not None else []
+        board_end = board.read_board() if board_start is not None else None
+        lines = board.footer_lines(board_start, board_end) if board_start is not None else []
         # `live` from the source that actually ran, not from the flag: only a
         # real sound card can drift, and claiming otherwise for a file would
         # be inventing a measurement.
-        print("\n" + session.stats.report(live=session.source_name != "wav", board=lines))
+        live = session.source_name != "wav"
+        print("\n" + session.stats.report(live=live, board=lines))
+        if events is not None:
+            events.footer(session.stats, live=live, board_start=board_start, board_end=board_end)
     # What this run learned about this body goes into its state file; only
     # when there is none to keep it in is the person asked to carry it.
     state = getattr(session, "body_state", None)
@@ -711,8 +1050,11 @@ def main(argv: list[str] | None = None) -> int:
         "flags and load average at the start and at the end, as far as the "
         "machine reports them",
     )
+    add_events_flag(parser)
     add_body_flags(parser)
     args = parser.parse_args(argv)
+    if events_refused(args, "emet-listen"):
+        return 2
 
     try:
         return asyncio.run(_run(args))

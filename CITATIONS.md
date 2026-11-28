@@ -45,7 +45,8 @@ default `patience_ms`:
 The third against the second is the argument that a silence threshold cannot
 separate "still thinking" from "finished", because the two distributions
 overlap. Emet's endpointer is deliberately conservative for that reason, and
-that reasoning is theirs, not ours.
+that reasoning is theirs, not ours. [`DESIGN.md`](DESIGN.md) section 13's turn
+budget quotes the inter-speaker gap, 380 ms, as a horizon and never a target.
 
 The paper also supplies the honest grade for what Emet currently ships: an
 RMS-energy detector is the benchmark's explicit floor. Recording that is part
@@ -62,6 +63,38 @@ Schegloff and Jefferson (1974) on transition-relevance places, and Yngve
 (1970) on backchannels. Emet has those concepts second-hand through this paper
 rather than from the primary sources, and says so rather than citing work it
 has not read.
+
+## Shiwa et al., HRI 2008
+
+**Shiwa, Kanda, Imai, Ishiguro and Hagita.** *How quickly should
+communication robots respond?* HRI 2008, doi:10.1145/1349822.1349843. Two
+findings of the abstract (OpenAlex, verified 2026-11-25; the paper not
+read): "user preference for SRT is the highest at
+one second, and ratings level off at two seconds", and a filler softened a
+long wait. Numbers only, no text beyond the quotes and no code.
+[`DESIGN.md`](DESIGN.md) section 13 takes them as the turn budget, 2.0 s at
+the median and 1.0 s as the stretch, and
+[`tools/body/run.py`](tools/body/run.py) measures the row. Reading "level off"
+as a limit is this project's reading.
+
+## Stivers et al., PNAS 2009
+
+**Stivers et al.** *Universals and cultural variation in turn-taking in
+conversation.* PNAS 2009, doi:10.1073/pnas.0903616106. One finding of the
+abstract (OpenAlex, verified 2026-11-25): across ten languages the mean gaps
+fall "within a range of 250 ms". [`DESIGN.md`](DESIGN.md) section 13 quotes it
+with TurnBench's 380 ms as the horizon, never as a target. Numbers only.
+
+## PARADISE
+
+**Walker, Litman, Kamm and Abella.** *PARADISE: A Framework for Evaluating
+Spoken Dialogue Agents.* ACL-EACL 1997, <https://aclanthology.org/P97-1035/>.
+An idea, read in the paper on
+2026-11-25: a person's satisfaction modelled from task success and the
+dialogue's measured costs. Emet puts the maintainer's rating of each turn
+beside that turn's timings in `sitting.json`
+([`tools/body/run.py`](tools/body/run.py), EV4 stage 1). No text or code; the
+paper's licence not read (unverified).
 
 ---
 
@@ -155,7 +188,7 @@ repository's root nor the sample has a NOTICE file.
 **Pollen Robotics.** <https://github.com/pollen-robotics/microduck> at
 942e58e and <https://github.com/pollen-robotics/reachy_mini> at 9fb2bfcbd,
 both **Apache-2.0** (verified 2026-10-27, and microduck's again through
-the GitHub API on 2026-11-26). Three ideas, and one CI step adapted:
+the GitHub API on 2026-11-26). Four ideas, and one CI step adapted:
 
 - Each microduck daemon's first log line is its identity, build and
   revision (`docs/design/architecture.md` lines 531 to 536 and 591 to
@@ -172,6 +205,14 @@ the GitHub API on 2026-11-26). Three ideas, and one CI step adapted:
   [`tools/ci.py`](tools/ci.py) holds every CI job's steps in one script
   that GitHub, the laptop and the body runner call. The idea is taken; no
   code is.
+- microduck's `robotctl monitor` draws the running robot's state in place
+  at a terminal, and a reading not yet taken says so (`batt not read yet`;
+  `docs/robot/cheatsheet.md`, "Watching the loop", lines 35 to 105 at
+  942e58e, read 2026-11-27). The live line under `--stats`
+  ([`emet_engine/live.py`](emet-engine/emet_engine/live.py)) takes that
+  idea for the ears, with `no wake yet` for a wake not yet heard. The
+  monitor prints one line per tick when piped; Emet's line prints nothing
+  off a terminal. No code is taken.
 - reachy_mini's CI runs its audio code against a PulseAudio null sink
   looped to capture. The setup lines of Emet's `virtual sound card` job
   are adapted from its `.github/actions/virtual-sound-card/action.yml`,
@@ -446,7 +487,8 @@ file through the GitHub API.
 the weekly `pip-audit (advisory)` job, pinned at 2.10.1 by hash in
 [`tools/ci/requirements.txt`](tools/ci/requirements.txt). The body runner,
 [`tools/body/run.py`](tools/body/run.py), installs it on the reference body
-in a venv of its own and audits the runner's venv. The four packages never
+in a venv of its own from the same lock's hashed pins, with
+`--require-hashes`, and audits the runner's venv. The four packages never
 import it.
 
 ## mutmut and vulture
@@ -559,6 +601,220 @@ and ACM's copyright policy for the fourth.
   licence to distribute. The questions each set's `DATASHEET.md` answers,
   an idea its abstract states: a datasheet that documents a dataset's
   motivation, composition, collection process and recommended uses.
+
+## PEP 503
+
+**Donald Stufft.** PEP 503, Simple Repository API, 2015,
+<https://peps.python.org/pep-0503/>, **public domain** by its own Copyright
+section, "This document has been placed in the public domain" (read
+2026-11-27). Its name normalisation, an idea and its one regular
+expression: a name is lower-cased and each run of `.`, `-` or `_` becomes
+one `-`, `re.sub(r"[-_.]+", "-", name).lower()`.
+[`emet_sdk/discovery.py`](emet-sdk/emet_sdk/discovery.py)'s `_claimant`
+compares the distributions behind two entry points by that name, so one
+distribution written two ways is never refused as a clash with itself.
+
+## OpenAI's API documentation
+
+**OpenAI.** Pages at <https://developers.openai.com/api/>, read 2026-11-27:
+the Chat Completions reference (`reasoning_effort`, "Currently supported
+values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`";
+`max_completion_tokens` counts "visible output tokens and reasoning
+tokens"); the model page of gpt-5.6-terra (none to max, `medium` the
+default); the reasoning guide (a cap can be spent "before any visible output
+tokens are produced"); the guide to migrating to Responses (from GPT-5.4,
+no tool calls over Chat Completions at an effort other than `none`); the
+Models API's retrieve (`shutdown_date`, a date or null); and the
+error-codes guide (four billing codes of a 429, with `insufficient_quota`
+as their type, and "Retrying billing, spend, or quota errors won't restore
+API access"). Facts about an interface, taken as facts under OpenAI's terms
+of use; no text or code is copied. Used in
+[`emet_providers/openai.py`](emet-providers/emet_providers/openai.py)
+(`FAULT_CODES`, the preflight, `reasoning_effort`, the empty reply at the
+cap) and its tests.
+
+## Ollama, llama.cpp and litert-lm, for the local recipes
+
+**Ollama** (**MIT**): its FAQ and its OpenAI compatibility page at
+<https://docs.ollama.com/>, read 2026-11-27: it binds 127.0.0.1:11434,
+unloads a model after 5 idle minutes unless `OLLAMA_KEEP_ALIVE` is negative,
+uses 4096 tokens of context unless `OLLAMA_CONTEXT_LENGTH` says otherwise,
+documents `max_tokens`, reads `reasoning_effort`, ignores the key, and
+preloads a model on "an empty request", the idea behind `params.warm_up`.
+**llama.cpp** (ggml-org, **MIT**): `tools/server/README.md` on master, read
+2026-11-27: `--host` 127.0.0.1 and `--port` 9931 by default, `cache_prompt`
+on by default, `reasoning_effort` `none` turns thinking off.
+**litert-lm** (Google AI Edge, **Apache-2.0**) 0.18.1, as run 2026-10-27:
+`serve` reads `max_completion_tokens` and checks no key. Facts for
+[`emet-providers/README.md`](emet-providers/README.md) and the warm-up's
+docstring; no code is taken.
+
+## Vendor documentation behind the model lifecycle and the failure kinds
+
+Facts and wire formats read at the vendors' own pages, used in
+[`emet_providers/anthropic.py`](emet-providers/emet_providers/anthropic.py)
+and [`emet_providers/lifecycle.py`](emet-providers/emet_providers/lifecycle.py).
+No code and no text beyond short phrases quoted in comments. The pages
+state no open licence (unverified); what Emet takes from them are facts.
+
+- **Anthropic**, API versions, <https://platform.claude.com/docs/en/api/versioning>,
+  read 2026-11-27: what 2026-10-21 refuses, and that Anthropic recommends
+  the latest version. `API_VERSION`.
+- **Anthropic**, Get a Model, <https://platform.claude.com/docs/en/api/models/retrieve>,
+  read 2026-11-27: `lifecycle`, `deprecated_at`, `retires_at`. The preflight.
+- **Anthropic**, Claude API errors and its `ErrorDetails` list,
+  <https://platform.claude.com/docs/en/api/errors>, read 2026-11-27: 402
+  `billing_error` and the 429 spend-cap codes. `FAULT_CODES`.
+- **Anthropic**, Streaming messages, <https://platform.claude.com/docs/en/build-with-claude/streaming>,
+  read 2026-11-27: `message_delta`'s usage is cumulative. The token counts.
+- **Anthropic**, Model deprecations, <https://platform.claude.com/docs/en/about-claude/model-deprecations>,
+  read 2026-11-27: claude-opus-5 not retired before 2027-07-24, and a
+  retired model's request answered 404 `not_found_error`.
+- **OpenAI**, Deprecations, <https://developers.openai.com/api/docs/deprecations>,
+  read 2026-11-27: gpt-5.6-terra only a replacement; six months' notice
+  for a generally available model. Its lifecycle row.
+- **Deepgram**, <https://developers.deepgram.com/docs/models-languages-overview>
+  and <https://developers.deepgram.com/docs/tts-models>, read 2026-11-27:
+  nova-3 and aura-2-thalia-en listed, no retirement stated. Their rows.
+
+## Deepgram's error pages
+
+**Deepgram.** API errors, <https://developers.deepgram.com/docs/errors> and
+<https://developers.deepgram.com/reference/errors>, and STT troubleshooting
+for WebSocket, NET and DATA errors,
+<https://developers.deepgram.com/docs/stt-troubleshooting-websocket-data-and-net-errors>,
+all read 2026-11-27. The statuses and `err_code`s behind the Deepgram
+transcriber's and voice's `FAULT_CODES`
+([`deepgram.py`](emet-providers/emet_providers/deepgram.py),
+[`deepgram_voice.py`](emet-providers/emet_providers/deepgram_voice.py)):
+402 `ASR_PAYMENT_REQUIRED` as out of credit, and 403
+`INSUFFICIENT_PERMISSIONS` as a model the project cannot use. Also that
+`INSUFFICIENT_PERMISSIONS` under 401 is a user's permissions, that an
+unknown voice is 400 `Bad Request`, and that a failed WebSocket upgrade
+puts its error in the response body and the `dg-error` header. Facts and
+two short quoted messages are taken, and no code. The documentation's own
+licence was not read (unverified 2026-11-27).
+
+## PX4's ULog and Home Assistant's traces
+
+**PX4.** The ULog file format, <https://docs.px4.io/main/en/dev_log/ulog_file_format.html>
+(both sentences below read 2026-11-27). The PX4-Autopilot repository is
+**BSD-3-Clause** (GitHub API, verified 2026-11-27); the documentation's own
+licence is unread. **Home Assistant.** Automation traces,
+<https://www.home-assistant.io/docs/automation/testing/> (verified 2026-11-25
+by the survey); the documentation repository is **CC BY-NC-SA 4.0** (its
+LICENSE.md, read 2026-11-27), so the idea is taken and none of its words.
+
+**What Emet took.** Two ideas, and no code. From ULog, a file that describes
+itself in its header ("The format is self-describing") and a reader that
+refuses a version it does not know ("If a parser finds any of these bits set
+that isn't specified, it must refuse to parse the log"): the `--events`
+header names its format, version, packages and platform, and a reader refuses
+a format other than `emet-events` or a major other than 1
+([`emet_engine/events.py`](emet-engine/emet_engine/events.py)). From Home
+Assistant, a run's record kept as a file a person can download, read and
+share. The file is JSON lines from the standard library.
+
+## LiveKit Agents and Pipecat
+
+**LiveKit Agents** (<https://github.com/livekit/agents>, **Apache-2.0**) and
+**Pipecat** (<https://github.com/pipecat-ai/pipecat>, **BSD-2-Clause**), each
+licence read through the GitHub API (verified 2026-11-27). One idea from
+each, no code. LiveKit's `tts_text_transforms`: "filter_markdown strips
+Markdown formatting", "filter_emoji removes emoji characters", and "When
+tts_text_transforms is not set, both are applied by default"
+(<https://docs.livekit.io/agents/build/text/>, verified 2026-11-27).
+Pipecat's `MarkdownTextFilter` "Preserves numbered lists while removing
+Markdown formatting" (<https://docs.pipecat.ai/server/utilities/text/markdown-text-filter>,
+verified 2026-11-27; deprecated since 1.14.0 for `strip_markdown`). Taken:
+a pass between the reply's text and the voice that removes markdown and
+emoji and keeps numbered lists, `speakable()` in
+[`emet-engine/emet_engine/speech.py`](emet-engine/emet_engine/speech.py).
+Reading a URL as its host, the patterns and the code are Emet's.
+
+## Speaking a given line with no model
+
+**edgevox**, <https://github.com/nrl-ai/edgevox> at 5fa958e: its
+`LICENSE` file is **Apache-2.0** and its `pyproject.toml` (`license =
+"MIT"`) and README say **MIT** (the local clone, read 2026-11-27);
+**Home Assistant**, <https://github.com/home-assistant/core>, and **Linux
+Voice Assistant**, <https://github.com/OHF-Voice/linux-voice-assistant>,
+both **Apache-2.0** (GitHub's licence API, verified 2026-11-27). One idea,
+no code: a command that says a given text in the robot's voice and asks no
+language model. edgevox's `/say TEXT` "Synthesize and play text directly
+(skip LLM)" (`docs/documentation/commands.md` line 23); Home Assistant's
+`assist_satellite.announce` and Linux Voice Assistant's announcements have
+a speaker say a message. Emet's `emet-say`
+([`emet_engine/say.py`](emet-engine/emet_engine/say.py)) boots the voice and
+the sink only and performs the text's tags through their chains.
+
+## flake8, pyflakes, pycodestyle and mccabe
+
+CI-only tools of the PyCQA, pinned by hash in
+[`tools/ci/requirements.txt`](tools/ci/requirements.txt) and never imported
+by the four packages. Licences and upload dates from PyPI's JSON API,
+verified 2026-11-27.
+
+- **Tarek Ziadé, Ian Stapleton Cordasco and the flake8 contributors.**
+  flake8 7.5.0, <https://github.com/PyCQA/flake8>, **MIT**. The `layering`
+  job of [`tools/ci.py`](tools/ci.py) runs it with
+  `--select=E402,E731,F401,F821` (0.5.7-D14); the default exclude it keeps
+  was read in the wheel's `defaults.py`.
+- **pyflakes 4.1.0** (<https://github.com/PyCQA/pyflakes>, **MIT**),
+  **pycodestyle 2.15.0** (<https://github.com/PyCQA/pycodestyle>, **MIT**)
+  and **mccabe 0.7.0** (<https://github.com/PyCQA/mccabe>, **MIT**, which
+  its metadata calls the Expat licence). No code is copied.
+
+## The vendors' models endpoints
+
+What [`tools/bank/canary.py`](tools/bank/canary.py)'s lifecycle step reads,
+each page read 2026-11-27. Only the endpoint, its header and its field names
+are taken.
+
+- **OpenAI**, API reference, "Retrieve model", `GET /v1/models/{model}`,
+  field `shutdown_date`,
+  <https://developers.openai.com/api/reference/resources/models/methods/retrieve>.
+- **Anthropic**, Claude API reference, "Get a Model",
+  `GET /v1/models/{model_id}`, fields `lifecycle` and `retires_at`,
+  <https://platform.claude.com/docs/en/api/models>.
+- **Deepgram**, API reference, "List Models", `GET /v1/models`,
+  `canonical_name`, <https://developers.deepgram.com/reference/manage/models/list>;
+  its "Get a Model" takes a UUID
+  (<https://developers.deepgram.com/reference/manage/models/get>).
+
+## RFC 5737
+
+**J. Arkko, M. Cotton and L. Vegoda.** RFC 5737, IPv4 Address Blocks
+Reserved for Documentation, January 2010,
+<https://www.rfc-editor.org/rfc/rfc5737.html>. Copyright (c) 2010 IETF
+Trust and the persons identified as the document authors. 192.0.2.0/24,
+TEST-NET-1, is the address
+[`tools/tests/test_hardware_guard.py`](tools/tests/test_hardware_guard.py)
+has the guard refuse. Only the reserved block is taken.
+
+## ECMA-48
+
+**Ecma International.** *ECMA-48, Control Functions for Coded Character
+Sets*, 5th edition, June 1991,
+<https://ecma-international.org/publications-and-standards/standards/ecma-48/>,
+free to download; its text holds no licence statement (the PDF read
+2026-11-27). One control function, no text: EL, ERASE IN LINE (section
+8.3.41, `CSI Ps 04/11`, default `Ps = 0`, the active position to the end
+of the line). The live line
+([`emet_engine/live.py`](emet-engine/emet_engine/live.py)) is drawn as a
+carriage return, its text and `ESC [ K`, and cleared by a carriage return
+and the same erase.
+
+## Farina's swept sine
+
+**A. Farina.** "Simultaneous measurement of impulse response and distortion
+with a swept-sine technique", 108th AES Convention, Paris, February 2000,
+paper 5093 (AES e-library 10211, its record read 2026-11-27). One idea and
+its formula, no code: an exponential sine sweep for a room response, with
+the phase `sin(2*pi*f1*T/L*(exp(t*L/T)-1))` and `L = ln(f2/f1)`, in
+[`tools/bank/sweep.py`](tools/bank/sweep.py). The paper is paywalled and was
+not read, so the formula is the method's usual form, and no licence was
+read; a test holds the sweep's frequency to `f1*(f2/f1)**(t/T)` within 6%.
 
 ---
 

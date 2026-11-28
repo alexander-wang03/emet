@@ -11,9 +11,11 @@ describe *what should happen*, and plugins decide what that means for a body.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
 from typing import Any, Mapping, Protocol, runtime_checkable
+from urllib.parse import urlsplit
 
 __all__ = [
     "Priority",
@@ -43,6 +45,8 @@ __all__ = [
     "AudioSource",
     "AudioSink",
     "SAMPLE_BYTES",
+    "FAULT_KINDS",
+    "FAULT_PREFIX",
     "Health",
     "Reading",
     "BodyFact",
@@ -298,6 +302,40 @@ class Transcript:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
 
 
+def _host_of(endpoint: str | None) -> str | None:
+    """The host and port an endpoint names, with no scheme, credentials or path.
+
+    `https://api.openai.com/v1` gives `api.openai.com`, and
+    `http://127.0.0.1:9380/v1` gives `127.0.0.1:9380`. A boot line and a
+    `--stats` line print this, so a user name or a password written into a
+    URL is never printed with it, and neither is a query, which can carry a
+    key. The host is lower-cased. A URL `urlsplit` cannot read, such as
+    `http://[::1/v1` with its bracket left open, is read the way one with no
+    scheme is, so the property names what was written and never raises.
+    """
+    if endpoint is None:
+        return None
+    try:
+        parts = urlsplit(endpoint)
+        name = parts.hostname
+    except ValueError:
+        name = None
+    if not name:
+        # No scheme, as in `localhost:11434`: what sits after any `//` and
+        # the last `@`, up to the first `/`, `?` or `#`. The `@` is looked
+        # for first, so a password holding a `/` is never cut into the host.
+        remainder = endpoint.split("//", 1)[-1].rsplit("@", 1)[-1]
+        bare = re.split(r"[/?#]", remainder, maxsplit=1)[0].lower()
+        return bare or None
+    if ":" in name:
+        name = f"[{name}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return f"{name}:{port}" if port is not None else name
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriberDescriptor:
     """What a speech recogniser can actually do, reported after `start()`.
@@ -309,6 +347,10 @@ class TranscriberDescriptor:
     16 kHz stream be heard at 8 kHz, which does not fail, it just produces
     nonsense. Same rule as the detector: the consumer states the format, and
     a mismatch is loud.
+
+    `endpoint` and `key_env` say where the audio goes and which key pays for
+    it. The boot line prints both, and `--stats` counts the seconds of audio
+    sent to `host` on every turn, so an owner can see what leaves the body.
     """
 
     provider: str
@@ -320,6 +362,18 @@ class TranscriberDescriptor:
     streaming: bool = False
     sample_rate: int = 16000
     healthy: bool = True
+    #: The URL the audio is sent to, as configured, with no query and no
+    #: credentials in it. None for a recogniser that runs on this body and
+    #: sends nothing off it.
+    endpoint: str | None = None
+    #: The name of the environment variable the key was read from, never the
+    #: key. None when this provider needs no key.
+    key_env: str | None = None
+
+    @property
+    def host(self) -> str | None:
+        """The host and port of `endpoint`, or None when nothing leaves the body."""
+        return _host_of(self.endpoint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,9 +506,18 @@ ReplyEvent = TextDelta | ToolCall | ReplyDone
 class LanguageModelDescriptor:
     """What a language model plugin can actually do, reported after `start()`.
 
-    `healthy` is what the boot check reads: a provider whose key is missing,
+    `healthy` is what the boot check reads. A provider whose key is missing,
     rejected, or unreachable says so here and in `health().detail`, and the
-    engine refuses to run a robot that would hear and never answer.
+    engine refuses to run a robot that would hear and never answer. One
+    unhealthy model boots all the same: one whose `health().faults` names
+    `model_unavailable`, because the vendor has retired it or does not know
+    its id. That robot wakes and says one line at each wake, so the person
+    in the room learns why it cannot answer, which a robot that refused to
+    boot would never tell them.
+
+    `endpoint` and `key_env` say where the prompt goes and which key pays for
+    it. The boot line prints both, and `--stats` counts the characters sent
+    to `host` on every turn.
     """
 
     provider: str
@@ -468,6 +531,19 @@ class LanguageModelDescriptor:
     #: says False and the engine leaves tools out of its prompts.
     tools: bool = True
     healthy: bool = True
+    #: The base URL requests go to, as configured, with no query and no
+    #: credentials in it. A server on this machine has one too, such as
+    #: `http://127.0.0.1:8080/v1`. None for a model that runs inside the
+    #: plugin and sends nothing anywhere.
+    endpoint: str | None = None
+    #: The name of the environment variable the key was read from, never the
+    #: key. None when this provider needs no key.
+    key_env: str | None = None
+
+    @property
+    def host(self) -> str | None:
+        """The host and port of `endpoint`, or None when nothing leaves the plugin."""
+        return _host_of(self.endpoint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,6 +563,9 @@ class VoiceDescriptor:
     missing, whose key is rejected or whose library is not installed says so
     here and in `health().detail`, and the engine refuses to run a robot that
     would answer and never be heard.
+
+    `endpoint` and `key_env` say where the words to be spoken go and which
+    key pays for them. A local voice such as Piper has neither.
     """
 
     provider: str
@@ -500,6 +579,17 @@ class VoiceDescriptor:
     #: and says False; the engine cannot tell them apart except by latency.
     streaming: bool = False
     healthy: bool = True
+    #: The URL the text is sent to, as configured, with no query and no
+    #: credentials in it. None for a voice that runs on this body.
+    endpoint: str | None = None
+    #: The name of the environment variable the key was read from, never the
+    #: key. None when this voice needs no key.
+    key_env: str | None = None
+
+    @property
+    def host(self) -> str | None:
+        """The host and port of `endpoint`, or None when the voice runs on this body."""
+        return _host_of(self.endpoint)
 
 
 #: Audio is int16 throughout. Two bytes a sample, everywhere.
@@ -617,16 +707,109 @@ class AudioSink(Protocol):
     async def stop(self) -> None: ...
 
 
+#: What a `Health` report may name in `faults`. Closed, as `STOP_REASONS`
+#: is, because the engine acts on the kind and a free string gets matched on
+#: its wording, which drifts.
+#:
+#: `no_key`: the key the provider needs is not set. `start_failed`: the part
+#: or the provider would not come up, a rejected key or an unreachable host
+#: included. `no_model`: a model file is missing. `no_library`: an optional
+#: library is not installed. `unpronounceable_phrase`: the wake engine
+#: cannot say the soul's wake word. `locomotion`, `health` and `unhealthy`
+#: are the engine's own, for a drive that failed, a `health()` that raised
+#: and a part that reported unhealthy with no kind.
+#:
+#: `model_unavailable`: the vendor has retired the model or does not know
+#: its id. A language model with this fault still boots, and the robot says
+#: one line at each wake in place of an answer. `out_of_credit`: the account
+#: that pays for the provider has run out of credit or reached its spend
+#: limit, which retrying cannot fix. A plugin reports either one from
+#: `health()` after the failed request, as well as at `start()`.
+FAULT_KINDS: frozenset[str] = frozenset(
+    {
+        "no_key",
+        "start_failed",
+        "no_model",
+        "no_library",
+        "unpronounceable_phrase",
+        "locomotion",
+        "health",
+        "unhealthy",
+        "model_unavailable",
+        "out_of_credit",
+    }
+)
+
+#: A plugin outside Emet names a kind of its own with this prefix, then a
+#: lower-case letter or a digit, then lower-case letters, digits and the
+#: character _, such as `x_overcurrent`. The engine treats such a kind as it
+#: treats `start_failed`.
+FAULT_PREFIX = "x_"
+
+_OWN_FAULT = re.compile(r"x_[a-z0-9][a-z0-9_]*")
+
+
+def _unknown_fault(kind: str) -> str:
+    # The prefix comes off before the trailing `_` does, so `x_` alone has
+    # nothing left and is offered `x_name`. A kind that is a set kind once
+    # its case and separators are mended, such as `model-unavailable`, is
+    # offered that kind: an `x_` kind would stop the boot that kind lets go on.
+    stem = re.sub(r"[^a-z0-9_]+", "_", kind.lower()).lstrip("_")
+    own = (
+        f"a plugin's own kind, written {FAULT_PREFIX}, then a lower-case letter or a "
+        f"digit, then lower-case letters, digits or _"
+    )
+    listed = f"emet_sdk.types.FAULT_KINDS ({', '.join(sorted(FAULT_KINDS))})"
+    if stem.strip("_") in FAULT_KINDS:
+        return (
+            f"unknown fault kind {kind!r}. Health.faults holds kinds from {listed}, "
+            f"such as {stem.strip('_')!r}, or {own}."
+        )
+    if stem.startswith(FAULT_PREFIX):
+        stem = stem[len(FAULT_PREFIX):]
+    suggestion = FAULT_PREFIX + (stem.strip("_") or "name")
+    return f"unknown fault kind {kind!r}. Health.faults holds kinds from {listed}, or {own}, such as {suggestion!r}."
+
+
 @dataclass(frozen=True, slots=True)
 class Health:
     """RSV. Polled by the engine; feeds proprioceptive self-model updates so
     that "my left wheel isn't responding" can enter context and the character
     can mention it.
+
+    `faults` says why a report is not ok, in kinds from `FAULT_KINDS` or a
+    plugin's own `x_` kind; any other string is refused here, when the report
+    is made. `detail` is the sentence a person reads. On a provider's report
+    that is ok it is a notice worth one line at boot, such as the date a
+    vendor has set for retiring the model, and the engine prints it once.
     """
 
     ok: bool = True
     detail: str | None = None
     faults: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.faults, str):
+            raise TypeError(
+                f"Health.faults is a tuple of kinds, and it was given the string "
+                f"{self.faults!r}. Write faults=({self.faults!r},)."
+            )
+        # Read once and kept as a tuple: a generator would be used up by the
+        # check below and stored empty, and a list would leave the report
+        # unhashable.
+        try:
+            kinds = tuple(self.faults)
+        except TypeError:
+            raise TypeError(
+                f"Health.faults is a tuple of kinds, and it was given {self.faults!r} "
+                f"({type(self.faults).__name__}). Write faults=() when there is none."
+            ) from None
+        for kind in kinds:
+            if not isinstance(kind, str):
+                raise TypeError(f"Health.faults holds strings, and it was given {kind!r} ({type(kind).__name__}).")
+            if kind not in FAULT_KINDS and not _OWN_FAULT.fullmatch(kind):
+                raise ValueError(_unknown_fault(kind))
+        object.__setattr__(self, "faults", kinds)
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,6 +3,5 @@ exit 1
 --- stdout
 emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
 --- stderr
-openai: could not reach https://api.openai.com/v1: ConnectError: no network in a snapshot test. The language model needs a network; the wake word does not.
 
 the language model 'openai' cannot start, so the robot would hear questions it can never answer. It will not run. could not reach https://api.openai.com/v1: ConnectError: no network in a snapshot test. The language model needs a network; the wake word does not.

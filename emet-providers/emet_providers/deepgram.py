@@ -93,6 +93,32 @@ network fault costs one turn and leaves the plugin healthy. The engine reads
 that reason and says the soul's failure line, so a robot whose hotspot died
 mid-conversation tells the person instead of standing there.
 
+**A refusal that names its kind.** A rejected handshake carries Deepgram's
+answer: websockets keeps the response, its status and its body, on the
+exception (`InvalidStatus.response`, websockets 17.1, read 2026-11-27).
+`FAULT_CODES` is read against the status and the body's `err_code` through
+`_http.fault_kind`, at boot and on each utterance's connection. Deepgram's
+errors page (developers.deepgram.com/docs/errors and
+developers.deepgram.com/reference/errors, both read 2026-11-27) documents
+HTTP 402 with `err_code` `ASR_PAYMENT_REQUIRED`, "Project does not have
+enough credits for an ASR request and does not have an overage agreement",
+and HTTP 403 with `err_code` `INSUFFICIENT_PERMISSIONS`, "Project does not
+have access to the requested model". The first is `out_of_credit` and the
+second `model_unavailable`. The page does not say whether a streaming
+handshake answers with the same body. The streaming troubleshooting page
+says a failed upgrade sends its error "back in the body of the HTTP
+response" and in the `dg-error` header, and does not show that body
+(developers.deepgram.com/docs/stt-troubleshooting-websocket-data-and-net-errors,
+read 2026-11-27), so that the handshake's body has the same shape is
+unverified. Deepgram documents no code that names an unknown model: the
+speak API answers one with HTTP 400 and the generic `Bad Request`, so a
+model Deepgram has never heard of stays `start_failed`, and the reason
+quotes Deepgram's own message. After a refusal of either kind `health()`
+reports it: `model_unavailable` for the rest of the run, `out_of_credit`
+until a connection opens again or one fails for a reason that names no
+kind. The utterance's final carries the same
+sentence in `Transcript.error`.
+
 Params, all optional, from the body's `models.stt.params`:
 
     keyterms     list of terms for Deepgram to listen for, such as the
@@ -149,11 +175,15 @@ from urllib.parse import urlencode
 from emet_sdk.plugin import PluginError, TranscriberPlugin
 from emet_sdk.types import AudioFormat, Health, Transcript, TranscriberDescriptor
 
+from emet_providers._http import api_error, endpoint_of, error_code, fault_kind, who
+
 __all__ = [
     "DeepgramTranscriber",
     "DEFAULT_MODEL",
     "DEFAULT_KEY_ENV",
     "DEFAULT_URL",
+    "FAULT_CODES",
+    "fault_detail",
     "FIXED_QUERY",
     "FORMAT_KEYS",
     "OPT_OUT",
@@ -176,6 +206,49 @@ DEFAULT_MODEL = "nova-3"
 #: Where the key is read from when the soul names no `key_env`. The name the
 #: reference soul uses, so a soul that says only `provider: deepgram` works.
 DEFAULT_KEY_ENV = "EMET_DEEPGRAM_KEY"
+
+#: What a refused handshake's status and `err_code` mean, read by
+#: `_http.fault_kind`. From Deepgram's errors page
+#: (developers.deepgram.com/docs/errors and /reference/errors, read
+#: 2026-11-27): 402 `ASR_PAYMENT_REQUIRED` is a project with too few credits
+#: and no overage agreement, and 402 is Payment Required whatever its code;
+#: 403 `INSUFFICIENT_PERMISSIONS` is a project with no access to the model
+#: asked for. The same code with 401 is a user's permissions, so it is keyed
+#: with its status. A bare 403 stays the rejected key it is today.
+FAULT_CODES: dict[tuple[int, str | None], str] = {
+    (402, "ASR_PAYMENT_REQUIRED"): "out_of_credit",
+    (402, None): "out_of_credit",
+    (403, "INSUFFICIENT_PERMISSIONS"): "model_unavailable",
+}
+
+#: Where an owner adds credit, said only at Deepgram's own address.
+_ADD_CREDIT = "Add credit to the project in Deepgram's console."
+
+
+def fault_detail(
+    kind: str,
+    *,
+    who: str,
+    at_default: bool,
+    status: int,
+    code: str | None,
+    model: str,
+    setting: str,
+    noun: str = "model",
+) -> str:
+    """The sentence an owner reads for a refusal of a known kind.
+
+    `who` is "Deepgram" at Deepgram's own address and "the server at
+    {host}" anywhere else, where the clause naming Deepgram's console is
+    left out. `setting` is the manifest key that chooses the model, and
+    `noun` what the model is called there.
+    """
+    if kind == "out_of_credit":
+        what = f"HTTP {status}, {code}" if code else f"HTTP {status}"
+        where = f" {_ADD_CREDIT}" if at_default else ""
+        return f"{who} says the account is out of credit ({what}).{where} Retrying will not help."
+    return f"{who} does not serve the {noun} {model!r} (HTTP {status}). Choose another under {setting}."
+
 
 #: Query parameters this plugin always sends; a body's `params.query`
 #: replaces any but the format keys. `interim_results` is the whole point of
@@ -346,6 +419,18 @@ def _status_code(exc: BaseException) -> int | None:
     return int(code) if isinstance(code, int) else None
 
 
+def _response_body(exc: BaseException) -> bytes:
+    """The body of a rejected handshake's response, or no bytes.
+
+    Duck-typed on `response.body`, which `websockets.http11.Response`
+    carries, so a test's stand-in serves as well as the library's own.
+    """
+    body = getattr(getattr(exc, "response", None), "body", None)
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body)
+    return body.encode("utf-8") if isinstance(body, str) else b""
+
+
 class DeepgramTranscriber(TranscriberPlugin):
     """Streaming recognition through Deepgram, one connection per utterance."""
 
@@ -367,6 +452,12 @@ class DeepgramTranscriber(TranscriberPlugin):
         self._key: str | None = None
         self._started = False
         self._fault: str | None = None
+        self._fault_kind = "start_failed"
+        #: A refusal of a known kind on an utterance's connection, as
+        #: `(kind, detail)`: `model_unavailable` holds for the rest of the
+        #: run, `out_of_credit` until a connection opens again or one fails
+        #: for a reason that names no kind.
+        self._run_fault: tuple[str, str] | None = None
         self._utterance: _Utterance | None = None
         #: The last failure inside an utterance, for diagnostics. Not a fault:
         #: a dropped connection is a bad moment, not a broken plugin.
@@ -497,7 +588,8 @@ class DeepgramTranscriber(TranscriberPlugin):
                 f"no key: the environment variable {self.key_env_name} is not set. "
                 f"Deepgram keys come from console.deepgram.com; export it in the "
                 f"shell that runs the robot. The key is never written into a soul "
-                f"or a manifest."
+                f"or a manifest.",
+                kind="no_key",
             )
             return
 
@@ -507,22 +599,63 @@ class DeepgramTranscriber(TranscriberPlugin):
             except ImportError:
                 self._fail(
                     "the websockets library is not installed. It is an optional "
-                    "dependency: install `emet-providers[deepgram]`."
+                    "dependency: install `emet-providers[deepgram]`.",
+                    kind="no_library",
                 )
                 return
             self._connect = connect
 
         if self.preflight:
-            reason = await self._preflight()
-            if reason:
-                self._fail(reason)
+            refused = await self._preflight()
+            if refused:
+                reason, kind = refused
+                self._fail(reason, kind=kind)
                 return
 
         self._started = True
         log.info("deepgram: ready, model %s at %d Hz", self.model_name, self.format.sample_rate)
 
-    async def _preflight(self) -> str | None:
-        """Open one connection and close it. Returns the reason it could not."""
+    def _who(self) -> str:
+        """Deepgram at its own address, and the server at its host anywhere else."""
+        return who(self.url, default_url=DEFAULT_URL, vendor="Deepgram", host=self.describe().host)
+
+    def _judge(self, exc: BaseException) -> tuple[str, str] | None:
+        """The kind and the owner's sentence for a refused handshake whose
+        status and `err_code` are in `FAULT_CODES`, or None."""
+        status = _status_code(exc)
+        if status is None:
+            return None
+        body = _response_body(exc)
+        kind = fault_kind(status, body, FAULT_CODES)
+        if kind is None:
+            return None
+        named = self._who()
+        detail = fault_detail(
+            kind,
+            who=named,
+            at_default=named == "Deepgram",
+            status=status,
+            code=error_code(body),
+            model=self.model_name,
+            setting="models.stt.model",
+        )
+        return kind, detail
+
+    def _refused(self, exc: BaseException) -> str:
+        """A refused handshake of no known kind, in the server's words when
+        the response carried any. The sentence names Deepgram at its own
+        address and the server at its host anywhere else (C7)."""
+        code = _status_code(exc)
+        body = _response_body(exc)
+        named = self._who()
+        named = named[:1].upper() + named[1:]
+        if code is not None and body.strip():
+            return f"{named} refused the connection: {api_error(code, body)}"
+        return f"{named} refused the connection with HTTP {code}: {exc}"
+
+    async def _preflight(self) -> tuple[str, str] | None:
+        """Open one connection and close it. Returns the reason it could not,
+        with its fault kind."""
         assert self._connect is not None
         try:
             ws = await asyncio.wait_for(
@@ -535,22 +668,26 @@ class DeepgramTranscriber(TranscriberPlugin):
             )
         except asyncio.TimeoutError:
             return (
-                f"could not reach {self.url} within {self.open_timeout_s:.0f} s. "
+                f"could not reach {endpoint_of(self.url)} within {self.open_timeout_s:.0f} s. "
                 f"Speech recognition needs a network; the wake word does not."
-            )
+            ), "start_failed"
         except Exception as exc:  # noqa: BLE001 - every failure here is reported, not raised
+            judged = self._judge(exc)
+            if judged is not None:
+                kind, detail = judged
+                return detail, kind
             code = _status_code(exc)
             if code in (401, 403):
                 return (
                     f"Deepgram rejected the key in {self.key_env_name} (HTTP {code}). "
                     f"Check the key, and that it has the transcription scope."
-                )
+                ), "start_failed"
             if code is not None:
-                return f"Deepgram refused the connection with HTTP {code}: {exc}"
+                return self._refused(exc), "start_failed"
             return (
-                f"could not reach {self.url}: {type(exc).__name__}: {exc}. "
+                f"could not reach {endpoint_of(self.url)}: {type(exc).__name__}: {exc}. "
                 f"Speech recognition needs a network; the wake word does not."
-            )
+            ), "start_failed"
         try:
             await ws.send(_CLOSE_STREAM)
             try:
@@ -577,9 +714,13 @@ class DeepgramTranscriber(TranscriberPlugin):
         except Exception:  # noqa: BLE001 - closing a closed socket is not news
             pass
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, *, kind: str = "start_failed") -> None:
+        # INFO: the engine prints the reason through `health().detail`, so
+        # logging's last resort, which prints WARNING and above, would print
+        # it twice (contract 0.5.7 section 3.3, L16).
         self._fault = reason
-        log.error("deepgram: %s", reason)
+        self._fault_kind = kind
+        log.info("deepgram: %s", reason)
 
     async def shutdown(self) -> None:
         self._started = False
@@ -600,12 +741,16 @@ class DeepgramTranscriber(TranscriberPlugin):
             streaming=True,
             sample_rate=self.format.sample_rate,
             healthy=self._started,
+            endpoint=endpoint_of(self.url),
+            key_env=self.key_env_name,
         )
 
     def health(self) -> Health:
         if self._fault:
-            fault = "no_key" if "no key" in self._fault else "start_failed"
-            return Health(ok=False, detail=self._fault, faults=(fault,))
+            return Health(ok=False, detail=self._fault, faults=(self._fault_kind,))
+        if self._run_fault is not None:
+            kind, detail = self._run_fault
+            return Health(ok=False, detail=detail, faults=(kind,))
         return Health()
 
     # ---------------------------------------------------------- recognition
@@ -651,20 +796,37 @@ class DeepgramTranscriber(TranscriberPlugin):
                 utterance.task.add_done_callback(_swallow)
                 error = f"no final within {self.timeout_s:.0f} s of CloseStream"
                 self.last_error = error
-                log.warning("deepgram: %s; returning what was heard", error)
+                # INFO: the engine prints `Transcript.error` (L16).
+                log.info("deepgram: %s; returning what was heard", error)
             else:
                 try:
                     utterance.task.result()
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - reported, and the words so far returned
-                    error = f"{type(exc).__name__}: {exc}"
+                    error = self._utterance_error(exc)
                     self.last_error = error
-                    log.warning("deepgram: %s; returning what was heard", error)
+                    log.info("deepgram: %s; returning what was heard", error)
 
         confidences = utterance.final_confidences or [utterance.interim_confidence]
         confidence = max(0.0, min(1.0, sum(confidences) / len(confidences)))
         return Transcript(text=utterance.text, final=True, confidence=confidence, error=error)
+
+    def _utterance_error(self, exc: BaseException) -> str:
+        """What a failed utterance's final says. A refusal of a known kind
+        is the owner's sentence, and `health()` reports its kind from here;
+        a refused handshake of no known kind quotes Deepgram; anything else
+        is the exception, as it came."""
+        judged = self._judge(exc)
+        if judged is not None:
+            self._run_fault = judged
+            return judged[1]
+        if self._run_fault is not None and self._run_fault[0] == "out_of_credit":
+            # A failure that names no kind is news of the network, never of the account.
+            self._run_fault = None
+        if _status_code(exc) is not None:
+            return self._refused(exc)
+        return f"{type(exc).__name__}: {exc}"
 
     async def _pump(self, utterance: _Utterance) -> None:
         """Connect, then send frames and receive results until both sides end."""
@@ -674,6 +836,9 @@ class DeepgramTranscriber(TranscriberPlugin):
             additional_headers=self._headers(),
             open_timeout=self.open_timeout_s,
         )
+        if self._run_fault is not None and self._run_fault[0] == "out_of_credit":
+            # Deepgram took the connection, so the account pays again.
+            self._run_fault = None
         utterance.ws = ws
         try:
             async with asyncio.TaskGroup() as group:

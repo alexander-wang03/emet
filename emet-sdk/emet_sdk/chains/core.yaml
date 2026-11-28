@@ -189,6 +189,23 @@ signal.error:
       action: explain
       params: {topic: error}
 
+# Performed at the end of a wake's turn while the language model is one
+# the vendor has retired or does not know. Its own signal, since
+# `signal.offline` says the network or a server is down, and here both
+# answer and nothing will change until the owner chooses another model.
+signal.unavailable:
+  mode: first
+  rungs:
+    - actuator: {role: status, type: light}
+      action: solid
+      params: {hue: 30, brightness: 0.4}
+    - actuator: {role: eyes}
+      action: expression
+      params: {preset: dim}
+    - actuator: {voice: true}
+      action: explain
+      params: {topic: unavailable}
+
 # ------------------------------------------------------------------- idle
 #
 # Lowest priority, preempted by anything. Every chain terminates in

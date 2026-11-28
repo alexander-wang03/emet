@@ -111,7 +111,7 @@ def test_every_problem_is_listed_not_only_the_first():
 
 
 def a_generated_manifest() -> dict:
-    """A recording a generated voice made: a "g" speaker, and what made it."""
+    """A recording a generated voice made, with a "g" speaker and what made it."""
     doc = a_manifest()
     doc.update(speaker="g01", generated={"voice": "voices/g01.json"})
     return doc

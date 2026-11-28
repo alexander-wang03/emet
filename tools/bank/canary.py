@@ -8,6 +8,9 @@ cassette turn's exact bytes live through the real Deepgram plugin, and sets
 the model version Deepgram reports and the final it gives beside the
 cassette's. Either differing prints `stale`: the turns recorded on the old
 model go on the next batch's paid list (`verification-design.md` 5.4, P15).
+A final differs when its words do. One that differs in case or punctuation
+alone stays `fresh` with a note, since Deepgram has given the same bytes
+back without their question mark at the same model version (ledger L45).
 
 **It spends money only with `--spend`.** Without it, it runs only the
 checks that need no network, says what it would spend (the cassette and the
@@ -64,12 +67,26 @@ refusal names the first turn there that carries the opt-out.
         --turn 1 --audio "$BANK/misses/2026-11-26" --keys ~/.config/emet/keys.env --out "$BANK/canary/2026-11"
     # then the same line with --spend
 
-Writes `<out>/canary.json` (the verdict, the live turn's messages, each live
-test's outcome), `<out>/live/` (the live tests' records) and
-`<out>/live-tests.log` and `.xml`.
+`--out` is made absolute before anything runs, since the live tests run
+from `emet-providers/`: a relative `--out` once put their XML and records
+inside the repository's tree and left `canary.json` reading no XML (ledger
+L43, 2026-11-27).
 
-Exit: 0 fresh with every live test passed; 1 stale, failed, or a live test
-that did not pass; 2 refused.
+**The lifecycle step** comes after the live turn (contract §5.3, MC3): one
+free `GET` a row of `emet_providers/lifecycle.py` at the vendor's models
+endpoint, which spends no token, with the key the provider reads. It prints
+one line a row, `lifecycle  MODEL  VENDOR  WHAT THE VENDOR SAYS (table: DATE
+or none)`, and fails a row the vendor does not know (a 404, or a Deepgram
+model it does not list) or whose retirement date the table lacks, naming the
+row to update. A vendor whose key is absent is `not run: no key`.
+
+Writes `<out>/canary.json` (the verdict, the live turn's messages, each live
+test's outcome, each lifecycle row), `<out>/live/` (the live tests' records)
+and `<out>/live-tests.log` and `.xml`.
+
+Exit: 0 fresh with every live test passed and every lifecycle row read and
+current; 1 stale, failed, a live test that did not pass, or a lifecycle row
+that failed or was not run; 2 refused.
 """
 
 from __future__ import annotations
@@ -84,6 +101,9 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 import wave
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -241,7 +261,7 @@ def ledger_spend(path: Path, entry: dict[str, Any], month: str) -> int:
 
 
 def local_time(now: datetime.datetime) -> str:
-    """The ledger's time: `2026-10-27 23:40:00 PDT`."""
+    """The ledger's time, as `2026-10-27 23:40:00 PDT`."""
     name = now.tzname() or ""
     if " " in name:  # Windows says "Pacific Daylight Time"
         name = "".join(word[0] for word in name.split())
@@ -428,12 +448,26 @@ async def replay(
     return out
 
 
+#: A word of a final as two finals are compared: a run of letters and digits.
+WORD = re.compile(r"[^\W_]+")
+
+
+def final_words(text: str | None) -> list[str]:
+    """A final's words, case folded, with its punctuation and the apostrophe
+    inside a word dropped. Deepgram gave 2 of dg08 and dg09's 17 finals
+    again without their question mark, at the same model version and from
+    the same bytes (ledger L45, 2026-11-27), so the punctuation alone says
+    nothing about the model."""
+    return WORD.findall((text or "").casefold().replace("'", "").replace("’", ""))
+
+
 def compare(turn: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
-    """`fresh`, `stale` (the model version or the final differs), or
-    `failed` (the replay cannot be compared)."""
+    """`fresh`, `stale` (the model version or the final's words differ), or
+    `failed` (the replay cannot be compared). A final that differs in its
+    case or punctuation alone stays fresh, with a note that says so."""
 
     def failed(reason: str) -> dict[str, Any]:
-        return {"verdict": "failed", "reasons": [reason]}
+        return {"verdict": "failed", "reasons": [reason], "notes": []}
 
     if live.get("error"):
         return failed(f"the replay did not run: {live['error']}")
@@ -446,13 +480,16 @@ def compare(turn: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
         return failed("Deepgram's Metadata names other bytes than the turn's")
     if not live.get("model") or not live["model"].get("version"):
         return failed("Deepgram reported no model version")
-    reasons = []
+    reasons, notes = [], []
     then, now = turn["model_version"], live["model"]["version"]
     if now != then:
         reasons.append(f"model version: {then} in the cassette, {now} now")
-    if final.get("text") != turn["final"]["text"]:
-        reasons.append(f"final: {turn['final']['text']!r} in the cassette, {final.get('text')!r} now")
-    return {"verdict": "stale" if reasons else "fresh", "reasons": reasons}
+    shown = f"{turn['final']['text']!r} in the cassette, {final.get('text')!r} now"
+    if final_words(final.get("text")) != final_words(turn["final"]["text"]):
+        reasons.append(f"final: {shown}")
+    elif final.get("text") != turn["final"]["text"]:
+        notes.append(f"final: {shown}, the same words")
+    return {"verdict": "stale" if reasons else "fresh", "reasons": reasons, "notes": notes}
 
 
 # -------------------------------------------------------------- live tests
@@ -479,7 +516,10 @@ def read_junit(path: Path) -> dict[str, str]:
 
 
 def run_live_tests(env: dict[str, str], out: Path) -> dict[str, str]:
-    """The four live tests in their own process, with recording on."""
+    """The four live tests in their own process, with recording on. The
+    process runs from `emet-providers/`, so the XML's path is made absolute
+    first and the XML read back is the one it wrote (ledger L43)."""
+    out = Path(out).resolve()
     xml, log = out / "live-tests.xml", out / "live-tests.log"
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA", f"--junitxml={xml}", *LIVE_TESTS]
     with open(log, "w", encoding="utf-8") as handle:
@@ -488,6 +528,170 @@ def run_live_tests(env: dict[str, str], out: Path) -> dict[str, str]:
         except subprocess.TimeoutExpired:
             handle.write("\ncanary: the live tests took longer than 900 s and were stopped\n")
     return read_junit(xml)
+
+
+# --------------------------------------------------------------- lifecycle
+
+#: The lifecycle step's limit for each GET, in seconds (contract §5.3).
+LIFECYCLE_TIMEOUT_S = 20
+
+#: Each vendor's models endpoint, read at its API reference on 2026-11-27.
+#: OpenAI's "Retrieve model", `GET /v1/models/{model}` with a Bearer key,
+#: answers `shutdown_date`, a date or null. Anthropic's "Get a Model",
+#: `GET /v1/models/{model_id}` with `x-api-key` and `anthropic-version`,
+#: answers `lifecycle` (`active`, `deprecated` or `retired`) and
+#: `retires_at`, an RFC 3339 time or null. Deepgram's "List Models",
+#: `GET /v1/models` with `Authorization: Token`, lists `stt` and `tts`
+#: models by `canonical_name` and states no retirement date; its "Get a
+#: Model" takes a model's UUID and never its name, so the list is read.
+#: Each is free and spends no token.
+LIFECYCLE_URLS = {
+    "openai": "https://api.openai.com/v1/models/{model}",
+    "anthropic": "https://api.anthropic.com/v1/models/{model}",
+    "deepgram": "https://api.deepgram.com/v1/models",
+}
+
+
+def lifecycle_defaults() -> tuple[Any, ...]:
+    """`emet_providers.lifecycle.DEFAULTS`, the table release_check.py holds
+    the defaults to."""
+    from emet_providers import lifecycle
+
+    return tuple(lifecycle.DEFAULTS)
+
+
+def lifecycle_keys() -> dict[str, str]:
+    """The variable each vendor's key is read from, the provider's own."""
+    from emet_providers import anthropic, deepgram, openai
+
+    return {"openai": openai.DEFAULT_KEY_ENV, "anthropic": anthropic.DEFAULT_KEY_ENV,
+            "deepgram": deepgram.DEFAULT_KEY_ENV}
+
+
+def lifecycle_headers(vendor: str, key: str) -> dict[str, str]:
+    if vendor == "anthropic":
+        from emet_providers import anthropic
+
+        return {"x-api-key": key, "anthropic-version": anthropic.API_VERSION}
+    if vendor == "deepgram":
+        return {"Authorization": f"Token {key}"}
+    return {"Authorization": f"Bearer {key}"}
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow no redirect. urllib's own handler copies every header but
+    Content-Length and Content-Type into the request it sends to the new
+    place, the key's header among them, and takes any http, https or ftp
+    address, plain http after https included (CPython 3.13's
+    `urllib/request.py`, `redirect_request` and `http_error_302`, read
+    2026-11-27). The providers send the same keys through httpx, which
+    follows no redirect unless asked. So a 3xx here is the vendor's answer
+    and a failed row, and the key goes to no other place."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fetch_url(url: str, headers: dict[str, str], timeout: float) -> tuple[int, bytes]:
+    """One GET, its status and its body. An HTTP error is a status and never
+    an exception, a redirect among them, since none is followed; a network
+    failure raises `OSError`."""
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read() or b""
+
+
+def vendor_says(vendor: str, model: str, body: Any) -> tuple[str, str | None, bool]:
+    """What the vendor's answer says of one model. It returns the words for
+    the line, the retirement date given (YYYY-MM-DD) or None, and whether
+    the vendor knows the model and still serves it."""
+    if not isinstance(body, dict):
+        return "an answer that is not a JSON object", None, False
+    if vendor == "openai":
+        date = body.get("shutdown_date")
+        date = str(date)[:10] if date else None
+        return (f"shuts down on {date}" if date else "known, no shutdown date announced"), date, True
+    if vendor == "anthropic":
+        stage = str(body.get("lifecycle") or "active")
+        date = body.get("retires_at")
+        date = str(date)[:10] if date else None
+        words = f"{stage}, retires on {date}" if date else f"{stage}, no retirement scheduled"
+        return words, date, stage != "retired"
+    listed = [m for kind in ("stt", "tts") for m in body.get(kind) or [] if isinstance(m, dict)]
+    if any(m.get("canonical_name") == model for m in listed):
+        return "listed, and Deepgram states no retirement date", None, True
+    return f"not listed among Deepgram's {len(listed)} models", None, False
+
+
+def lifecycle_check(rows: tuple[Any, ...], keys: dict[str, str], env: dict[str, str],
+                    fetch: Callable[[str, dict[str, str], float], tuple[int, bytes]] = fetch_url
+                    ) -> list[dict[str, Any]]:
+    """One GET a row, and the row's verdict. A row is `ok`; `failed`, when
+    the vendor does not know the model, retires it on a date the table
+    lacks, or could not be read; or `not run`. The key is sent and never
+    kept or printed. Deepgram's list is fetched once for all its rows."""
+    results = []
+    lists: dict[str, tuple[int | None, Any, str | None]] = {}
+    for row in rows:
+        vendor, model = str(row.vendor).casefold(), str(row.model)
+        table = row.retires or "none"
+        result: dict[str, Any] = {"model": model, "vendor": vendor, "table": row.retires, "says": None,
+                                  "vendor_retires": None, "verdict": "ok", "reason": None}
+        results.append(result)
+        key_env = keys.get(vendor)
+        if vendor not in LIFECYCLE_URLS or key_env is None:
+            result.update(verdict="not run", says="not run: no models endpoint is known for this vendor")
+            continue
+        if not env.get(key_env):
+            result.update(verdict="not run", says="not run: no key")
+            continue
+        url = LIFECYCLE_URLS[vendor].format(model=urllib.parse.quote(model, safe=""))
+        if url not in lists:
+            try:
+                status, raw = fetch(url, lifecycle_headers(vendor, env[key_env]), LIFECYCLE_TIMEOUT_S)
+            except OSError as exc:
+                lists[url] = (None, None, f"{type(exc).__name__}: {exc}")
+            else:
+                try:
+                    body = json.loads(raw.decode("utf-8") or "null")
+                except ValueError:
+                    body = None
+                lists[url] = (status, body, None)
+        status, body, error = lists[url]
+        if error is not None:
+            result.update(verdict="failed", says=f"could not be read ({error})",
+                          reason="the vendor could not be read, so the row is unchecked")
+        elif status == 404:
+            result.update(verdict="failed", says="HTTP 404: the vendor does not know the model",
+                          reason="the vendor does not know the model; choose another default")
+        elif status != 200:
+            result.update(verdict="failed", says=f"HTTP {status}, and no answer about the model",
+                          reason="the vendor could not be read, so the row is unchecked")
+        else:
+            words, date, known = vendor_says(vendor, model, body)
+            result.update(says=words, vendor_retires=date)
+            if not known:
+                result.update(verdict="failed", reason="the vendor no longer serves the model; choose another default")
+            elif date and date != row.retires:
+                result.update(verdict="failed",
+                              reason=f"the vendor retires it on {date}, and the table says {table}. Record "
+                                     f"{date} with its source and the day it was read")
+    return results
+
+
+def lifecycle_lines(results: list[dict[str, Any]]) -> list[str]:
+    """The step's lines, one a row, with the row to update under a failed one."""
+    lines = []
+    for r in results:
+        lines.append(f"lifecycle  {r['model']}  {r['vendor']}  {r['says']} (table: {r['table'] or 'none'})")
+        if r["verdict"] == "failed":
+            lines.append(f"  update the row for {r['model']!r} in emet-providers/emet_providers/lifecycle.py: "
+                         f"{r['reason']}")
+    return lines
 
 
 # -------------------------------------------------------------------- main
@@ -507,6 +711,8 @@ def main(
     sleep: Callable[[float], Any] = asyncio.sleep,
     now: Callable[[], datetime.datetime] = lambda: datetime.datetime.now().astimezone(),
     engine: Callable[[], dict[str, Any]] = engine_info,
+    rows: Callable[[], tuple[Any, ...]] = lifecycle_defaults,
+    fetch: Callable[[str, dict[str, str], float], tuple[int, bytes]] = fetch_url,
 ) -> int:
     parser = argparse.ArgumentParser(description="The monthly canary. Spends money only with --spend.")
     parser.add_argument("--ledger", required=True, type=Path, help="the Deepgram ledger")
@@ -517,6 +723,9 @@ def main(
     parser.add_argument("--keys", type=Path, help="the keys file; without it, the default places")
     parser.add_argument("--spend", action="store_true", help="run the live tests and the live turn, and write the ledger")
     args = parser.parse_args(argv)
+    # The live tests run from emet-providers/, so a relative --out would be
+    # read there by them and here by this process (ledger L43).
+    args.out = args.out.resolve()
 
     try:
         try:
@@ -602,6 +811,15 @@ def main(
 
     live = asyncio.run(replay(turn, audio, connect, sleep))
     result = compare(turn, live)
+    try:
+        table: tuple[Any, ...] | None = rows()
+    except (ImportError, AttributeError) as exc:
+        table = None
+        print(f"lifecycle  not run: the defaults table could not be read ({type(exc).__name__}: {exc})")
+    checked = [] if table is None else lifecycle_check(table, lifecycle_keys(), dict(os.environ), fetch)
+    for line in lifecycle_lines(checked):
+        print(line)
+    current = table is not None and all(r["verdict"] == "ok" for r in checked)
     record = {
         "format": "emet-canary/1",
         "time": local_time(started),
@@ -610,6 +828,7 @@ def main(
         "turn": turn,
         "live_tests": outcomes,
         "live": live,
+        "lifecycle": checked,
         **result,
     }
     text = json.dumps(record, indent=1, ensure_ascii=False) + "\n"
@@ -627,7 +846,9 @@ def main(
     print(result["verdict"])
     for reason in result["reasons"]:
         print(f"  {reason}")
-    return 0 if result["verdict"] == "fresh" and passed == len(outcomes) else 1
+    for note in result["notes"]:
+        print(f"  note: {note}")
+    return 0 if result["verdict"] == "fresh" and passed == len(outcomes) and current else 1
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ REQUEST = {
 
 
 def chunk(n: int, size: int = 2560) -> bytes:
-    """Distinct, deterministic bytes: chunk(1) differs from chunk(2)."""
+    """Distinct, deterministic bytes, so chunk(1) differs from chunk(2)."""
     return bytes((n + i) % 251 for i in range(size))
 
 
@@ -115,7 +115,7 @@ def test_a_request_has_exactly_its_four_fields(request_, words):
 
 
 def test_the_request_is_the_one_the_deepgram_plugin_would_make():
-    """Built offline: the plugin is asked for its query and never started."""
+    """The request is built offline, with the plugin asked for its query and never started."""
     from emet_sdk.types import AudioFormat
 
     from emet_providers.deepgram import DeepgramTranscriber

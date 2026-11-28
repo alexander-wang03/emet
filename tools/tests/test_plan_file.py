@@ -22,8 +22,8 @@ TOOLS = Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import plan_file  # noqa: E402
-from plan_file import FlagGap, LedgerRow, PlanError, StageRow, Table  # noqa: E402
+import plan_file  # noqa: E402  a tool, imported by its bare name from tools/
+from plan_file import FlagGap, LedgerRow, PlanError, StageRow, Table  # noqa: E402  a tool, imported by its bare name from tools/
 
 #: `Project Emet/`, the folder the repository sits in.
 PROJECT = Path(__file__).resolve().parents[3]
@@ -1053,3 +1053,7 @@ def test_the_real_template_reads_with_only_its_two_placeholders_as_problems():
     assert not any(row.done for row in plan.stages)
     assert plan.ledger == (), "the placeholder row is skipped"
     assert plan.flag_gaps == ()
+    # An empty flag_gaps also comes from a template with no flag-gap table,
+    # so the header itself is held to the parser's columns (ledger L19).
+    budgets = plan_file.tables_under(REAL_TEMPLATE.read_text(encoding="utf-8"), plan_file.BUDGETS_HEADING)
+    assert plan_file.FLAG_GAP_COLUMNS in [table.header for table in budgets], [t.header for t in budgets]

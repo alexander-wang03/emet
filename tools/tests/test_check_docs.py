@@ -19,8 +19,8 @@ REPO = TOOLS.parent
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import check_docs as cd  # noqa: E402
-from check_docs import RUN, SKIP, UNKNOWN, Rule  # noqa: E402
+import check_docs as cd  # noqa: E402  a tool, imported by its bare name from tools/
+from check_docs import RUN, SKIP, UNKNOWN, Rule  # noqa: E402  a tool, imported by its bare name from tools/
 
 FAKE_RULES = (
     Rule(r"cd (?![~/$])\S+", RUN, "moves the block's working folder"),
@@ -333,6 +333,8 @@ NEVER_RUN = (
     "emet-listen examples/pi-speakerphone.yaml examples/emet-soul.yaml",
     "emet-listen m.yaml s.yaml --replay r.wav",
     "emet-talk examples/pi-speakerphone.yaml examples/emet-soul.yaml",
+    "emet-say examples/pi-speakerphone.yaml examples/emet-soul.yaml Hello.",
+    "emet-say m.yaml s.yaml Hello. --to out.wav",
     "git commit -s -m x", "git push origin master", "git tag -s v1",
     "python tools/release_audit.py --pr 16 --merge", "python tools/tag_release.py 0.5.6 --push",
     "python tools/body/run.py --release 0.5.6 --tree", "ssh emet-pi",
@@ -385,7 +387,7 @@ def test_dev_check_with_the_venvs_own_interpreter_is_classified():
 
 
 def test_every_run_rule_is_one_of_the_safe_kinds():
-    safe_starts = ("cd ", "emet validate", "emet (?:validate", "emet --version", "emet(?:-listen|-talk)? (?:--help",
+    safe_starts = ("cd ", "emet validate", "emet (?:validate", "emet --version", "emet(?:-listen|-talk|-say)? (?:--help",
                    cd.PY + r" tools/(?:check_", r"(?:" + cd.PY + r" -m pytest",
                    cd.PY + r" tools/bank/generate\.py --plan", cd.PY + r" tools/ci\.py --list")
     for rule in cd.RULES:
@@ -414,7 +416,7 @@ def test_the_real_documents_run_only_what_the_table_calls_safe():
                     assert not words[1].startswith(("~", "/", "$")), text
                 elif words[0] == "emet":
                     assert words[1] in ("validate", "explain", "--version", "--help", "-h"), text
-                elif words[0] in ("emet-listen", "emet-talk"):
+                elif words[0] in ("emet-listen", "emet-talk", "emet-say"):
                     assert words[1:] in (["--help"], ["-h"]), text
                 elif words[0] in pythons and words[1:3] != ["-m", "pytest"]:
                     assert (words[1].startswith("tools/check_") or words[1] in checks

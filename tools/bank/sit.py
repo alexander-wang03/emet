@@ -121,7 +121,7 @@ def tone(hz: float, ms: int, level: float, rate: int = TONE_RATE) -> bytes:
 
 
 def warning(rate: int = TONE_RATE) -> bytes:
-    """Two low tones with a gap: the cues were lost, or the tones stopped."""
+    """Two low tones with a gap, which say the cues were lost or the tones stopped."""
     one = sine(*WARNING, rate=rate)
     return as_wav(one + bytes(2 * int(rate * WARNING_GAP_MS / 1000)) + one, rate)
 

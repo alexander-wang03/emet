@@ -104,11 +104,11 @@ jobs:
   # the laptop, 2026-11-26, the replay alone took about 9 minutes (stream
   # C3); the limit leaves room for a slower runner and the 247 MB download.
   #
-  # Advisory. E12 (c)'s count is ten green runs, at least two of them pull
-  # requests (RELEASE_PROCESS.md §11), and this job never runs on a pull
-  # request, so it stays advisory until the maintainer says which count a
-  # weekly job graduates on. Each release's plan records its results under
-  # "The first CI run" in its §3.
+  # Advisory until it graduates. This job never runs on a pull request, so
+  # E12 (c)'s count, ten green runs with two pull requests among them, can
+  # never reach it; it graduates on 0.5.7-D9 (a)'s count instead, ten green
+  # scheduled runs (RELEASE_PROCESS.md §11). Each release's plan records its
+  # results under "The first CI run" in its §3.
   bank-full:
     name: bank-full (advisory)
     runs-on: ubuntu-latest

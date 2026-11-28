@@ -28,12 +28,16 @@ source, wall-clock comparisons are meaningless and are labelled as such.
 
 from __future__ import annotations
 
+import ipaddress
+import math
+import statistics
 import time
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
-__all__ = ["Handover", "SessionStats", "Stopwatch"]
+__all__ = ["OUTCOMES", "STAGES", "Handover", "Sent", "SessionStats", "Spread", "Stopwatch", "Tokens", "TurnRecord"]
 
 #: How many per-frame timings to keep for percentiles. Ten minutes at 80 ms
 #: frames is 7500, so this holds a whole soak run; a robot left on for a week
@@ -96,6 +100,294 @@ class Handover:
         if self.cut_short:
             line += f"; the last {self.heard_ms:.0f} ms handed over as heard"
         return line
+
+
+#: What a turn came to, in the order the contract lists them. `answered` is a
+#: reply with words that ended well; `cut_at_cap` one with words that stopped
+#: at the token cap and `empty_at_cap` one that stopped there before any;
+#: `declined` the provider's refusal; `failed` a reply whose request failed;
+#: `unavailable` a model that cannot answer; `out_of_credit` an unpaid
+#: account; `words_lost` a final transcript that carried an error and no
+#: words; `nothing_heard` an empty final with no error; `no_speech` a wake and
+#: then nothing; `not_answered` a run that asked no model.
+OUTCOMES = (
+    "answered",
+    "cut_at_cap",
+    "empty_at_cap",
+    "declined",
+    "failed",
+    "unavailable",
+    "out_of_credit",
+    "words_lost",
+    "nothing_heard",
+    "no_speech",
+    "not_answered",
+)
+
+#: The three stages that can send something off the body, in the order the
+#: per-turn line and the footer name them.
+STAGES = ("stt", "llm", "voice")
+
+
+def _on_this_machine(host: str) -> bool:
+    """Whether a stage's host is the machine the engine runs on.
+
+    `localhost`, a loopback address (127.0.0.0/8, `::1`) and the unspecified
+    address (`0.0.0.0`, `::`), which a client reaches as this machine: a
+    model server on the body, such as llama-server at `127.0.0.1:9380`. Any
+    other host is off the body, an address on the home network included,
+    so a doubtful host is counted as having left. `host` is a descriptor's,
+    `127.0.0.1:9380` or `[::1]:8080`, the port optional.
+    """
+    name = host.strip().lower()
+    if name.startswith("["):
+        name = name[1:].split("]", 1)[0]
+    elif name.count(":") == 1:
+        name = name.split(":", 1)[0]
+    if name == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+class Sent(NamedTuple):
+    """What one stage sent to one host, as seconds of audio for the
+    transcriber and as characters for the language model and the voice."""
+
+    stage: str
+    host: str
+    amount: float
+
+    def text(self) -> str:
+        """The entry as the per-turn line and the footer print it."""
+        if self.stage == "stt":
+            return f"{self.amount:.1f} s of audio to {self.host}"
+        return f"{self.amount:.0f} characters to {self.host}"
+
+
+class Spread(NamedTuple):
+    """The median, the mean and the largest of some turns' gaps, and how many."""
+
+    median_ms: float
+    mean_ms: float
+    max_ms: float
+    n: int
+
+
+class Tokens(NamedTuple):
+    """Tokens summed over the turns that counted any.
+
+    A side no turn counted is None, so a vendor that reports only what it
+    wrote never reads as having read nothing. `n` is how many turns counted
+    either side.
+    """
+
+    input: int | None
+    output: int | None
+    n: int
+
+
+def _whole_terms(total: float, terms: Sequence[float]) -> list[int]:
+    """Whole milliseconds for each term that add up to the rounded total.
+
+    Rounding each term alone can leave "2260 = 960 + 410 + 620 + 271", a sum
+    a reader checks and finds wrong. Each term is rounded down and the
+    milliseconds left over go to the terms with the largest remainders, so
+    no term moves by a whole millisecond and the line's sum holds. The total
+    is rounded as `:.0f` rounds it, so the gap reads as the events file has
+    it. A term can therefore read 1 ms off the same figure rounded alone, as
+    the events file and the footer's means print it: 620 in the line where
+    the file says `"reply_first_ms": 621`. The line keeps its sum, and the
+    file keeps each figure.
+    """
+    whole = round(total)
+    floors = [math.floor(term) for term in terms]
+    short = whole - sum(floors)
+    by_remainder = sorted(range(len(terms)), key=lambda i: terms[i] - floors[i], reverse=True)
+    for i in by_remainder[:short]:
+        floors[i] += 1
+    return floors
+
+
+def _total(counts: Sequence[int]) -> int | None:
+    """The sum of some counts, or None when there are none to sum."""
+    return sum(counts) if counts else None
+
+
+def _tokens_text(input_tokens: int | None, output_tokens: int | None, *, long: bool) -> str | None:
+    """`967 tokens in, 18 out`, or the one side counted, or None for neither.
+    The footer's form leaves out the word `tokens`, which its label holds."""
+    word = " tokens" if long else ""
+    if input_tokens is not None and output_tokens is not None:
+        return f"{input_tokens}{word} in, {output_tokens} out"
+    if input_tokens is not None:
+        return f"{input_tokens}{word} in"
+    if output_tokens is not None:
+        return f"{output_tokens}{word} out"
+    return None
+
+
+@dataclass
+class TurnRecord:
+    """One turn in figures, from the person's last loud frame to the robot's
+    first sound.
+
+    The session makes one at each turn's endpoint, appends it to
+    `SessionStats.turn_records`, and fills it in place as the turn goes: the
+    wait for the final transcript, the reply's first word, the first sound at
+    the sink, the tokens each reply counted, and what each stage was handed.
+    `--stats` prints `line()` as the turn's last line, the footer sums the
+    records, and `--events` writes each record once its turn is done, its keys
+    in the order of the fields below.
+
+    The gap is the wait a person feels. It is the quiet the endpointer
+    counted before it ended the turn, the wait for the final transcript, and
+    the wait from there to the first sound, whatever that sound said. TT8 asks
+    for it because the footer's three latencies each start at a different
+    moment, so none of them, and no sum of them, is the wait.
+
+    A figure is None, or 0 for a count, until the stage that makes it has
+    run. A host is the descriptor's, read at boot, and None for a stage that
+    runs on this body; such a stage is left out of what was sent, and so is
+    one whose host is this machine, such as a model server at 127.0.0.1. Every
+    figure is a number or a verdict, never a word anybody said, so a record
+    can be written to a file and pasted into a public pull request.
+    """
+
+    #: 1-based: `SessionStats.turns` at the endpoint.
+    turn: int
+    #: One of `OUTCOMES`. A value outside them raises `ValueError` where it is
+    #: set, so a misspelt outcome fails the test that set it.
+    outcome: str = "not_answered"
+    #: Last loud frame to the endpoint, `Utterance.tail_ms`: the quiet the
+    #: endpointer had counted, in whole frames. The patience on a plain turn,
+    #: twice it on an extended turn whose extension ran out in silence. On a
+    #: turn the transcriber's words ended, with no loud frame, it counts from
+    #: the end of the click's deaf window, speech under the energy detector's
+    #: threshold included.
+    tail_ms: float | None = None
+    #: Endpoint to the final transcript; None when no transcriber ran.
+    final_ms: float | None = None
+    #: Final transcript to the reply's first word; None when no model was asked.
+    reply_first_ms: float | None = None
+    #: The final transcript, or the endpoint when `final_ms` is None, to the
+    #: turn's first sound at the sink; None when the turn made no sound.
+    voice_first_ms: float | None = None
+    #: Summed over every reply of the turn; None when no reply carried a count.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    #: Seconds of audio handed to the transcriber from the wake to the final.
+    stt_audio_s: float = 0.0
+    stt_host: str | None = None
+    #: Characters of every prompt handed to the language model this turn,
+    #: counted as each is handed to the plugin. The engine cannot see the
+    #: socket, so a request that never connected counts too, and the figure
+    #: errs toward saying more left the body than did.
+    llm_chars: int = 0
+    llm_host: str | None = None
+    #: Characters of everything handed to the voice, lines and fillers too.
+    voice_chars: int = 0
+    voice_host: str | None = None
+    #: Reply sentences handed to the voice, and how many of them cleaning
+    #: changed or emptied.
+    sentences: int = 0
+    cleaned: int = 0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.turn, bool) or not isinstance(self.turn, int) or self.turn < 1:
+            raise ValueError(f"a turn is counted from 1, and this record was given {self.turn!r}")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        # The session sets the outcome after the reply, so the check is made
+        # wherever it is set, construction included.
+        if name == "outcome" and value not in OUTCOMES:
+            raise ValueError(f"unknown turn outcome {value!r}. A turn's outcome is one of {', '.join(OUTCOMES)}.")
+        object.__setattr__(self, name, value)
+
+    @property
+    def gap_ms(self) -> float | None:
+        """Last loud frame to first sound, or None when either end is unknown."""
+        if self.tail_ms is None or self.voice_first_ms is None:
+            return None
+        return self.tail_ms + (self.final_ms or 0.0) + self.voice_first_ms
+
+    @property
+    def ran_a_stage(self) -> bool:
+        """Whether the transcriber, the language model or the voice ran this
+        turn, on this body or off it."""
+        return bool(
+            self.final_ms is not None
+            or self.stt_audio_s > 0
+            or self.reply_first_ms is not None
+            or self.llm_chars > 0
+            or self.input_tokens is not None
+            or self.output_tokens is not None
+            or self.voice_chars > 0
+            or self.sentences > 0
+        )
+
+    def sent(self) -> list[Sent]:
+        """What this turn handed to a host off the body, stage by stage: a
+        stage with no host, or whose host is this machine, sent nothing off it."""
+        entries = [
+            ("stt", self.stt_host, self.stt_audio_s),
+            ("llm", self.llm_host, self.llm_chars),
+            ("voice", self.voice_host, self.voice_chars),
+        ]
+        return [
+            Sent(stage, host, amount)
+            for stage, host, amount in entries
+            if host is not None and amount > 0 and not _on_this_machine(host)
+        ]
+
+    def line(self) -> str | None:
+        """The per-turn line under `--stats`, with no indent, or None for a
+        turn that ran no stage and made no sound.
+
+        `turn gap 2260 ms = quiet 960 + stt final 410 + llm first 620 + voice
+        270; 967 tokens in, 18 out; sent 3.3 s of audio to api.deepgram.com,
+        2071 characters to api.openai.com`. A term with no value is left out
+        with its `+`; `voice` is the wait from the reply's first word to the
+        first sound. The terms are whole milliseconds that add up to the gap
+        (`_whole_terms`), so a term can read 1 ms off the events file's
+        figure. The line holds no `lag` or `cut`, so the readers of the line
+        under each wake pass over it.
+        """
+        if not self.ran_a_stage and self.voice_first_ms is None:
+            return None
+        parts = [self._gap_text()]
+        tokens = _tokens_text(self.input_tokens, self.output_tokens, long=True)
+        if tokens is not None:
+            parts.append(tokens)
+        sent = self.sent()
+        parts.append("sent " + ", ".join(entry.text() for entry in sent) if sent else "nothing left the body")
+        return "; ".join(parts)
+
+    def _gap_text(self) -> str:
+        """The line's first part, the gap and the terms it is the sum of."""
+        gap = self.gap_ms
+        if gap is None:
+            if self.voice_first_ms is None:
+                return "turn gap - (nothing was spoken)"
+            # The endpointer heard nothing loud, so the gap has no start:
+            # a wake, then silence, answered with the soul's line.
+            return "turn gap - (no speech to count from)"
+        assert self.tail_ms is not None and self.voice_first_ms is not None
+        names = ["quiet"]
+        terms = [self.tail_ms]
+        if self.final_ms is not None:
+            names.append("stt final")
+            terms.append(self.final_ms)
+        if self.reply_first_ms is not None:
+            names.append("llm first")
+            terms.append(self.reply_first_ms)
+        names.append("voice")
+        terms.append(self.voice_first_ms - (self.reply_first_ms or 0.0))
+        shown = _whole_terms(gap, terms)
+        return f"turn gap {round(gap)} ms = " + " + ".join(f"{name} {ms}" for name, ms in zip(names, shown))
 
 
 @dataclass
@@ -163,6 +455,11 @@ class SessionStats:
     sentences_spoken: int = 0
     sentences_lost: int = 0
 
+    #: One `TurnRecord` per turn, in order, appended at each endpoint and
+    #: filled as the turn goes. The footer's turn gap, tokens, sent and
+    #: cleaned lines are their sums.
+    turn_records: list[TurnRecord] = field(default_factory=list)
+
     _samples: deque[float] = field(default_factory=lambda: deque(maxlen=SAMPLE_CAP))
     #: Set by the first frame, so that loading the acoustic model and opening
     #: the card are left out. What remains is the card's clock against the
@@ -198,6 +495,90 @@ class SessionStats:
         self.speech_done_ms.append(done_ms)
         self.sentences_spoken += spoken
         self.sentences_lost += lost
+
+    def record_turn(self, record: TurnRecord) -> None:
+        self.turn_records.append(record)
+
+    # ------------------------------------------------------- the turns' sums
+
+    def gap_spread(self) -> Spread | None:
+        """The turn gap over every turn that has one, or None when none does."""
+        gaps = [gap for gap in (record.gap_ms for record in self.turn_records) if gap is not None]
+        if not gaps:
+            return None
+        return Spread(statistics.median(gaps), sum(gaps) / len(gaps), max(gaps), len(gaps))
+
+    def token_totals(self) -> Tokens | None:
+        """The tokens every turn's replies counted, or None when none counted any."""
+        counted = [r for r in self.turn_records if r.input_tokens is not None or r.output_tokens is not None]
+        if not counted:
+            return None
+        return Tokens(
+            _total([r.input_tokens for r in counted if r.input_tokens is not None]),
+            _total([r.output_tokens for r in counted if r.output_tokens is not None]),
+            len(counted),
+        )
+
+    def sent_totals(self) -> list[Sent]:
+        """What the run sent off the body, summed per stage and host, the
+        stages in `STAGES` order and each stage's hosts as they first came."""
+        totals: dict[tuple[str, str], float] = {}
+        for record in self.turn_records:
+            for entry in record.sent():
+                key = (entry.stage, entry.host)
+                totals[key] = totals.get(key, 0) + entry.amount
+        ordered = sorted(totals.items(), key=lambda item: STAGES.index(item[0][0]))
+        return [Sent(stage, host, amount) for (stage, host), amount in ordered]
+
+    @property
+    def ran_a_stage(self) -> bool:
+        """Whether any turn ran the transcriber, the model or the voice."""
+        return any(record.ran_a_stage for record in self.turn_records)
+
+    def cleaned_totals(self) -> tuple[int, int] | None:
+        """How many reply sentences cleaning changed, of how many reached the
+        voice, or None when none reached it."""
+        of = sum(record.sentences for record in self.turn_records)
+        if not of:
+            return None
+        return sum(record.cleaned for record in self.turn_records), of
+
+    def turn_lines(self) -> list[str]:
+        """The footer's four lines from the turns' records, in its label
+        column, after `voice done` and before `clock`.
+
+        Each prints only when it has something to say, so a run that ran no
+        provider stage prints the footer it printed before the records
+        existed. None of them starts with `name cut`, which is how the
+        readers outside the repository tell the footer's line from the line
+        under each wake.
+        """
+        lines: list[str] = []
+        spread = self.gap_spread()
+        if spread is not None:
+            lines.append(
+                f"  turn gap      median {spread.median_ms:.0f} ms   mean {spread.mean_ms:.0f}   "
+                f"max {spread.max_ms:.0f}   ({spread.n} turn(s), last loud frame to first sound)"
+            )
+        tokens = self.token_totals()
+        if tokens is not None:
+            counted = _tokens_text(tokens.input, tokens.output, long=False)
+            lines.append(
+                # A count of turns: a turn's tokens are summed over every
+                # reply it asked for, which a tool round makes more than one.
+                f"  tokens        {counted}   ({tokens.n} turn(s) that counted them; "
+                f"cached tokens are counted from 0.6)"
+            )
+        if self.ran_a_stage:
+            sent = self.sent_totals()
+            lines.append(
+                f"  sent          {', '.join(entry.text() for entry in sent)}   (what the turns sent off the body)"
+                if sent else "  sent          nothing left the body"
+            )
+        cleaned = self.cleaned_totals()
+        if cleaned is not None:
+            lines.append(f"  cleaned       {cleaned[0]} of {cleaned[1]} sentence(s) changed before the voice")
+        return lines
 
     # ------------------------------------------------------------ readings
 
@@ -346,6 +727,7 @@ class SessionStats:
                 f"max {max(self.speech_done_ms):.0f}   (transcript to last sound; "
                 f"{self.sentences_spoken} sentence(s) spoken{lost})"
             )
+        lines.extend(self.turn_lines())
         if live:
             skew = self.wall_ms - self.audio_ms
             pct = (skew / self.audio_ms * 100.0) if self.audio_ms else 0.0

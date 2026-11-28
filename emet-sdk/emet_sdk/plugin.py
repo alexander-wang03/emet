@@ -176,7 +176,7 @@ class CapabilityPlugin(Plugin):
 
 
 class ActuatorPlugin(CapabilityPlugin):
-    """Something the robot can act with: joints, displays, lights."""
+    """Something the robot can act with, such as joints, displays and lights."""
 
     @abstractmethod
     def describe(self) -> CapabilityDescriptor:
