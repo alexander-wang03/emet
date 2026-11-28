@@ -95,6 +95,19 @@ def test_the_audio_contract_lives_in_the_sdk():
     assert AudioFormat is SdkFormat
 
 
+def test_an_audio_error_is_a_plugin_error_the_engine_can_catch():
+    """The engine may not import `emet_hal`, so it catches the SDK's
+    `PluginError` at a source's and a sink's `start()`; an `AudioError` has
+    to be one for a missing replay file to print one line and no traceback
+    (ledger L11 of 0.5.7). It stays a `RuntimeError`, as it was."""
+    from emet_sdk.plugin import PluginError
+
+    assert issubclass(AudioError, PluginError)
+    assert issubclass(AudioError, RuntimeError)
+    with pytest.raises(PluginError, match="nothere.wav"):
+        run(WavSource({"params": {"path": "nothere.wav"}}, AudioFormat()).start())
+
+
 def test_the_default_format_is_what_the_wake_engine_asks_for():
     """These two travelling apart is how a detector ends up hearing nothing."""
     from emet_hal.pocketsphinx_wake import FRAME_SAMPLES, SAMPLE_RATE
@@ -293,7 +306,7 @@ def test_a_mock_engine_wakes_from_a_file(tmp_path):
 
 
 def test_the_default_device_needs_no_lookup():
-    """Must not touch PortAudio: it is the answer when nothing is configured."""
+    """Must not touch PortAudio, since it is the answer when nothing is configured."""
     assert resolve_device(None, want_input=True) is None
     assert resolve_device("", want_input=True) is None
     assert resolve_device("default", want_input=False) is None
@@ -443,7 +456,7 @@ def test_a_stopped_wav_sink_has_closed_its_file(tmp_path):
     path = tmp_path / "said.wav"
     sink = WavSink({"sink": "wav", "params": {"path": str(path)}}, AudioFormat(sample_rate=22050))
 
-    async def scenario():
+    async def scenario(sink):
         await sink.start()
         await sink.play(silence(100))
         await sink.stop()
@@ -451,7 +464,7 @@ def test_a_stopped_wav_sink_has_closed_its_file(tmp_path):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        run(scenario())
+        run(scenario(sink))
         # Checked while the sink is still held, so the collector cannot have
         # closed the file in `stop()`'s place.
         assert not sink._close.alive, "stop() closed the writer and the file"
@@ -700,7 +713,7 @@ def speaker_with_fake_portaudio(rate: int = 16000, *, gain_db: float | None = No
 
 
 async def started(spk: Speaker) -> Speaker:
-    """The half of `start()` that needs no hardware: the loop and the lock."""
+    """The half of `start()` that needs no hardware, which sets the loop and the lock."""
     spk._loop = asyncio.get_running_loop()
     spk._opening = asyncio.Lock()
     return spk

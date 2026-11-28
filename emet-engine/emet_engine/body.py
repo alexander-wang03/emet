@@ -1,6 +1,6 @@
 """The parts a manifest declares: built, started, described, and bound.
 
-Until 0.5 the engine never started a capability plugin. The resolver and
+Before 0.5 the engine never started a capability plugin. The resolver and
 `emet explain` existed, and a body's chains were resolved only on a laptop,
 against what the manifest claimed. This module is the boot half of principle
 5 (degradation is declared, not improvised): every part the manifest declares
@@ -26,7 +26,8 @@ no motors below it is the same.
 
 **Body-local state reaches the plugins here.** A joint's `trim_deg` in the
 body's state file wins over the manifest's, which is the builder's first
-guess until calibration writes a measured one (`DESIGN.md` section 4.1).
+guess and gives way to a measured one once calibration writes it
+(`DESIGN.md` section 4.1).
 Whatever a plugin returned from `carry_over()` at the last shutdown on this
 body is merged over its `driver.params`, unless the body was built with
 `carry=False`, as it is for a replay: then the trims alone reach it.
@@ -42,7 +43,7 @@ import asyncio
 import copy
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping
 
 from emet_sdk.chains import VOICE_ACTIONS, Chain
 from emet_sdk.discovery import PluginRegistry
@@ -220,7 +221,7 @@ class Body:
             detail = str(exc) or type(exc).__name__
             if not isinstance(exc, PluginError):
                 detail = f"{type(exc).__name__}: {detail}"
-            log.warning("body: %s did not start: %s", cap_id, detail)
+            log.info("body: %s did not start: %s", cap_id, detail)
             return detail
         return None
 

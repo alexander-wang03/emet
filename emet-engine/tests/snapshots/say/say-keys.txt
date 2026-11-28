@@ -1,0 +1,10 @@
+$ emet-say body.yaml soul.yaml Hello. --keys keys.env
+exit 0
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+  voice    mock (16000 Hz), on this body, from emet-providers <version>
+  sink     null; no microphone opened
+  keys     EMET_SNAPSHOT_KEY from keys.env
+  said     1 sentence(s); voice first <ms> ms
+--- stderr
+(nothing)

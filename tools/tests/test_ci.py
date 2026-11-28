@@ -155,7 +155,8 @@ def make_tree(tmp_path: Path, *scripts: str) -> Path:
         (root / package / "pyproject.toml").write_text(
             PYPROJECT.format(name=package, deps=deps or '"pyyaml>=6.0.4"'), encoding="utf-8")
     present = ("tools/check_layering.py", "tools/release_check.py", "tools/check_style.py",
-               "tools/ci/check_workflows.py", "tools/release_audit.py", "tools/ci.py", "tools/body/run.py", *scripts)
+               "tools/ci/check_workflows.py", "tools/release_audit.py", "tools/ci.py", "tools/body/run.py",
+               "tools/hardware_guard.py", *scripts)
     for name in present:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text("", encoding="utf-8")
@@ -332,7 +333,7 @@ def test_an_advisory_job_that_fails_exits_0_on_github_with_a_warning(tmp_path):
 
 def test_an_advisory_job_that_fails_is_named_on_the_laptop_and_leaves_all_green(tmp_path):
     root, fake = make_tree(tmp_path, "tools/check_docs.py", "tools/check_health.py"), Fake().on("check_docs.py", code=1)
-    ctx = context(root, fake, on_path=("zizmor",))
+    ctx = context(root, fake, on_path=("zizmor", "flake8"))
     assert ci.run_jobs(ctx, ["layering", "docs"]) == 0
     assert "::warning" not in ctx.out.text
     assert last_line(ctx) == "ci: all green, 1 job, 0 not run here, 1 failed advisory (docs)"
@@ -388,11 +389,14 @@ def test_a_missing_script_and_a_missing_tool_are_not_run_here_and_named(tmp_path
     by_key = {r.step.key: r.outcome for r in result.steps}
     assert by_key["health"] == ci.Outcome(ci.NOT_RUN, "tools/check_health.py is missing")
     assert by_key["zizmor"] == ci.Outcome(ci.NOT_RUN, "needs zizmor")
+    assert by_key["flake8"] == ci.Outcome(ci.NOT_RUN, "needs flake8")
     assert by_key["style"].status == ci.PASSED
     assert not fake.ran("check_health.py") and not fake.ran("zizmor")
-    assert result.status == ci.PASSED and result.parts_not_run == ["layering/health", "layering/zizmor"]
+    assert result.status == ci.PASSED
+    assert result.parts_not_run == ["layering/health", "layering/zizmor", "layering/flake8"]
     line, code = ci.verdict([result], strict=False)
-    assert (line, code) == ("ci: all green, 1 job, 2 not run here (layering/health, layering/zizmor)", 0)
+    assert (line, code) == ("ci: all green, 1 job, 3 not run here (layering/health, layering/zizmor, "
+                            "layering/flake8)", 0)
 
 
 def test_on_github_a_blocking_step_that_could_not_run_fails_its_job(tmp_path):
@@ -418,7 +422,7 @@ def test_zizmor_runs_offline_over_the_workflows_with_its_configuration(tmp_path)
 
 
 def test_the_layering_job_holds_the_workflows_to_their_house_rules_after_zizmor(tmp_path):
-    """Stream B2's B2-2: `check_workflows.py` had no step of its own."""
+    """Stream B2's B2-2 found that `check_workflows.py` had no step of its own."""
     root = make_tree(tmp_path, "tools/check_health.py")
     fake = Fake().on("check_workflows.py", code=1)
     result = ci.run_job(context(root, fake, on_path=("zizmor",)), ci.BY_KEY["layering"])
@@ -534,7 +538,7 @@ SUITES = [*((version, package) for version in ((3, 11), (3, 12), (3, 13)) for pa
 
 
 def fail_suite(fake: Fake, key: str) -> Fake:
-    """Make one suite fail: a package's, in its own folder, or the tools'."""
+    """Make one suite fail, a package's in its own folder or the tools'."""
     if key == "tools":
         return fake.on("tools/tests", code=1, out="1 failed\n")
     return fake.on("-m pytest", code=1, out="1 failed\n", where=key)
@@ -656,7 +660,7 @@ def test_coverage_that_is_not_installed_is_not_measured_and_says_so(tmp_path):
     root, fake = make_tree(tmp_path, "tools/check_licences.py"), Fake().on("examples/invalid", code=1)
     outcome = ci.run_job(context(root, fake), ci.BY_KEY["test"])
     assert outcome.status == ci.PASSED
-    assert outcome.parts_not_run == ["test/numpy", "test/tools-licences", "test/coverage"]
+    assert outcome.parts_not_run == ["test/extras-licences", "test/numpy", "test/tools-licences", "test/coverage"]
     assert not fake.ran("coverage") and not fake.ran("pip install") and not fake.ran("--requirements")
     reasons = {r.step.key: r.outcome.reason for r in outcome.steps}
     assert reasons["tools-licences"] == f"needs {ci.CI_TOOLS} installed by this job (--install)"
@@ -904,6 +908,161 @@ def test_dco_without_its_range_fails_on_github_and_is_not_run_without_history(tm
     assert no_history.status == ci.NOT_RUN and "fatal: not a git repository" in no_history.reason
 
 
+#: Lines that carry an attribution, each put together from parts so this
+#: file holds none whole (D10 (b)'s three patterns).
+CO_AUTHOR = "Co-" + "Authored-By: A Helper <helper" + "@" + "example.com>"
+TOOL_LINE = "Gener" + "ated with A Tool"
+VENDOR_ADDRESS = "Thanks to noreply" + "@" + "anthropic.com"
+SIGNED = "\n\nSigned-off-by: A Person <a@example.com>\n"
+
+
+@pytest.mark.parametrize("line", [CO_AUTHOR, CO_AUTHOR.lower(), CO_AUTHOR.upper(), TOOL_LINE,
+                                  "  " + TOOL_LINE.lower() + " today", VENDOR_ADDRESS])
+def test_dco_refuses_a_commit_carrying_an_attribution_line(tmp_path, line):
+    fake = dco_fake({"a1b2c3d4e5": "Add it" + SIGNED, "f6a7b8c9d0": f"Fix it\n\n{line}" + SIGNED})
+    ctx = context(make_tree(tmp_path), fake, env={"BASE_SHA": "base0", "HEAD_SHA": "head9", "GITHUB_ACTIONS": "1"})
+    result = ci.run_job(ctx, ci.BY_KEY["dco"])
+    assert result.status == ci.FAILED
+    assert [s.outcome.status for s in result.steps] == [ci.PASSED, ci.FAILED], "signed off, and carrying the line"
+    assert result.steps[1].outcome.reason == "1 of 2 commits carry an attribution line"
+    assert (f'commit f6a7b8c "Fix it" carries an attribution line: {line.strip()}. Emet\'s commits carry no '
+            "co-author or tool line; the sign-off names the author. Rewrite the message and push again.") in ctx.out.text
+    assert "a1b2c3d" not in ctx.out.text
+
+
+def test_dco_passes_a_branch_with_no_attribution_line_and_names_its_range(tmp_path):
+    fake = dco_fake({"a1": "Add it" + SIGNED, "b2": "Mention co-authors in CONTRIBUTING" + SIGNED})
+    ctx = context(make_tree(tmp_path), fake)
+    result = ci.run_job(ctx, ci.BY_KEY["dco"])
+    assert result.status == ci.PASSED
+    assert [s.step.key for s in result.steps] == ["sign-off", "attribution"]
+    assert "no commit carries an attribution line (2 in origin/master..HEAD)" in ctx.out.text
+
+
+def test_dco_reads_attribution_lines_even_when_a_sign_off_is_missing(tmp_path):
+    fake = dco_fake({"a1": "Add it\n\n" + CO_AUTHOR + "\n"})
+    ctx = context(make_tree(tmp_path), fake)
+    result = ci.run_job(ctx, ci.BY_KEY["dco"])
+    assert [s.outcome.status for s in result.steps] == [ci.FAILED, ci.FAILED]
+
+
+# ------------------------------------------------ the pull request's body (D10 (c))
+
+
+def test_house_style_reads_the_releases_pull_request_body_beside_the_repository(tmp_path):
+    root = make_tree(tmp_path)
+    fake = Fake()
+    ctx = context(root, fake, on_path=("zizmor", "flake8"))
+    ci.run_job(ctx, ci.BY_KEY["layering"])
+    assert fake.ran("check_style.py") == [f"{PY} tools/check_style.py ."], "no body, no --file"
+    body = tmp_path / "releases" / "v0.5.6" / "pr-body.md"
+    body.parent.mkdir(parents=True)
+    body.write_text("A plain body.\n", encoding="utf-8")
+    fake = Fake()
+    ci.run_job(context(root, fake, on_path=("zizmor", "flake8")), ci.BY_KEY["layering"])
+    assert fake.ran("check_style.py") == [f"{PY} tools/check_style.py . --file "
+                                          f"{os.path.join('TMP', 'releases', 'v0.5.6', 'pr-body.md')}"]
+
+
+# ------------------------------------------------------------- flake8 (D14)
+
+
+def test_flake8_runs_the_four_codes_over_the_packages_and_tools_and_blocks_layering(tmp_path):
+    root = make_tree(tmp_path)
+    fake = Fake().on("flake8", code=1, out="emet-sdk/x.py:1:1: F401 'os' imported but unused\n")
+    ctx = context(root, fake, on_path=("zizmor", "flake8"))
+    result = ci.run_job(ctx, ci.BY_KEY["layering"])
+    (line,) = fake.ran("flake8")
+    assert line == ("/usr/bin/flake8 --select=E402,E731,F401,F821 --extend-exclude=.venv,mutants "
+                    "emet-sdk emet-hal emet-providers emet-engine tools")
+    step = next(r for r in result.steps if r.step.key == "flake8")
+    assert ci.FLAKE8_BLOCKS is True, "A12's sweep fixed the 8 sites and set it"
+    assert step.outcome.status == ci.FAILED and step.step.advisory is False
+    assert result.status == ci.FAILED
+    assert result.steps[-1].step.key == "flake8"
+
+
+def test_flake8_is_found_in_the_interpreter_first(tmp_path):
+    fake = Fake()
+    ctx = context(make_tree(tmp_path), fake, modules=("flake8",), on_path=("zizmor",))
+    ci.run_job(ctx, ci.BY_KEY["layering"])
+    assert fake.ran("flake8")[0].startswith(f"{PY} -m flake8 --select=")
+
+
+def test_flake8_only_warns_with_the_switch_off(tmp_path, monkeypatch):
+    monkeypatch.setattr(ci, "FLAKE8_BLOCKS", False)
+    fake = Fake().on("flake8", code=1)
+    ctx = context(make_tree(tmp_path), fake, on_path=("zizmor", "flake8"))
+    result = ci.run_job(ctx, ci.BY_KEY["layering"])
+    step = next(r for r in result.steps if r.step.key == "flake8")
+    assert step.outcome.status == ci.FAILED and step.step.advisory is True
+    assert result.status == ci.PASSED
+
+
+FLAKE8_SITE = "import os\n\n\ndef f():\n    return 1\n"
+
+
+def test_real_flake8_fails_an_unused_import_and_passes_the_same_under_a_venv(tmp_path):
+    """D14's two breaks against the real tool: a module with an unused
+    import fails the step, and the same module under a `.venv` folder of a
+    scanned path, as `emet-sdk/.venv` is, does not. It needs flake8 in the
+    interpreter, which the CI lock installs."""
+    pytest.importorskip("flake8")
+    root = tmp_path / "emet"
+    for package in (*ci.PACKAGES, "tools"):
+        (root / package).mkdir(parents=True)
+    ctx = ci.Context(root=root, env=dict(os.environ), out=Said(), has_module=lambda name: name == "flake8")
+    (root / "emet-sdk" / ".venv" / "Lib").mkdir(parents=True)
+    (root / "emet-sdk" / ".venv" / "Lib" / "site.py").write_text(FLAKE8_SITE, encoding="utf-8")
+    (root / "tools" / "mutants").mkdir()
+    (root / "tools" / "mutants" / "copied.py").write_text(FLAKE8_SITE, encoding="utf-8")
+    assert ci.flake8(ctx).status == ci.PASSED, ctx.out.text
+    (root / "emet-sdk" / "unused.py").write_text(FLAKE8_SITE, encoding="utf-8")
+    assert ci.flake8(ctx).status == ci.FAILED
+    assert "unused.py:1:1: F401 'os' imported but unused" in ctx.out.text.replace("\\", "/")
+    found = [line for line in ctx.out.text.splitlines() if "F401" in line and not line.startswith("+ ")]
+    assert len(found) == 1 and ".venv" not in found[0] and "mutants" not in found[0], found
+
+
+# ------------------------------------------------- the extras' licences (L20)
+
+
+def test_the_extras_go_in_a_venv_of_their_own_and_their_licences_are_held(tmp_path):
+    root = make_tree(tmp_path, "tools/check_licences.py")
+    fake = Fake().on("examples/invalid", code=1)
+    ctx = context(root, fake, install=True, os_name="linux")
+    result = ci.run_job(ctx, ci.BY_KEY["test"])
+    keys = [r.step.key for r in result.steps]
+    assert keys.index("extras-install") < keys.index("extras-licences") < keys.index("numpy")
+    (made,) = [line for line in fake.lines if "-m venv" in line and "extras-venv" in line]
+    venv_python = os.path.join(made.split()[-1], "bin", "python")
+    (install,) = [line for line in fake.lines if line.startswith(venv_python) and "pip install" in line]
+    assert install.endswith("pip install --disable-pip-version-check ./emet-sdk ./emet-hal[audio] "
+                            "./emet-providers[piper]")
+    (gate,) = [line for line in fake.lines if line.startswith(venv_python) and "check_licences.py" in line]
+    assert gate == f"{venv_python} {os.path.join(TREE, 'tools', 'check_licences.py')}"
+    steps = {r.step.key: r for r in result.steps}
+    assert not steps["extras-install"].step.advisory and not steps["extras-licences"].step.advisory
+    assert steps["extras-licences"].outcome.status == ci.PASSED
+
+
+def test_a_licence_the_extras_bring_that_is_refused_fails_the_test_job(tmp_path):
+    root = make_tree(tmp_path, "tools/check_licences.py")
+    fake = Fake().on("examples/invalid", code=1)
+    fake.rules.insert(0, (os.path.join("extras-venv", "bin", "python") + " " + TREE, 1, "", None, None))
+    ctx = context(root, fake, install=True, os_name="linux")
+    result = ci.run_job(ctx, ci.BY_KEY["test"])
+    steps = {r.step.key: r.outcome for r in result.steps}
+    assert steps["extras-licences"].status == ci.FAILED
+    assert result.status == ci.FAILED
+
+
+def test_the_extras_are_gated_on_313_alone(tmp_path):
+    for version in ((3, 11), (3, 12)):
+        ctx = context(make_tree(tmp_path / f"v{version[1]}"), Fake(), version=version)
+        assert "extras-licences" not in [s.key for s in ci.test_steps(ctx)]
+
+
 def test_dco_on_github_without_the_history_of_its_range_fails(tmp_path):
     """A shallow checkout on GitHub must turn the required `dco sign-off` red."""
     fake = Fake().on("git rev-list", code=128, out="fatal: bad revision 'b..h'\n")
@@ -1011,10 +1170,10 @@ def builder(vary: bool = False, floor: str = "emet-sdk>=0.5.6", drop: str = "") 
             stamp = f"Build: {count['n']}\n" if vary else ""
             meta = zipfile.ZipInfo(f"{name}-0.5.6.dist-info/METADATA", date_time=(2020, 2, 2, 0, 0, 0))
             archive.writestr(meta, f"Name: {package}\n{requires}{stamp}\n")
-            if package == "emet-sdk":
-                for data in ci.WHEEL_DATA:
-                    if data != drop:
-                        archive.writestr(zipfile.ZipInfo(data, date_time=(2020, 2, 2, 0, 0, 0)), "{}")
+            data_files = {"emet-sdk": ci.WHEEL_DATA, "emet-engine": ci.ENGINE_WHEEL_DATA}.get(package, ())
+            for data in data_files:
+                if data != drop:
+                    archive.writestr(zipfile.ZipInfo(data, date_time=(2020, 2, 2, 0, 0, 0)), "{}")
 
     return build
 
@@ -1068,6 +1227,27 @@ def test_the_wheel_job_fails_when_the_sdk_wheel_lacks_a_data_file(tmp_path):
     outcome = ci.run_job(ctx, ci.BY_KEY["wheel"])
     assert outcome.status == ci.FAILED and outcome.reason == "data: 1 data file(s) missing from the SDK's wheel"
     assert "  - emet_sdk/chains/core.yaml" in ctx.out.text and not fake.ran("-m venv")
+
+
+def test_the_wheel_job_fails_when_the_engine_wheel_lacks_the_events_schema(tmp_path):
+    """Finding A5-4 of 0.5.7: the data check read the SDK's wheel alone, so
+    nothing held that the `--events` schema ships in the engine's."""
+    root = make_tree(tmp_path)
+    fake = Fake().on("-m build", do=builder(drop="emet_engine/schemas/events-1.schema.json")) \
+        .on("--report", do=pip_dry_run())
+    ctx = context(root, fake, modules=("build",))
+    outcome = ci.run_job(ctx, ci.BY_KEY["wheel"])
+    assert outcome.status == ci.FAILED
+    assert outcome.reason == ("data: emet_engine-0.5.6-py3-none-any.whl is missing "
+                              "emet_engine/schemas/events-1.schema.json")
+    assert not fake.ran("-m venv")
+
+
+def test_the_engine_wheel_data_is_every_file_the_engine_ships_beside_its_code():
+    engine = REPO / "emet-engine" / "emet_engine"
+    shipped = {path.relative_to(engine.parent).as_posix() for path in engine.rglob("*")
+               if path.is_file() and path.suffix not in (".py", ".pyc") and "__pycache__" not in path.parts}
+    assert shipped == set(ci.ENGINE_WHEEL_DATA)
 
 
 def test_the_wheel_job_fails_when_the_installed_cli_will_not_start_outside_the_tree(tmp_path):
@@ -1143,12 +1323,13 @@ def test_all_leaves_no_file_behind_and_ends_on_the_verdict(tmp_path):
     fake = Fake().on("-m build", do=builder()).on("--report", do=pip_dry_run()).on("examples/invalid", code=1) \
         .on("coverage report", out="91\n").on("--collect-only", out="12 tests collected in 0.10s\n")
     before = snapshot(root)
-    ctx = context(root, fake, modules=("build", "coverage", "httpx", "pocketsphinx"), on_path=("gh", "zizmor"))
+    ctx = context(root, fake, modules=("build", "coverage", "httpx", "pocketsphinx"),
+                  on_path=("gh", "zizmor", "flake8"))
     assert ci.run_jobs(ctx, list(ci.BY_KEY)) == 0
     assert snapshot(root) == before
     assert list((tmp_path / "temp").iterdir()) == []
-    assert last_line(ctx) == ("ci: all green, 8 jobs, 8 not run here "
-                              "(test/numpy, test/tools-licences, arm64, sound, mutmut, pip-audit, bank, bank-full)")
+    assert last_line(ctx) == ("ci: all green, 8 jobs, 9 not run here (test/extras-licences, test/numpy, "
+                              "test/tools-licences, arm64, sound, mutmut, pip-audit, bank, bank-full)")
     # Contract §5's lines for the scripts other streams deliver.
     assert fake.ran("api_diff.py") == [f"{PY} tools/api_diff.py --base origin/master"]
     assert fake.ran("check_health.py") == [f"{PY} tools/check_health.py ."]
@@ -1169,7 +1350,8 @@ def test_log_keeps_everything_printed_in_a_folder_it_makes(tmp_path, capsys):
     """A new release's `releases/vX.Y.Z/ci/` does not exist until the first run."""
     log = tmp_path / "releases" / "v9.9.9" / "ci" / "ci.log"
     out = ci.Output(log)
-    ctx = context(make_tree(tmp_path), Fake().on("check_layering.py", out="layering: ok\n"), on_path=("zizmor",))
+    ctx = context(make_tree(tmp_path), Fake().on("check_layering.py", out="layering: ok\n"),
+                  on_path=("zizmor", "flake8"))
     ctx.out = out
     try:
         ci.run_jobs(ctx, ["layering"])
@@ -1528,7 +1710,42 @@ def test_the_tools_are_never_copied_up_over_an_entry_the_root_already_has(tmp_pa
     assert (tree / "README.md").read_text(encoding="utf-8") == "the repository\n"
     assert not (tree / "tests").exists()
     (tree / "emet-sdk").mkdir()
+    (tree / "tools" / "hardware_guard.py").write_text("", encoding="utf-8")
     assert ci.mutmut_folder(tree, "emet-sdk") == (tree / "emet-sdk", [])
+
+
+def test_a_mutmut_copy_without_the_hardware_guard_is_refused_naming_it(tmp_path):
+    """C13: every suite's conftest walks up from mutants/tests/ to the guard
+    and fails the collection without it, so the copy must hold it."""
+    tree = tmp_path / "copy"
+    (tree / "emet-sdk" / "tests").mkdir(parents=True)
+    with pytest.raises(ValueError, match=r"the mutmut copy of emet-sdk has no tools/hardware_guard\.py, which every "
+                                         r"suite's conftest\.py loads"):
+        ci.mutmut_folder(tree, "emet-sdk")
+    with pytest.raises(ValueError, match="has no tools/hardware_guard.py"):
+        ci.mutmut_folder(tree, "emet-sdk", tmp_path / "nowhere.py")
+    real = tmp_path / "hardware_guard.py"
+    real.write_text("# the guard\n", encoding="utf-8")
+    assert ci.mutmut_folder(tree, "emet-sdk", real) == (tree / "emet-sdk", ["tests"])
+    assert (tree / "tools" / "hardware_guard.py").read_text(encoding="utf-8") == "# the guard\n"
+    conftest = tree / "emet-sdk" / "mutants" / "tests" / "conftest.py"
+    assert tree / "tools" / "hardware_guard.py" in [p / "tools" / "hardware_guard.py" for p in conftest.parents]
+
+
+def test_the_mutmut_job_hands_each_copy_the_trees_guard(tmp_path):
+    root = make_tree(tmp_path, "tools/ci/mutmut-targets.txt", "emet-sdk/emet_sdk/resolve.py")
+    (root / "tools/hardware_guard.py").write_text("# the guard\n", encoding="utf-8")
+    (root / "tools/ci/mutmut-targets.txt").write_text("emet-sdk/emet_sdk/resolve.py::floor\n", encoding="utf-8")
+    (root / "emet-sdk/emet_sdk/resolve.py").write_text(SOURCE, encoding="utf-8")
+    listed = "\n".join(p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))
+                       if p.is_file() and p.name != "hardware_guard.py") + "\n"
+    fake = Fake().on("git merge-base", out="8efab3a\n").on("git diff -U0", out=DIFF) \
+        .on("git ls-files", out=listed).on("mutmut results", out="    emet_sdk.resolve.x_floor__mutmut_1: killed\n")
+    ctx = context(root, fake, os_name="linux", fork=True, modules=("mutmut",))
+    assert ci.run_job(ctx, ci.BY_KEY["mutmut"]).status == ci.PASSED, ctx.out.text
+    (cwd,) = [cwd for line, cwd, _ in fake.calls if "mutmut run" in line]
+    assert (cwd.parent / "tools" / "hardware_guard.py").read_text(encoding="utf-8") == "# the guard\n"
+    ctx.close()
 
 
 def test_mutmut_with_nothing_changed_passes_and_without_its_parts_is_not_run(tmp_path):

@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --reply --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+[error] duplicate_plugin: two installed distributions offer the language model provider 'openai' in the group emet.llm: emet-openai-fork 0.1.0 (emet_openai_fork:Model) and emet-providers <version> (emet_providers.openai:OpenAILanguageModel). Emet will not choose one for you, since which one Python finds first depends on where each is installed and on the order the file system lists a folder in, which nobody chose. Uninstall the one you did not mean to install, then start again: pip uninstall emet-openai-fork, or pip uninstall emet-providers.

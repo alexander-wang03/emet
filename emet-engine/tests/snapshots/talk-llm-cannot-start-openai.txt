@@ -1,0 +1,7 @@
+$ emet-talk body.yaml soul.yaml
+exit 1
+--- stdout
+emet-talk: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the language model 'openai' cannot start, so the robot would hear questions it can never answer. It will not run. Nothing answered at http://127.0.0.1:9380/v1 (ConnectError: All connection attempts failed). That address is this machine: start the model's server, or correct models.chat.params.url. emet-providers' README has a recipe for each local server.

@@ -231,9 +231,12 @@ class Actor:
 
 def signal(name: str) -> Intent:
     """A signal intent from the engine's own state: booting, listening,
-    thinking, speaking, muted, offline or error. System state, never
-    emotion, and never from the model (`emet_engine.intent_tags` drops a
-    tagged one)."""
+    thinking, speaking, muted, offline, error or unavailable. System state,
+    never emotion, and never from the model (`emet_engine.intent_tags` drops
+    a tagged one). `offline` is a network or a server that did not answer;
+    `unavailable` is a language model its vendor has retired or does not
+    know, where both answered and nothing changes until the owner chooses
+    another."""
     return _intents.make("signal", name)
 
 

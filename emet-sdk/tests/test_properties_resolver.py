@@ -52,23 +52,16 @@ BINDABLE = frozenset({"joint_group", "drive", "display", "light"})
 #: Seeds of the default range on which a property is refuted, by finding.
 KNOWN: dict[str, dict[str, tuple[int, ...]]] = {
     "B7-F2": {
-        "inputs": (4, 9, 18, 20, 34, 36, 43, 50, 58, 66, 87, 91, 108, 153, 159, 161, 180, 183, 189),
-        "binds": (4, 8, 9, 18, 20, 34, 36, 43, 48, 50, 58, 61, 66, 87, 91, 108, 124, 126, 127, 138, 153, 159, 161,
-                  169, 171, 180, 181, 183, 189),
+        "inputs": (4, 9, 18, 20, 34, 36, 43, 50, 58, 66, 87, 91, 108, 153, 159, 161, 180, 183),
+        "binds": (4, 8, 9, 18, 20, 34, 36, 43, 48, 50, 58, 61, 66, 87, 91, 108, 112, 118, 124, 126, 127, 138, 153,
+                  159, 161, 169, 171, 180, 181, 183),
         "order": (4, 77, 153),
     },
-    "B7-F6": {"never-fails": (
-        5, 14, 17, 18, 25, 30, 32, 35, 37, 39, 41, 43, 44, 54, 56, 57, 59, 63, 64, 70, 71, 73, 77, 78,
-        79, 82, 84, 86, 90, 91, 95, 108, 112, 113, 115, 123, 124, 126, 129, 132, 155, 166, 171, 173, 181,
-        187, 194, 196,
-    )},
 }
 
 REASONS = {
     "B7-F2": "B7-F2: a part of a type no chain may bind (a camera, a sensor, a reserved type) whose role "
              "or type a rung selects is bound like an actuator",
-    "B7-F6": "B7-F6: a reserved part's role or joints of a type the schema leaves open makes "
-             "descriptors_from_manifest or resolve raise TypeError",
 }
 
 
@@ -160,10 +153,9 @@ def test_resolution_is_the_same_whatever_order_the_parts_and_chains_come_in(seed
     "Something in the manifest" is a question about the set of parts, so
     the rung an intent binds to, and what it does there, cannot depend on
     the order the parts are declared in. Which part performs it can, when
-    two parts both fit the rung: the design says nothing about that case,
-    and the code takes the first declared (finding B7-F4 in
-    `releases/v0.5.6/reports/B7.md`, outside the repository). This holds the
-    part fixed only where exactly one fits.
+    two parts both fit the rung: DESIGN.md section 6 says the part declared
+    first wins it (since 0.5.7, ledger L14), and the code takes the first
+    declared. This holds the part fixed only where exactly one fits.
     """
     rng, _, chains, caps = case(seed, "order")
     where = rerun(seed, FILE, "test_resolution_is_the_same")
@@ -338,20 +330,16 @@ def test_resolution_never_fails_on_a_manifest_the_validator_accepts(seed):
 
     The manifest is changed only where the schema leaves its shape open
     (the fields of a reserved part, the contents of a `params` block), and
-    used only when `validate_manifest` reports no error for it. A variant
-    the validator raises on is one it did not accept: that is finding
-    B7-F3, which `test_validation_raises_nothing_but_its_own_error_on_any_input`
-    holds, and this property passes over it.
+    used only when `validate_manifest` reports no error for it. The
+    validator raises on none of these variants since finding B7-F3 was
+    fixed, and `test_validation_raises_nothing_but_its_own_error_on_any_input`
+    holds it to that on wider inputs.
     """
     rng, doc, chains, _ = case(seed, "never-fails")
     where = rerun(seed, FILE, "test_resolution_never_fails")
     for _ in range(5):
         variant = schema_valid_variant(rng, doc)
-        try:
-            accepted = validate_manifest(variant, registry=registry()).ok
-        except Exception:  # noqa: BLE001 - B7-F3; not accepted, so not this property's input
-            accepted = False
-        if accepted:
+        if validate_manifest(variant, registry=registry()).ok:
             doc = variant
             break
     try:

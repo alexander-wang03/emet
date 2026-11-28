@@ -262,7 +262,7 @@ def test_a_tag_is_acted_on_where_it_stood_inside_one_delta(tmp_path):
 def test_a_boot_that_fails_part_way_puts_the_parts_it_started_back_to_rest(tmp_path, monkeypatch):
     """`__aexit__` never runs for a failed `__aenter__`, and from 1.0 a
     started part can be a servo. The scout's parts are started before the
-    audio source, which does not exist here, so the boot fails after them."""
+    audio source, whose file does not exist here, so the boot fails after them."""
     from emet_hal import mock
 
     stopped: list[str] = []
@@ -273,9 +273,37 @@ def test_a_boot_that_fails_part_way_puts_the_parts_it_started_back_to_rest(tmp_p
         await real(self)
 
     monkeypatch.setattr(mock.MockActuator, "shutdown", shutdown)
-    manifest = body_like("mock-scout.yaml", write_wav(tmp_path / "f.wav", frame()))
-    manifest["audio"]["input"]["source"] = "carrier_pigeon"
+    manifest = body_like("mock-scout.yaml", str(tmp_path / "nothere.wav"))
     session = talking(manifest)
+
+    async def boot():
+        async with session:
+            pass
+
+    with pytest.raises(EngineError, match="the audio source 'wav' cannot start"):
+        run(boot())
+    assert sorted(stopped) == ["base", "eyes", "head", "ring"]
+
+
+@pytest.mark.parametrize("stage", ["input", "output"])
+def test_an_audio_plugin_nobody_installed_is_refused_before_any_part_moves(tmp_path, monkeypatch, stage):
+    """Review finding engine-core/code#1 of 0.5.7: the two audio plugins are
+    found by name before the body starts, so a mistyped source or sink moves
+    no servo and plays no tone before the refusal."""
+    from emet_hal import mock
+
+    started: list[str] = []
+    real = mock.MockActuator.start
+
+    async def start(self):
+        started.append(self.capability_id)
+        await real(self)
+
+    monkeypatch.setattr(mock.MockActuator, "start", start)
+    performed = []
+    manifest = body_like("mock-scout.yaml", write_wav(tmp_path / "f.wav", frame()))
+    manifest["audio"][stage]["source" if stage == "input" else "sink"] = "carrier_pigeon"
+    session = talking(manifest, on_performed=performed.append)
 
     async def boot():
         async with session:
@@ -283,7 +311,7 @@ def test_a_boot_that_fails_part_way_puts_the_parts_it_started_back_to_rest(tmp_p
 
     with pytest.raises(MissingPluginError):
         run(boot())
-    assert sorted(stopped) == ["base", "eyes", "head", "ring"]
+    assert started == [] and performed == []
 
 
 def test_every_sentence_of_a_reply_travels_as_a_speak_intent(tmp_path):
@@ -670,19 +698,65 @@ def test_an_open_bracket_that_is_not_a_tag_is_printed_as_it_is_said(tmp_path):
     assert isinstance(events[-1], ReplyDone)
 
 
-def test_booted_and_said_so_before_the_microphone_opens(tmp_path):
-    """The rising pair is not in the first frames the wake engine hears, and
-    no backlog builds while it plays."""
-    session = talking(body_like("bodiless.yaml", write_wav(tmp_path / "m.wav", frame())))
-    mic_open_at_boot: list[bool] = []
-    session.on_performed = lambda p: mic_open_at_boot.append(session._audio is not None) if p.intent.name == "signal.booting" else None
+def _open_at_the_boot_tone(manifest: dict, **kw) -> list[bool]:
+    """Whether the source had started when `signal.booting` was performed."""
+    session = talking(manifest, **kw)
+    started: list[bool] = []
+
+    def performed(p) -> None:
+        if p.intent.name == "signal.booting":
+            started.append(bool(getattr(session._audio, "started", False)))
+
+    session.on_performed = performed
 
     async def scenario():
         async with session:
             return session._audio is not None
 
     assert run(scenario()) is True
-    assert mic_open_at_boot == [False]
+    return started
+
+
+def test_booted_and_said_so_before_the_microphone_opens(tmp_path, monkeypatch):
+    """The rising pair is not in the first frames the wake engine hears, and
+    no backlog builds while it plays. A source the engine does not know for
+    a file stands in for the microphone here: it is a WAV source offered
+    under another name."""
+    from importlib import metadata
+    from importlib.metadata import EntryPoint
+
+    from emet_hal import audio
+    from emet_sdk.discovery import GROUP_AUDIO, PluginRegistry
+
+    real_start = audio.WavSource.start
+
+    async def start(self):
+        await real_start(self)
+        self.started = True
+
+    monkeypatch.setattr(audio.WavSource, "start", start)
+    shipped = [ep for name in ("emet-hal", "emet-providers") for ep in metadata.distribution(name).entry_points]
+    registry = PluginRegistry.from_entry_points(
+        [*shipped, EntryPoint("stand_in_mic", "emet_hal.audio:WavSource", GROUP_AUDIO)]
+    )
+    manifest = body_like("bodiless.yaml", write_wav(tmp_path / "m.wav", frame()))
+    manifest["audio"]["input"]["source"] = "stand_in_mic"
+    assert _open_at_the_boot_tone(manifest, registry=registry) == [False]
+
+
+def test_a_replay_file_is_opened_before_the_boot_tone(tmp_path, monkeypatch):
+    """A file has no queue for the tone to fill, so it is opened first, and
+    a wrong path is refused with no sound made."""
+    from emet_hal import audio
+
+    real_start = audio.WavSource.start
+
+    async def start(self):
+        await real_start(self)
+        self.started = True
+
+    monkeypatch.setattr(audio.WavSource, "start", start)
+    assert _open_at_the_boot_tone(body_like("bodiless.yaml", write_wav(tmp_path / "m.wav", frame()))) == [True]
 
 
 def test_a_source_that_fails_to_stop_still_lets_every_part_rest(tmp_path, monkeypatch):

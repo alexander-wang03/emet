@@ -80,8 +80,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Layering, release invariants, house style, code health, and zizmor over
-  # these workflows.
+  # Layering, release invariants, house style, code health, zizmor over
+  # these workflows, and flake8 with the four codes the noqa markers name
+  # (0.5.7-D14; blocking since the sweep set FLAKE8_BLOCKS in tools/ci.py).
   layering:
     name: layering
     runs-on: ubuntu-latest
@@ -139,7 +140,9 @@ jobs:
 
   # The four suites, the dependency licences and the CLI on the examples, on
   # each supported Python. On 3.13 the suites run under Python's development
-  # mode, the tools' own tests run, and coverage is printed with no floor.
+  # mode, the tools' own tests run, the piper and audio extras get the
+  # licence gate in a venv of their own (ledger L20), and coverage is
+  # printed with no floor.
   test:
     name: test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest

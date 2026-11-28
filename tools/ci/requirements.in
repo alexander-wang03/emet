@@ -29,6 +29,11 @@ pip-audit==2.10.1
 # Builds the four wheels (the wheel job).
 build==1.6.1
 
+# A general linter, holding only the four codes the code's noqa markers
+# name: E402, E731, F401 and F821 (the layering job, 0.5.7-D14). It brings
+# pyflakes 4.1.0, pycodestyle 2.15.0 and mccabe 0.7.0, all the PyCQA's.
+flake8==7.5.0
+
 # Not a tool. PyYAML reaches the lock through mutmut's libcst on Python 3.11
 # and 3.12, and a job may install this lock beside the four packages. This
 # line keeps the lock's PyYAML at or above emet-sdk's floor, so neither

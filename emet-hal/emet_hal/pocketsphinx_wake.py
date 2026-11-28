@@ -219,7 +219,8 @@ class PocketSphinxWake(WakePlugin):
 
     def _fail(self, reason: str) -> None:
         self._fault = reason
-        log.error("wake: %s", reason)
+        # INFO: the engine prints the reason in its refusal, from health().
+        log.info("wake: %s", reason)
 
     def _teach(self, phrase: str) -> tuple[str, ...]:
         """Add pronunciations for any word the dictionary lacks.

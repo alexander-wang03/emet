@@ -24,7 +24,7 @@ import pytest
 BANK_TOOLS = Path(__file__).resolve().parents[1] / "bank"
 sys.path.insert(0, str(BANK_TOOLS))
 
-import label  # noqa: E402
+import label  # noqa: E402  a bank tool, imported by its bare name from tools/bank/
 
 RATE = 16000
 

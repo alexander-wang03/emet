@@ -24,6 +24,8 @@ from emet_sdk.plugin import (
     WakePlugin,
 )
 from emet_sdk.types import (
+    FAULT_KINDS,
+    FAULT_PREFIX,
     Action,
     AudioFormat,
     AudioSource,
@@ -75,6 +77,8 @@ SCHEMA_VERSION = "0.1"
 __all__ = [
     "__version__",
     "SCHEMA_VERSION",
+    "FAULT_KINDS",
+    "FAULT_PREFIX",
     "Action",
     "ActuatorPlugin",
     "AudioFormat",

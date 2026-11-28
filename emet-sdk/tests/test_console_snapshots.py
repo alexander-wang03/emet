@@ -151,7 +151,7 @@ def compare(name: str, actual: str) -> None:
 
 @dataclass(frozen=True)
 class Case:
-    """One failure state: the files it needs and the command that meets it."""
+    """One failure state, with the files it needs and the command that meets it."""
 
     name: str
     argv: tuple[str, ...]
@@ -309,6 +309,23 @@ def test_the_console_shows_this_failure_as_its_snapshot_does(case, at, capsys):
     compare(case.name, normalise(render(argv, code, captured.out, captured.err), at))
 
 
+def test_a_shipped_chain_file_that_fails_to_load_is_named_as_the_sdks_own(at, monkeypatch, capsys):
+    """With no `--chains` the FAIL line names the SDK's own chains, since no
+    file of the person's was read."""
+    (at / "body.yaml").write_text(manifest("plain"), encoding="utf-8")
+
+    def broken(extra):
+        raise ValueError("a shipped chain is broken")
+
+    monkeypatch.setattr(cli, "_load_chains", broken)
+    assert cli.main(["explain", "body.yaml"]) == 1
+    assert capsys.readouterr().out.splitlines()[:3] == [
+        "FAIL the SDK's own chains  (chains)",
+        "     x chain_error",
+        "       ValueError: a shipped chain is broken",
+    ]
+
+
 def test_every_snapshot_file_belongs_to_a_case():
     """A snapshot whose case was removed would sit in the folder unread."""
     names = {c.name for c in CASES}
@@ -322,9 +339,17 @@ def test_the_shipped_plugins_are_the_ones_the_pyproject_files_register():
     with it those snapshots, change in the same pull request."""
     import tomllib
 
+    packages = ("emet-sdk", "emet-hal", "emet-providers", "emet-engine")
+    # The first folder above that holds the four packages. In the tree that
+    # is the one above emet-sdk/; mutmut runs these tests from
+    # emet-sdk/mutants/tests/ in a copy of the tree, one level deeper, where
+    # a fixed `parents[1]` stopped every mutation run of the SDK.
+    repo = next((folder for folder in HERE.parents
+                 if all((folder / p / "pyproject.toml").is_file() for p in packages)), None)
+    assert repo is not None, f"no folder above {HERE} holds the four packages' pyproject.toml"
     registered: dict[str, dict[str, str]] = {}
-    for package in ("emet-sdk", "emet-hal", "emet-providers", "emet-engine"):
-        project = tomllib.loads((HERE.parents[1] / package / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    for package in packages:
+        project = tomllib.loads((repo / package / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         for group, entries in project.get("entry-points", {}).items():
             if group.startswith("emet."):
                 registered.setdefault(group, {}).update(entries)

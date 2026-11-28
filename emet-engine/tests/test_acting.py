@@ -151,6 +151,30 @@ def test_the_offline_explanation_is_the_souls_own_failure_line():
     assert voice.said == ["I lost the thread."]
 
 
+UNAVAILABLE = "The part of me that thinks has been switched off. My owner needs to choose another."
+
+
+@pytest.mark.parametrize("name", ["bodiless.yaml", "pi-speakerphone.yaml"])
+def test_a_body_with_only_a_voice_explains_a_model_that_cannot_answer_in_the_engines_words(name):
+    """`signal.unavailable` on a body with no status light and no eyes falls
+    to its voice rung, which says the self-model's `unavailable` words,
+    whatever the soul wrote for `failed`."""
+    actor, voice = actor_for(name, lines={"failed": "Say it again?"})
+    done = perform(actor, signal("unavailable"))
+    assert done.outcome == "done" and done.binding.action == "explain" and done.voiced
+    assert voice.said == [UNAVAILABLE] and done.said == UNAVAILABLE
+
+
+def test_on_the_scout_a_model_that_cannot_answer_is_shown_and_not_said():
+    """The scout's status ring takes `signal.unavailable`, so its voice rung
+    never runs: the session owes the person the words itself, as
+    `_say_failure` does for `offline`."""
+    actor, voice = actor_for("mock-scout.yaml")
+    done = perform(actor, signal("unavailable"))
+    assert done.outcome == "done" and not done.binding.is_voice and done.said is None
+    assert voice.said == []
+
+
 def test_a_voice_rung_naming_an_action_no_engine_performs_is_unknown_and_quiet():
     chains = load_chains()
     chains.update(parse_chain_set({"express.delight": {"rungs": [{"actuator": {"voice": True}, "action": "sing"}]}}))

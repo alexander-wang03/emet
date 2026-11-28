@@ -335,6 +335,10 @@ filelock==4.2.12 \
     --hash=sha256:21decfec02f116ed4c954433cdb31f28c3b346b784543177b6d7059da2702ee9 \
     --hash=sha256:7e7da24d3ac39268b0f156e56870001de44886318f092f9d851e692f7114d6dd
     # via cachecontrol
+flake8==7.5.0 \
+    --hash=sha256:0dab7566341aca0d80aa29b5812bdadf256caa6a63e6068e49ac2649918236a4 \
+    --hash=sha256:637ea1a443a78ed6ee461725cdf71ca93bc5cde0abf25436dbebdc3880b4e078
+    # via -r requirements.in
 idna==3.20 \
     --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
     --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
@@ -424,6 +428,10 @@ markdown-it-py==4.3.0 \
     #   mdit-py-plugins
     #   rich
     #   textual
+mccabe==0.7.0 \
+    --hash=sha256:348e0240c33b60bbdf4e523192ef919f28cb2c3d7d5c7794f74009290f236325 \
+    --hash=sha256:6c2d30ab6be0e4a46919781807b4f0d834ebdd6c6e3dca0bda5a15f863427b6e
+    # via flake8
 mdit-py-plugins==0.7.0 \
     --hash=sha256:26d2179227aaf4d1dc7acffe7a738cbd15cade6b5a61cff0a2cbf9fed93efede \
     --hash=sha256:7f8e30403f3dd8bfe3afcdcbc6e61066d3f2e714167507b9c26eb385ec399353
@@ -571,6 +579,14 @@ py-serializable==2.2.0 \
     --hash=sha256:2cce775abc5aac12115f9ff572a145c7276d04a770090334bd4e51ed9c782415 \
     --hash=sha256:8e4fa02e8de819c0488ccdb69c2d3109274adcf224c02357fd8729cb12727aab
     # via cyclonedx-python-lib
+pycodestyle==2.15.0 \
+    --hash=sha256:12fd2f73c7b8ee8845a0431111df8faf4c1a07d6e64e2ee7f0c74014dab14181 \
+    --hash=sha256:318f5db083869b4c4dad922d0b11124fb27ab181b6730b93371da671e31bd50e
+    # via flake8
+pyflakes==4.1.0 \
+    --hash=sha256:592beb57058eb82eb190fb7514f2081c555c51000b029ff71286a681e6cf2f83 \
+    --hash=sha256:b2e05e6bac8e49b67be2a6ffa63422c60f7193fc72e8180255907b41ec997dc1
+    # via flake8
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c

@@ -851,10 +851,13 @@ def test_with_no_earlier_value_nothing_is_judged_and_nothing_fails(tmp_path, lap
                     "change_pct": None, "bound_pct": 25.0, "within": None, "spread_pct": None, "values": [1800.0]}
     assert rows["Idle CPU"]["value"] == 3.5 and rows["First chunk at the null sink after the final, local path"][
         "value"] == 620.0
+    assert rows[run.TURN_GAP] == {"measure": "Turn gap, median, local path", "value": 2260.0, "unit": "ms",
+                                  "last": None, "last_file": None, "change_pct": None, "bound_pct": 25.0,
+                                  "within": None, "spread_pct": None, "values": [2260.0]}, "0.5.7 records the first"
     assert rows["Resident memory at the end"]["value"] is None, "only a soak measures it"
     assert all(set(r) >= {"measure", "value", "unit", "last", "last_file", "change_pct", "bound_pct", "within"}
                for r in rows.values())
-    assert "7 with no earlier value" in step["reason"] and step["details"]["bank_version"] == "2026-11-25"
+    assert "8 with no earlier value" in step["reason"] and step["details"]["bank_version"] == "2026-11-25"
 
 
 def test_a_measure_within_its_bound_passes_and_one_past_it_fails_the_step(tmp_path, laptop):
@@ -974,6 +977,99 @@ def test_a_run_of_the_budget_that_failed_fails_the_step(tmp_path, laptop):
     # is not this release's value.
     first = rows["First chunk at the null sink after the final, local path"]
     assert first["values"] == [] and first["value"] is None
+    assert rows[run.TURN_GAP]["values"] == [] and rows[run.TURN_GAP]["value"] is None
+
+
+def test_the_turn_gap_is_each_runs_median_and_their_median_held_to_the_last_release(tmp_path, laptop):
+    """EV3 stage 1. Three repeats whose turns' medians are 2000, 2260 and
+    2600 ms: the row is 2260 ms, their spread 26.5%, and it is held to the
+    last release's value as every row is, within against 2000 and out of
+    bounds against 1500."""
+    results = "".join(base.budget_run(1, gap_ms=ms).replace("-1 ", f"-{i} ") for i, ms in
+                      enumerate((2000.0, 2260.0, 2600.0), 1))
+    earlier(tmp_path / "top", "0.5.5", "2026-11-25", [last_row(run.TURN_GAP, 2000.0)])
+    code, rows, _ = budget_run(tmp_path, laptop, "--repeat", "3", budget=results)
+    gap = rows[run.TURN_GAP]
+    assert gap["values"] == [2000.0, 2260.0, 2600.0] and gap["value"] == 2260.0 and gap["spread_pct"] == 26.5
+    assert (gap["last"], gap["change_pct"], gap["within"], code) == (2000.0, 13.0, True, 0)
+    earlier(tmp_path / "b" / "top", "0.5.5", "2026-11-25", [last_row(run.TURN_GAP, 1500.0)])
+    code, rows, step = budget_run(tmp_path / "b", laptop)
+    assert rows[run.TURN_GAP]["change_pct"] == 50.7 and rows[run.TURN_GAP]["within"] is False and code == 1
+    assert "out of bounds: Turn gap, median, local path 2260 ms against 1500 ms, +50.7%" in step["reason"]
+
+
+def test_a_speak_run_with_no_turn_gaps_leaves_the_row_not_measured(tmp_path, laptop):
+    """An engine with no `turn_records`, or a replay whose turns made no
+    sound, gives the driver no gaps: the row is null and named."""
+    speak = base.driver("speak")
+    del speak["gap_ms"]
+    assert run.budget_values({"speak-1": speak})[run.TURN_GAP] == []
+    assert run.budget_values({"speak-1": dict(speak, gap_ms=[])})[run.TURN_GAP] == []
+    assert run.budget_values({"speak-1": dict(speak, gap_ms=[1900, 2100, True])})[run.TURN_GAP] == [2000.0]
+    broken = base.budget_run().replace('"gap_ms": [3160.0, 1960.0, 2260.0]', '"gap_ms": []')
+    _, rows, step = budget_run(tmp_path, laptop, budget=broken)
+    assert rows[run.TURN_GAP]["value"] is None and "not measured: Turn gap, median, local path" in step["reason"]
+
+
+FAKE_ENGINE = {
+    "emet_engine/__init__.py": "",
+    "emet_engine/metrics.py": '''\
+import os
+
+
+class Turn:
+    def __init__(self, gap_ms):
+        self.gap_ms = gap_ms
+
+
+class SessionStats:
+    """The parts of the engine's SessionStats the budget's driver reads."""
+    frames, mean_ms, process_ms_max, over_budget, frame_ms = 3, 1.0, 2.0, 0, 80.0
+
+    def __init__(self):
+        self.speech_first_ms = [600.0]
+        if os.environ.get("FAKE_TURNS") != "absent":
+            self.turn_records = [Turn(2100.0), Turn(None), Turn(2500.0)]
+
+    def percentile(self, p):
+        return 1.5
+
+    def record_frame(self, process_ms):
+        return None
+
+    def report(self, *args, **kwargs):
+        return ["  frames        3"]
+''',
+    "emet_engine/cli.py": '''\
+from emet_engine import metrics
+
+
+def main(argv):
+    stats = metrics.SessionStats()
+    stats.record_frame(1.0)
+    stats.report()
+    return 0
+''',
+}
+
+
+@pytest.mark.parametrize("turns, gaps", [("there", [2100.0, 2500.0]), ("absent", None)])
+def test_the_budgets_driver_reads_each_turns_gap_and_none_from_an_engine_without_them(tmp_path, turns, gaps):
+    """BUDGET_PY around a stand-in engine with the names it wraps: the
+    footer's wrapper keeps each turn's gap and drops a turn that made no
+    sound; an engine with no `turn_records` leaves the key out, so the row
+    is null and nothing raises. `-S` keeps the installed engine off the path."""
+    for name, text in FAKE_ENGINE.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    (tmp_path / "driver.py").write_text(run.BUDGET_PY, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("EMET_")}
+    env.update(PYTHONPATH=str(tmp_path), FAKE_TURNS=turns)
+    done = subprocess.run([sys.executable, "-S", str(tmp_path / "driver.py"), "1", str(tmp_path / "r.json")],
+                          capture_output=True, timeout=60, env=env, cwd=tmp_path)
+    assert done.returncode == 0, done.stderr.decode()[-800:]
+    result = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert result.get("gap_ms") == gaps and result["voice_first_ms"] == [600.0] and result["exit"] == 0
 
 
 def test_frames_over_80_ms_are_the_engines_count_only_at_an_80_ms_frame():
@@ -1043,6 +1139,48 @@ def test_the_budgets_driver_reads_the_real_engines_numbers(tmp_path, make_wav):
     values = run.budget_values({"frames-1": result})
     assert values["Per-frame 99th percentile"] == [result["p99_ms"]] and len(values["Boot to first frame"]) == 1
     assert "frames        37" in done.stdout.decode(), "the engine's own footer still prints"
+    # The engine keeps a record a turn (0.5.7), read by the same wrapper;
+    # quiet noise wakes nobody, so there is no turn and no gap.
+    assert result["gap_ms"] == [], "SessionStats.turn_records is the name the driver reads"
+
+
+ONE_BREATH = run.TOP / "recordings" / "one-breath-0.5.2.wav"
+
+
+def test_the_budgets_driver_reads_a_gap_for_each_turn_of_one_breath(tmp_path):
+    """EV3 stage 1 against the engine itself: BUDGET_PY around `emet-listen
+    --replay one-breath --speak --stats` with the mock models and the mock
+    voice into the null sink, the budget's speak run with the mock voice in
+    Piper's place. Each of its ten turns made a sound, so each has a gap of
+    at least the soul's patience, and the row is their median. The
+    recording is the laptop's, outside the repository, so CI skips."""
+    pytest.importorskip("pocketsphinx")
+    pytest.importorskip("emet_engine.cli")
+    if not ONE_BREATH.is_file():
+        pytest.skip(f"no recording at {ONE_BREATH}")
+    import replay
+
+    body = replay.body_yaml(None, "1e-15", tmp_path / "turns", None, None)
+    body = "\n".join(line for line in body.splitlines() if "record_turns" not in line)
+    body = body.replace("    provider: mock\n    params:", '    provider: mock\n    params: {transcript: "testing the speaker"}')
+    body += ("\n  chat: {provider: mock, params: {reply: \"This is the body runner, checking the speaker.\"}}\n"
+             "  tts: {provider: mock}\n")
+    (tmp_path / "body.yaml").write_text(body, encoding="utf-8")
+    (tmp_path / "soul.yaml").write_text(replay.SOUL_YAML, encoding="utf-8")
+    (tmp_path / "keys.env").write_text("", encoding="utf-8")
+    (tmp_path / "driver.py").write_text(run.BUDGET_PY, encoding="utf-8")
+    done = subprocess.run([sys.executable, str(tmp_path / "driver.py"), str(time.time_ns()), str(tmp_path / "r.json"),
+                           str(tmp_path / "body.yaml"), str(tmp_path / "soul.yaml"), "--replay", str(ONE_BREATH),
+                           "--speak", "--stats", "--keys", str(tmp_path / "keys.env"),
+                           "--state", str(tmp_path / "state")], capture_output=True, timeout=300,
+                          env={k: v for k, v in os.environ.items() if not k.startswith("EMET_")})
+    assert done.returncode == 0, done.stdout.decode()[-800:] + done.stderr.decode()[-800:]
+    result = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert len(result["gap_ms"]) == len(result["voice_first_ms"]) == 10, result
+    assert all(gap >= 900 for gap in result["gap_ms"]), "the patience is the gap's first term"
+    value, = run.budget_values({"speak-1": result})[run.TURN_GAP]
+    assert min(result["gap_ms"]) <= value <= max(result["gap_ms"])
+    assert re.search(r"^  turn gap +median \d+ ms", done.stdout.decode(), re.M), "the footer prints the same gap"
 
 
 # ------------------------------------------------------- the table
@@ -1058,10 +1196,11 @@ def test_the_budget_table_is_the_plans_with_the_platform_commit_and_bank(tmp_pat
     assert lines[2] == ("| Boot to first frame | 1500 ms (0.5.5) | 1800 ms | +20.0% | 25% | "
                         "`releases/v0.5.6/body/2026-11-27/run.json`; last `releases/v0.5.5/body/2026-11-25/run.json` |")
     assert lines[3].startswith("| First chunk at the null sink after the final, local path | none recorded | 620 ms |")
-    assert [line.split(" | ")[0].removeprefix("| ") for line in lines[2:11]] == [label for label, _ in run.MEASURES]
+    assert lines[4].startswith("| Turn gap, median, local path | none recorded | 2260 ms |")
+    assert [line.split(" | ")[0].removeprefix("| ") for line in lines[2:12]] == [label for label, _ in run.MEASURES]
     assert lines[-1].startswith("Platform linux-aarch64 (emet-pi, Linux 6.18 aarch64), commit eb55748 "
                                 "(working tree), bank 2026-11-25, repeats 1. Judged 2: 2 within, 0 out of bounds; "
-                                "5 with no earlier value.")
+                                "6 with no earlier value.")
 
 
 def test_the_measures_are_the_plan_templates_rows():
@@ -1200,8 +1339,73 @@ def test_the_nightly_gives_way_to_the_same_programs_as_the_runner(tmp_path, line
 def test_the_nightly_installs_with_the_runners_line():
     text = NIGHTLY_SH.read_text(encoding="utf-8")
     assert f'EXTRAS="{" ".join(run.INSTALL)}"' in text, "the same line gives the same install key"
+    assert f'RUNNER_PIP="{run.RUNNER_PIP}"' in text, "and the same pin"
     assert f'PACKAGES="{" ".join(run.PACKAGES)}"' in text
     assert f'UPSTREAM="{run.UPSTREAM}"' in text
+
+
+def install_home(tmp_path: Path) -> tuple[Path, Path]:
+    """A home whose ~/emet-ci holds a tree of four pyproject.toml files and a
+    runner's Python that writes down what it is asked, and that log."""
+    home = tmp_path / "home"
+    tree = home / "emet-ci" / "emet"
+    for package in run.PACKAGES:
+        (tree / package).mkdir(parents=True)
+        (tree / package / "pyproject.toml").write_text(f'[project]\nname = "{package}"\n', encoding="utf-8")
+    log = tmp_path / "asked.log"
+    python = home / "emet-ci" / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f'#!/bin/sh\necho "$*" >> "{log.as_posix()}"\n'
+                      'case "$*" in "-m pip --version"*) echo "pip 26.2 from /x (python 3.13)" ;; '
+                      '"-c "*) echo "versions=0.5.7 0.5.7 0.5.7 0.5.7" ;; esac\nexit 0\n',
+                      encoding="utf-8", newline="\n")
+    python.chmod(0o755)
+    return home, log
+
+
+def nightly_install(home: Path) -> str:
+    """nightly.sh's install_tree on `home`, and the report lines it wrote."""
+    folder = home / "nightly-run"
+    folder.mkdir(exist_ok=True)
+    part = folder / "part"
+    part.unlink(missing_ok=True)
+    done = nightly(home, f'RUN="{folder.as_posix()}"; PART="{part.as_posix()}"; install_tree; echo "code=$?"')
+    assert "code=0" in done.stdout.decode(), done.stdout.decode() + done.stderr.decode()
+    return part.read_text(encoding="utf-8").strip()
+
+
+def test_a_nightly_and_a_run_on_one_tree_keep_each_others_install(tmp_path, laptop):
+    """run.py's real install script and nightly.sh's real install_tree, on
+    one ~/emet-ci: each keeps what the other installed, since both hash the
+    same line and the same pip pin. The two keys differed in 0.5.7's
+    branch, so each reinstalled after the other (0.5.7's review,
+    tools-runner code#1)."""
+    home, log = install_home(tmp_path)
+    runner = make(tmp_path, laptop, base.BashBody(home))
+    runner.home = base.shell_home(home)
+    first = runner.install()
+    assert first.status == "passed" and first.reason.startswith("installed"), first.reason
+    key = (home / "emet-ci" / "installed.key").read_text(encoding="utf-8").strip()
+    log.write_text("", encoding="utf-8")
+    assert nightly_install(home) == "installed=no", "the nightly keeps the runner's install"
+    assert (home / "emet-ci" / "installed.key").read_text(encoding="utf-8").strip() == key
+    assert runner.install().reason.startswith("kept"), "and the runner keeps it after the nightly"
+    assert not [line for line in log.read_text(encoding="utf-8").splitlines() if "pip install" in line]
+
+
+def test_a_nightly_that_installs_upgrades_pip_first_and_the_runner_keeps_it(tmp_path, laptop):
+    """A nightly that installs, a fresh venv's first among them, upgrades
+    pip to the runner's pin before the install line, as run.py does, so a
+    venv the nightly made never keeps a pip with advisories behind a key the
+    runner would keep."""
+    home, log = install_home(tmp_path)
+    assert nightly_install(home) == "installed=yes"
+    installs = [line for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("-m pip install")]
+    assert installs[0] == f"-m pip install --disable-pip-version-check -q --upgrade {run.RUNNER_PIP}", installs
+    assert installs[1].startswith("-m pip install --disable-pip-version-check -q -e emet-sdk[dev]"), installs
+    runner = make(tmp_path, laptop, base.BashBody(home))
+    runner.home = base.shell_home(home)
+    assert runner.install().reason.startswith("kept"), "the nightly's key is the runner's"
 
 
 def test_the_nightly_gives_way_while_the_lock_is_held_and_writes_why(tmp_path):
@@ -1428,7 +1632,7 @@ def test_emet_netcut_cuts_waits_and_restores(tmp_path):
 
 
 def test_emet_netcut_restores_when_it_is_stopped(tmp_path):
-    """TERM during the wait: the trap runs at once and deletes the table."""
+    """A TERM during the wait runs the trap at once, and the trap deletes the table."""
     copy, log = stubbed_netcut(tmp_path)
     script = (f'bash "{copy.as_posix()}" 60 > "{(tmp_path / "out").as_posix()}" 2>&1 & pid=$!\n'
               f'for i in $(seq 1 50); do grep -q "^cut:" "{(tmp_path / "out").as_posix()}" 2>/dev/null && break; '

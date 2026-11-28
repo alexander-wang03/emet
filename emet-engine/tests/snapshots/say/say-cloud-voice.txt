@@ -1,0 +1,9 @@
+$ emet-say body.yaml soul.yaml Hello. --to out.wav
+exit 0
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+  voice    cloud, aura-test (24000 Hz), at speech.example.invalid, key EMET_SNAPSHOT_KEY
+  sink     wav, out.wav; no microphone opened
+  said     1 sentence(s); voice first <ms> ms
+--- stderr
+  ! the voice 'aura-test' retires on 2027-01-01 at Example. Choose another under models.tts.model before then.

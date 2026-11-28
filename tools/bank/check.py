@@ -79,7 +79,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import manifest as bank_files  # noqa: E402
+import manifest as bank_files  # noqa: E402  the bank's one reader and writer, beside this file
 
 __all__ = [
     "check", "check_recording", "voice_list", "voice_list_problems", "card_facts", "card_problems",

@@ -205,7 +205,7 @@ class ExpressionError(ValueError):
 
 @dataclass(frozen=True)
 class Node:
-    """One node of a parsed licence expression: `op` is "id", "and" or "or"."""
+    """One node of a parsed licence expression, whose `op` is "id", "and" or "or"."""
 
     op: str
     name: str = ""

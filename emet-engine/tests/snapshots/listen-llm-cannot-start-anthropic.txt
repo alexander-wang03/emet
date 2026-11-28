@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --reply --speak
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the language model 'anthropic' cannot start, so the robot would hear questions it can never answer. It will not run. Nothing answered at http://192.168.1.20:8080 (ConnectError: All connection attempts failed). That address is on the local network: start the model's server, or correct models.chat.params.url.

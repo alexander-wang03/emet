@@ -1,0 +1,8 @@
+$ emet-say body.yaml soul.yaml Hello.
+exit 2
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+no plugins are installed, so there is no voice to say it with and no sink to say it
+into. Install the hardware layer and the providers:
+    pip install 'emet-hal[audio]' 'emet-providers[piper]'

@@ -16,7 +16,7 @@ a one-line manifest change instead of a dead robot.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 

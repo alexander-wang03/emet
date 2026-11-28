@@ -69,7 +69,8 @@ class MockActuator(ActuatorPlugin):
             # Not an exception: a dead actuator should narrow the descriptor,
             # not take down a robot that can still talk.
             self._fault = str(self.params.get("fault_detail") or "simulated hardware fault")
-            log.warning("mock %s: %s", self.capability_id, self._fault)
+            # INFO: the boot prints the fault on its `fault` line.
+            log.info("mock %s: %s", self.capability_id, self._fault)
             return
         self.started = True
 
@@ -183,7 +184,7 @@ class MockWake(WakePlugin):
 
     async def start(self) -> None:
         if self.params.get("fail_on_start"):
-            log.warning("mock wake: simulated engine failure")
+            log.info("mock wake: simulated engine failure")
             return
         self._started = True
 

@@ -230,7 +230,7 @@ def test_the_reserved_tags_here_cover_every_reserved_kind():
 
 @pytest.mark.parametrize("tag", RESERVED_TAGS)
 def test_a_reserved_intent_is_dropped_and_logged_at_debug(tag, caplog):
-    """DESIGN 5.2: legal to emit, logged at debug level and dropped."""
+    """A reserved intent is legal to emit, logged at debug level and dropped (DESIGN 5.2)."""
     tags = IntentTags()
     with caplog.at_level(logging.DEBUG, logger="emet_engine.intent_tags"):
         clean, found = tags.feed(f"Here you are. [{tag}] Take it.")

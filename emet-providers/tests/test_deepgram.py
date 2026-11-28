@@ -57,7 +57,7 @@ async def settle() -> None:
 
 
 class _Closed(Exception):
-    """Shaped like websockets' ConnectionClosed: it carries rcvd and sent."""
+    """Shaped like websockets' ConnectionClosed, it carries rcvd and sent."""
 
     def __init__(self, code: int = 1000) -> None:
         super().__init__(f"closed {code}")
@@ -66,7 +66,7 @@ class _Closed(Exception):
 
 
 class _Rejected(Exception):
-    """Shaped like websockets' InvalidStatus: it carries response.status_code."""
+    """Shaped like websockets' InvalidStatus, it carries response.status_code."""
 
     def __init__(self, status_code: int) -> None:
         super().__init__(f"server rejected WebSocket connection: HTTP {status_code}")
@@ -787,3 +787,334 @@ def test_finish_does_not_wait_for_a_socket_that_will_not_unwind(monkeypatch):
     assert waited < 1.0, f"the person waited {waited:.1f} s"
     assert final.final and final.error is not None
     assert "no final within" in final.error
+
+
+# ------------------------------------- 0.5.7: where the audio goes, and refusals of a known kind
+
+
+import logging  # noqa: E402
+
+from emet_sdk.types import FAULT_KINDS  # noqa: E402
+
+from emet_providers.deepgram import FAULT_CODES  # noqa: E402
+
+#: Deepgram's documented bodies (developers.deepgram.com/docs/errors and
+#: /reference/errors, read 2026-11-27), with a request id beside them.
+NO_CREDIT = {
+    "err_code": "ASR_PAYMENT_REQUIRED",
+    "err_msg": "Project does not have enough credits for an ASR request and does not have an overage agreement.",
+    "request_id": "r-402",
+}
+NO_ACCESS = {
+    "err_code": "INSUFFICIENT_PERMISSIONS",
+    "err_msg": "Project does not have access to the requested model.",
+    "request_id": "r-403",
+}
+NO_SUCH_MODEL = {"err_code": "Bad Request", "err_msg": "Bad Request: No such model/language/tier combination found."}
+
+OUT_OF_CREDIT = (
+    "Deepgram says the account is out of credit (HTTP 402, ASR_PAYMENT_REQUIRED). "
+    "Add credit to the project in Deepgram's console. Retrying will not help."
+)
+
+
+class _RefusedWith(Exception):
+    """Shaped like websockets' InvalidStatus with its response: a status, the
+    headers and the body, as `websockets.http11.Response` carries them
+    (websockets 17.1, read 2026-11-27)."""
+
+    def __init__(self, status_code: int, body: dict | bytes | None = None) -> None:
+        super().__init__(f"server rejected WebSocket connection: HTTP {status_code}")
+        raw = body if isinstance(body, bytes) else (json.dumps(body).encode() if body is not None else b"")
+        self.response = types.SimpleNamespace(status_code=status_code, headers={}, body=raw)
+
+
+class Scripted(FakeServer):
+    """Each connect takes the next of `answers`: None opens a connection, an
+    exception is raised. The preflight is the first."""
+
+    def __init__(self, answers: list, script: dict | None = None) -> None:
+        super().__init__(script)
+        self.answers = list(answers)
+
+    async def connect(self, url, **kwargs):
+        answer = self.answers.pop(0) if self.answers else None
+        if answer is not None:
+            self.urls.append(url)
+            raise answer
+        return await super().connect(url, **kwargs)
+
+
+def refused_at_boot(monkeypatch, exc: BaseException, **kw) -> DeepgramTranscriber:
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    stt = make(FakeServer(reject=exc), **kw)
+    run(stt.start())
+    assert not stt.describe().healthy
+    return stt
+
+
+def one_turn(stt: DeepgramTranscriber) -> Transcript:
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        return await stt.finish()
+
+    return run(scenario())
+
+
+def test_the_descriptor_names_where_the_audio_goes_and_the_key_that_pays():
+    """SF2: the boot line prints `, at api.deepgram.com, key EMET_DEEPGRAM_KEY`
+    and `--stats` counts the audio sent to that host, from these two fields.
+    The endpoint is the URL as configured, with no query."""
+    d = make(FakeServer()).describe()
+    assert d.endpoint == DEFAULT_URL and d.key_env == DEFAULT_KEY_ENV
+    assert d.host == "api.deepgram.com"
+    assert make(FakeServer(), config={"key_env": "MY_DG"}).describe().key_env == "MY_DG"
+
+
+def test_a_password_in_the_url_never_reaches_the_descriptor():
+    d = make(FakeServer(), url="wss://owner:hunter2@example.com:8443/v1/listen").describe()
+    assert d.endpoint == "wss://example.com:8443/v1/listen"
+    assert d.host == "example.com:8443"
+    assert "hunter2" not in repr(d)
+
+
+def test_every_kind_in_the_table_is_one_the_sdk_takes():
+    assert set(FAULT_CODES.values()) <= FAULT_KINDS
+    assert all(code is None or isinstance(code, str) for _, code in FAULT_CODES)
+
+
+def test_out_of_credit_at_the_handshake_refuses_the_boot_with_its_kind(monkeypatch):
+    """OC3: Deepgram's 402 is named as an unpaid account, which retrying
+    cannot fix, and not as a voice name or a network to check."""
+    stt = refused_at_boot(monkeypatch, _RefusedWith(402, NO_CREDIT))
+    health = stt.health()
+    assert health.faults == ("out_of_credit",)
+    assert health.detail == OUT_OF_CREDIT
+
+
+def test_a_402_with_no_body_is_out_of_credit_by_its_status(monkeypatch):
+    stt = refused_at_boot(monkeypatch, _RefusedWith(402))
+    assert stt.health().faults == ("out_of_credit",)
+    assert stt.health().detail.startswith("Deepgram says the account is out of credit (HTTP 402). Add credit")
+
+
+def test_a_model_the_project_cannot_use_is_model_unavailable_at_boot(monkeypatch):
+    """MC1 stage 3 at the handshake: 403 with INSUFFICIENT_PERMISSIONS is the
+    page's "Project does not have access to the requested model"."""
+    stt = refused_at_boot(monkeypatch, _RefusedWith(403, NO_ACCESS), config={"model": "nova-3-medical"})
+    assert stt.health().faults == ("model_unavailable",)
+    assert stt.health().detail == (
+        "Deepgram does not serve the model 'nova-3-medical' (HTTP 403). Choose another under models.stt.model."
+    )
+
+
+def test_the_same_code_under_401_is_a_rejected_key_not_a_model(monkeypatch):
+    """Deepgram's page gives INSUFFICIENT_PERMISSIONS under 401 for a user's
+    permissions, so the table keys the code with its status."""
+    stt = refused_at_boot(monkeypatch, _RefusedWith(401, {"err_code": "INSUFFICIENT_PERMISSIONS"}))
+    assert stt.health().faults == ("start_failed",)
+    assert "rejected the key" in stt.health().detail
+
+
+@pytest.mark.parametrize("body", [{"err_code": "INVALID_AUTH", "err_msg": "Invalid credentials."}, None])
+def test_a_403_of_another_code_is_still_a_rejected_key(monkeypatch, body):
+    stt = refused_at_boot(monkeypatch, _RefusedWith(403, body))
+    assert stt.health().faults == ("start_failed",)
+    assert "rejected the key in EMET_DEEPGRAM_KEY (HTTP 403)" in stt.health().detail
+
+
+def test_the_kind_comes_from_the_code_never_from_the_message(monkeypatch):
+    """A message that says model or credits names no kind: only the status
+    and `err_code` do (contract 0.5.7 section 3.3)."""
+    words = {"err_code": "Bad Request", "err_msg": "Project does not have access to the requested model. Out of credits."}
+    stt = refused_at_boot(monkeypatch, _RefusedWith(400, words))
+    assert stt.health().faults == ("start_failed",)
+
+
+def test_an_unknown_model_is_refused_in_deepgrams_own_words(monkeypatch):
+    """Deepgram documents no code that names an unknown model; its message
+    does, so the boot's refusal quotes it in place of the library's
+    "server rejected WebSocket connection"."""
+    stt = refused_at_boot(monkeypatch, _RefusedWith(400, NO_SUCH_MODEL), config={"model": "nova-9"})
+    assert stt.health().faults == ("start_failed",)
+    assert stt.health().detail == (
+        "Deepgram refused the connection: HTTP 400 Bad Request: Bad Request: No such model/language/tier combination found."
+    )
+
+
+def test_a_refusal_with_no_body_keeps_the_status_line(monkeypatch):
+    stt = refused_at_boot(monkeypatch, _Rejected(400))
+    assert stt.health().detail == (
+        "Deepgram refused the connection with HTTP 400: server rejected WebSocket connection: HTTP 400"
+    )
+
+
+def test_at_another_url_the_server_is_named_by_its_host_and_deepgrams_console_is_not(monkeypatch):
+    stt = refused_at_boot(monkeypatch, _RefusedWith(402, NO_CREDIT), url="wss://dg.internal:8443/v1/listen")
+    assert stt.health().detail == (
+        "the server at dg.internal:8443 says the account is out of credit (HTTP 402, ASR_PAYMENT_REQUIRED). "
+        "Retrying will not help."
+    )
+
+
+def test_deepgrams_own_url_with_a_trailing_slash_is_still_deepgram(monkeypatch):
+    stt = refused_at_boot(monkeypatch, _RefusedWith(402, NO_CREDIT), url=DEFAULT_URL + "/")
+    assert stt.health().detail == OUT_OF_CREDIT
+
+
+def test_out_of_credit_mid_run_is_the_finals_error_until_a_connection_opens(monkeypatch):
+    """The stt-out-of-credit row: the final carries the sentence, `health()`
+    names the kind for the engine to read after the error stop, and a turn
+    whose connection opens clears it."""
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    server = Scripted(
+        [None, _RefusedWith(402, NO_CREDIT), OSError("down"), _RefusedWith(402, NO_CREDIT), None],
+        {1: [results("hello", final=True)]},
+    )
+    stt = make(server)
+    run(stt.start())
+
+    final = one_turn(stt)
+    assert final.text == "" and final.error == OUT_OF_CREDIT
+    assert stt.health().faults == ("out_of_credit",) and stt.health().detail == OUT_OF_CREDIT
+    assert stt.describe().healthy, "the boot check is not run again"
+
+    # Review finding providers/code#1 (contract 0.5.7 section 9, C15): a
+    # connection that fails for a reason naming no kind ends the kind, so the
+    # turn takes the words-lost row and its offline signal.
+    assert one_turn(stt).error == "OSError: down"
+    assert stt.health().ok and stt.health().faults == ()
+
+    assert one_turn(stt).error == OUT_OF_CREDIT
+    assert stt.health().faults == ("out_of_credit",)
+
+    assert one_turn(stt).text == "hello"
+    assert stt.health().ok and stt.health().faults == ()
+
+
+def test_a_model_withdrawn_mid_run_is_model_unavailable_for_the_rest_of_the_run(monkeypatch):
+    """The stt-model-rejected row, possible only with `preflight: false` or a
+    model withdrawn after boot, since the preflight puts the model in the
+    handshake."""
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    server = Scripted([None, _RefusedWith(403, NO_ACCESS), None], {1: [results("hello", final=True)]})
+    stt = make(server)
+    run(stt.start())
+
+    final = one_turn(stt)
+    rejected = "Deepgram does not serve the model 'nova-3' (HTTP 403). Choose another under models.stt.model."
+    assert final.error == rejected and stt.last_error == rejected
+    assert stt.health().faults == ("model_unavailable",)
+    assert one_turn(stt).text == "hello"
+    assert stt.health().faults == ("model_unavailable",), "a model that went away is not trusted again this run"
+
+
+@pytest.mark.parametrize(
+    ("url", "named"),
+    [(None, "Deepgram"), ("wss://dg.example/v1/listen", "The server at dg.example")],
+    ids=["deepgram", "another-server"],
+)
+def test_a_refused_handshake_mid_run_of_no_known_kind_quotes_deepgram(monkeypatch, url, named):
+    """At another URL the sentence names that server (C7, review finding providers/code#5)."""
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    stt = make(Scripted([None, _RefusedWith(400, NO_SUCH_MODEL)]), **({"url": url} if url else {}))
+    run(stt.start())
+    final = one_turn(stt)
+    assert final.error == (
+        f"{named} refused the connection: HTTP 400 Bad Request: Bad Request: No such model/language/tier combination found."
+    )
+    assert stt.health().ok, "a fault of no kind costs one turn and leaves the plugin healthy"
+
+
+def test_a_refusal_at_another_url_with_no_body_names_that_server(monkeypatch):
+    stt = refused_at_boot(monkeypatch, _Rejected(400), url="wss://dg.example/v1/listen")
+    assert stt.health().detail == (
+        "The server at dg.example refused the connection with HTTP 400: server rejected WebSocket connection: HTTP 400"
+    )
+
+
+@pytest.mark.parametrize(
+    ("exc", "said"),
+    [
+        (OSError("connection refused"), "could not reach wss://example.com/v1/listen: OSError: connection refused."),
+        (asyncio.TimeoutError(), "could not reach wss://example.com/v1/listen within 10 s."),
+    ],
+    ids=["refused", "timeout"],
+)
+def test_a_password_in_the_url_reaches_no_boot_refusal(monkeypatch, exc, said):
+    """Review finding providers/claims-scope#4: the sentence names the
+    endpoint, which has no credentials, as the chat plugins' do."""
+    stt = refused_at_boot(monkeypatch, exc, url="wss://owner:hunter2@example.com/v1/listen")
+    assert (stt.health().detail or "").startswith(said)
+    assert "hunter2" not in (stt.health().detail or "")
+
+
+def test_websockets_own_refusal_is_read_for_its_kind(monkeypatch):
+    """Review finding providers/tests#10: the library's InvalidStatus and
+    Response, which the stand-ins above copy, give the same kind."""
+    pytest.importorskip("websockets")
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    refused = InvalidStatus(Response(402, "Payment Required", Headers(), json.dumps(NO_CREDIT).encode()))
+    stt = refused_at_boot(monkeypatch, refused)
+    assert stt.health().faults == ("out_of_credit",) and stt.health().detail == OUT_OF_CREDIT
+
+
+def test_each_start_refusal_names_its_kind_where_it_is_raised(monkeypatch):
+    """The `"no key" in self._fault` copy is gone: the kind is set beside
+    the reason, so rewording a reason cannot change it."""
+    monkeypatch.delenv(DEFAULT_KEY_ENV, raising=False)
+    no_key = make(FakeServer())
+    run(no_key.start())
+    assert no_key.health().faults == ("no_key",)
+
+    monkeypatch.setenv(DEFAULT_KEY_ENV, KEY)
+    for name in ("websockets", "websockets.asyncio", "websockets.asyncio.client"):
+        monkeypatch.setitem(sys.modules, name, None)
+    no_library = DeepgramTranscriber({"provider": "deepgram"}, AudioFormat())
+    run(no_library.start())
+    assert no_library.health().faults == ("no_library",)
+
+    unreachable = refused_at_boot(monkeypatch, OSError("no route"))
+    assert unreachable.health().faults == ("start_failed",)
+
+
+def test_a_start_refusal_and_a_lost_turn_are_logged_at_info(monkeypatch, caplog):
+    """L16: the engine prints both, the refusal through `health().detail`
+    and the turn through `Transcript.error`, and logging's last resort
+    prints WARNING and above, so either at WARNING would print twice."""
+    with caplog.at_level(logging.DEBUG, logger="emet_providers.deepgram"):
+        refused_at_boot(monkeypatch, _RefusedWith(402, NO_CREDIT))
+        stt = make(Scripted([None, OSError("[Errno -3] Temporary failure in name resolution")]))
+        run(stt.start())
+        assert one_turn(stt).error is not None
+    said = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert (logging.INFO, f"deepgram: {OUT_OF_CREDIT}") in said
+    assert any(level == logging.INFO and "returning what was heard" in text for level, text in said)
+    assert all(level < logging.WARNING for level, _ in said), said
+
+
+def test_a_turn_with_no_final_in_time_is_logged_at_info(monkeypatch, caplog):
+    """L16 on the other lost-turn branch, review finding providers/tests#6:
+    the engine prints `Transcript.error`, so a WARNING would print it twice."""
+    stt = started(FakeServer(), monkeypatch, timeout_s=0.05)
+
+    async def scenario():
+        await stt.feed(FRAME)
+        await settle()
+        stuck = asyncio.create_task(asyncio.sleep(30))
+        stt._utterance.task.cancel()
+        stt._utterance.task = stuck
+        final = await stt.finish()
+        stuck.cancel()
+        return final
+
+    with caplog.at_level(logging.DEBUG, logger="emet_providers.deepgram"):
+        final = run(scenario())
+    assert "no final within" in (final.error or "")
+    said = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert any(level == logging.INFO and "no final within" in text for level, text in said), said
+    assert all(level < logging.WARNING for level, _ in said), said

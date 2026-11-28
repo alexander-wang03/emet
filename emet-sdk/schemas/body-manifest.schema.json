@@ -185,7 +185,7 @@
     "identifier": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "Lowercase, starts with a letter, underscores allowed. Uniqueness across capabilities is a semantic rule, not a schema rule."
+      "description": "Lowercase, starts with a letter, '_' allowed. Uniqueness across capabilities is a semantic rule, not a schema rule."
     },
 
     "driver": {

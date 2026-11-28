@@ -5,7 +5,7 @@ The listen loop and the runtime that drives a body.
 Imports `emet_sdk` only. Hardware reaches it by name through entry-point
 discovery, never by import. See the layering check in `tools/check_layering.py`.
 
-Two commands. `emet-talk` is the robot: wake, words, answer, voice, speaker,
+Three commands. `emet-talk` is the robot: wake, words, answer, voice, speaker,
 one exchange after another, everything read from the two documents and
 nothing behind a flag.
 
@@ -14,8 +14,9 @@ emet-talk path/to/manifest.yaml path/to/soul.yaml
 emet-talk path/to/manifest.yaml path/to/soul.yaml --replay recording.wav --stats
 ```
 
-It prints `you:` and the robot's name as the words arrive, says what the
-soul's `persona.lines` say when a provider declines or fails, waits one more
+It prints `you:` and the robot's name as the words arrive, says the soul's
+`persona.lines` when a provider declines or fails and the engine's own
+words for a model that cannot answer or an unpaid chat account, waits one more
 window when the words so far look unfinished (`interaction.extend_on_incomplete`),
 and lists the intents the model tagged into its reply. A turn whose words
 never arrived, because the network went away between the question and the
@@ -109,6 +110,69 @@ Aura, so `--speak` and `--echo` exclude each other. `--stats` adds `voice
 first` and `voice done`: the wait from the final transcript to the first
 sound at the speaker, and to the last.
 
+Each provider's boot line says where its stage runs, which key it read and
+which installed package offered it:
+
+```
+  stt      deepgram (streaming), model nova-3, at api.deepgram.com, key EMET_DEEPGRAM_KEY, from emet-providers 0.5.7
+  llm      openai, model gpt-5.6-terra, at api.openai.com, key EMET_OPENAI_KEY, from emet-providers 0.5.7
+  voice    piper, model en_US-ljspeech-medium (22050 Hz), on this body, from emet-providers 0.5.7
+```
+
+`at` names the host and port the provider sends to, never a user name or a
+password written into its URL; `on this body` is one of Emet's own plugins
+that sends nothing anywhere. A plugin from another package that names no
+address reads `where it sends is not stated`, since the engine cannot tell
+whether it sends anything. `key` names the variable, and a key's value is never
+printed. `emet-talk` prints the same as `words`, `answers` and `voice`. The
+`stt` line puts the mode straight after the provider's name, so the name is
+always the line's second word and is never followed by a comma, which is
+how `tools/bank/replay.py` reads it. Two installed packages that offer one
+plugin name stop the boot before the robot makes a sound, naming both and
+the `pip uninstall` for each.
+
+`emet-say` says a line in the soul's voice with nothing listening. It boots
+the voice and the sink only, performs the text's tags through the voice rungs
+of their chains, and prints how long the first sound took. `--to` writes a
+WAV at the voice's rate in place of the manifest's sink:
+
+```sh
+emet-say path/to/manifest.yaml path/to/soul.yaml "[express.curiosity] The kettle has boiled." --to kettle.wav
+```
+
+## When something fails
+
+Each failure of a turn, and a provider, audio source or sink that cannot
+start, prints one line from one table, `emet_engine/failures.py`: a
+provider that cannot start, a chat model its
+vendor has retired or does not know, an account out of credit, a reply that
+spent its whole token cap thinking, words that never arrived, and an audio
+source or sink that cannot open. The session picks the line from what
+failed, and never from the wording of an error, so the detail a person reads
+is the plugin's own sentence and the line around it stays the same. A
+refusal at boot is one line on stderr and exit 1, before the robot makes a
+sound; only a microphone that will not open is refused after the boot tone,
+which plays before the microphone opens on purpose:
+
+```
+the audio source 'wav' cannot start, so the robot would listen to nothing. It will not run. could not open 'nothere.wav': [Errno 2] No such file or directory: 'nothere.wav'
+```
+
+A failed turn prints its line as a note, and the robot says the line the row
+names: the soul's `failed` line, or one of the engine's own for a model that
+cannot answer and for an unpaid language-model account. `emet-talk` prints it after the
+speaker's tag; `emet-listen --speak` says it too and prints `spoke the line:`
+and the words. A chat model that is retired or unknown does not stop the
+boot: it prints one `!` notice, and each wake then gets the unavailable line
+at the end of its turn, with nothing sent to the transcriber or the model.
+A model with a retirement date still to come boots as it always did, with
+one notice naming the date.
+
+A plugin logs what the engine prints at INFO, so a refusal prints once, and
+the reply's tag (`reply:`, or the robot's name in `emet-talk`) is printed
+with the reply's first word, so a reply that failed before any text leaves
+no empty tag above its line.
+
 ## The body
 
 Before anything boots, both commands print which tree is running, as one
@@ -135,7 +199,7 @@ result, grouped by what performs each intent:
 
 ```
   body     a Raspberry Pi with a USB microphone and speaker (pi_speakerphone)
-  chains   31 resolved at boot against 0 part(s): 0 to hardware, 31 to voice
+  chains   32 resolved at boot against 0 part(s): 0 to hardware, 32 to voice
              voice  utter        speak
              voice  inflect      express.affection express.amusement ...
 ```
@@ -236,3 +300,38 @@ what the run itself saw. Without `vcgencmd` only the load is printed, and withou
 average either (Windows) there is no board line; a reader that exists and
 fails prints `unknown`. Nothing is read per frame. The method is the Reachy
 LiteRT sample's, cited in `CITATIONS.md`.
+
+Under `--stats` each turn ends with its own line, the wait a person had and
+what the turn sent off the body:
+
+```
+    turn gap 2260 ms = quiet 960 + stt final 410 + llm first 620 + voice 270; 967 tokens in, 18 out; sent 3.3 s of audio to api.deepgram.com, 2071 characters to api.openai.com
+```
+
+The gap runs from the last loud frame of the question to the first sound of
+the answer, and its first term is the quiet the endpointer waited for, in
+whole frames: the soul's patience, or twice it on an extended turn whose
+extension ran out in silence. `emet-talk` prints the same line in parentheses. The footer
+adds `turn gap`, `tokens`, `sent` and `cleaned` after `voice done`, summed
+over the run; none of them starts with `name cut`.
+
+At a terminal, `--stats` also keeps one line under the header up to date,
+what the ears hear now:
+
+```
+    ears  -51.8 dBFS   waiting for the name   last wake 1.00, 14 s ago
+```
+
+It is redrawn at most twice a second and cleared before anything else is
+written, so it never lands inside another line. Written to a file, as a
+replay's output is, it is never drawn; the body runner's typescript keeps
+each redraw as a piece after a carriage return, which its reader skips.
+
+`--events PATH`, with `--stats`, writes what `--stats` prints to PATH as
+JSON, one record a line: a header naming the four packages and the
+platform, a record beside each line under a wake and each turn's line, and
+the footer's numbers. It holds numbers and verdicts only, never a word
+anybody said, and it changes no line on the console. The format is
+`emet-events` 1.0, described by `emet_engine/schemas/events-1.schema.json`;
+a reader refuses another major version and ignores keys it does not know.
+Without `--stats` the flag is refused with exit 2.

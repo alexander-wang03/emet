@@ -20,7 +20,7 @@ TOOLS = Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import check_licences as cl  # noqa: E402
+import check_licences as cl  # noqa: E402  a tool, imported by its bare name from tools/
 
 E55 = {"Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "PSF-2.0", "MIT-0"}
 #: The real policy: E55's list (2026-11-26) with the three licences numpy names beside it, counted
@@ -465,7 +465,7 @@ def test_a_hand_read_licence_outside_the_list_still_needs_an_exception(tmp_path)
 
 
 def test_main_judges_what_is_installed_and_names_a_refusal(tmp_path, monkeypatch, capsys):
-    """The line CI's test jobs run: no arguments."""
+    """The line CI's test jobs run, with no arguments."""
     dists = with_sdk_requiring(tree(Dist("gplthing", "2.0", expression="GPL-3.0-or-later")), "gplthing")
     monkeypatch.setattr(cl.importlib.metadata, "distributions", lambda: iter(dists))
     write_policy(tmp_path)

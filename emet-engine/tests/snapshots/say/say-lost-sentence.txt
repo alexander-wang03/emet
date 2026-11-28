@@ -1,0 +1,10 @@
+$ emet-say body.yaml soul.yaml 'Fine. The POISON word.' --to out.wav
+exit 1
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+  voice    mock (16000 Hz), on this body, from emet-providers <version>
+  sink     wav, out.wav; no microphone opened
+  said     1 sentence(s); voice first <ms> ms
+  lost     the voice could not say 'The POISON word.': simulated: the voice failed on 'POISON'
+--- stderr
+(nothing)

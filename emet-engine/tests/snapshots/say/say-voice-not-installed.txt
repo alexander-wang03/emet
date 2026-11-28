@@ -1,0 +1,7 @@
+$ emet-say body.yaml soul.yaml Hello.
+exit 1
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+[error] missing_plugin: no speech synthesis provider provides 'nonesuch'. Installed: cloud, deepgram, mock, piper. The value is legal. Install the package that provides it, or correct the name.

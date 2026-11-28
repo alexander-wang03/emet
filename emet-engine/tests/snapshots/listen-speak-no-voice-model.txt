@@ -3,9 +3,6 @@ exit 1
 --- stdout
 emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
 --- stderr
-piper: no voice model for 'en_US-ljspeech-medium'. Looked for <tmp>/voices/en_US-ljspeech-medium.onnx, <tmp>/system-voices/en_US-ljspeech-medium.onnx. Download it once with:
-    python -m piper.download_voices en_US-ljspeech-medium --data-dir <tmp>/voices
-and the plugin finds it there on the next boot. A voice model is never fetched at boot, so that a soul naming one cannot make the robot download anything unasked.
 
 the voice 'piper' cannot start, so the robot would answer and never be heard. It will not run. no voice model for 'en_US-ljspeech-medium'. Looked for <tmp>/voices/en_US-ljspeech-medium.onnx, <tmp>/system-voices/en_US-ljspeech-medium.onnx. Download it once with:
     python -m piper.download_voices en_US-ljspeech-medium --data-dir <tmp>/voices

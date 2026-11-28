@@ -99,6 +99,29 @@ def test_every_voice_action_and_every_topic_is_used_by_a_shipped_chain():
     } == EXPLAIN_TOPICS
 
 
+def test_a_model_that_cannot_answer_has_a_signal_of_its_own_that_explains_it():
+    """`signal.unavailable` is what the engine performs at the end of a
+    wake's turn while its language model is one the vendor has retired or
+    does not know. A light at hue 30, then dim eyes, then `explain` on the
+    `unavailable` topic, so a body with no light says the words. Each rung is
+    held as the contract writes it, since the light and the eyes are the
+    maintainer's to confirm. It is apart from `signal.offline`, which says
+    the network or a server is down: there a retry can help, and here nothing
+    will change until the owner chooses another model."""
+    from emet_sdk.chains import ActuatorSelector
+    from emet_sdk.intents import P0_INTENTS
+
+    chain = load_chains()["signal.unavailable"]
+    assert chain.mode == "first"
+    assert [(rung.actuator, rung.action, dict(rung.params)) for rung in chain.rungs] == [
+        (ActuatorSelector(role="status", type="light"), "solid", {"hue": 30, "brightness": 0.4}),
+        (ActuatorSelector(role="eyes"), "expression", {"preset": "dim"}),
+        (ActuatorSelector(voice=True), "explain", {"topic": "unavailable"}),
+    ]
+    assert "unavailable" in P0_INTENTS["signal"] and "unavailable" in EXPLAIN_TOPICS
+    assert load_chains()["signal.offline"].voice_rung.params == {"topic": "offline"}
+
+
 def test_every_shipped_sounding_rung_carries_what_it_sounds_like():
     """An `inflect` needs a filler to say and a `tone` needs a preset to
     play. A rung missing one binds and makes no sound, and on a bare body

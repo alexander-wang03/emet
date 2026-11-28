@@ -16,7 +16,7 @@ wakes should not install them. So they live here.
 |---|---|---|
 | `mock` | `emet.stt` | Reads words out of the bytes it is given, one partial a frame, then a final; or plays a cassette of a real transcriber's answers back for the same bytes |
 | `deepgram` | `emet.stt` | Streaming recognition through Deepgram, `nova-3` unless the soul says otherwise. Extra: `deepgram` |
-| `mock` | `emet.llm` | Repeats what it heard, or says a scripted line, one word a delta; can ask for a tool |
+| `mock` | `emet.llm` | Repeats what it heard, or says a scripted line, one word a delta; can ask for a tool, and can spend its token cap thinking (`params.reasoning_tokens`) |
 | `anthropic` | `emet.llm` | Claude through the Messages API, streamed, `claude-opus-5` unless the soul says otherwise. Extra: `anthropic` |
 | `openai` | `emet.llm` | GPT through Chat Completions, streamed, `gpt-5.6-terra` unless the soul says otherwise; `params.url` points it at any compatible server. Extra: `openai` |
 | `mock` | `emet.tts` | Spells the words into the audio it produces, a chunk a word; `read_back()` turns the audio into the words again |
@@ -91,23 +91,141 @@ wins over the file, so a one-off key for one run still works. `keys.env`
 is in the repository's `.gitignore`, whatever directory it lands in.
 
 At boot each plugin makes one cheap request (a connection for the Deepgram
-transcriber, a model listing for the language models, one six-character
-word for the Deepgram voice), so a missing key, a rejected key (HTTP 401)
-or an unreachable network is reported in those words before the first
-question, and the robot refuses to run rather than hear questions it can
-never answer. Emet never sees a key except to send it in a header.
+transcriber, the soul's model by id for the language models, one
+six-character word for the Deepgram voice), so a missing key, a rejected
+key (HTTP 401) or an unreachable network is reported in those words before
+the first question, and the robot refuses to run rather than hear questions
+it can never answer. A language model at a server other than OpenAI's or
+Anthropic's may take a second, the list of models, below; `warm_up` adds
+one more. Emet never sees a key except to send it in a header.
 
-A local model works the same way: point the `openai` provider at any server
-that speaks Chat Completions and give it whatever key that server wants.
+One failure boots all the same: a chat model OpenAI or Anthropic has
+retired, or an id it does not know, read at the vendor's own address. The
+boot prints why, and the robot answers each wake
+with one line saying it cannot think, because a robot with no screen that
+refused to boot would tell the person in the room nothing. A date the
+vendor has set for retiring the model is printed once at boot, while the
+model still answers. An account out of credit is named as that, with the
+vendor's code, in place of a bare HTTP status.
+
+## A local language model
+
+Point the `openai` provider at any server on the robot or on the home
+network that speaks Chat Completions. The plugin needs a key in the
+variable `key_env` names, so give it the key the server checks, or any
+value for a server that checks none.
+
+The block goes in the body manifest, where `models.chat` takes the stage
+over and tunes it through `params`. A soul's `models` carry no `params`, so
+the same block in a soul fails validation.
 
 ```yaml
 models:
   chat:
     provider: openai
     model: "llama3.2"
-    key_env: "EMET_LOCAL_KEY"
-    params: {url: "http://localhost:11434/v1", max_tokens_field: "max_tokens"}
+    key_env: "EMET_LOCAL_KEY"          # in keys.env: a long random value
+    params: {url: "http://localhost:11434/v1", max_tokens_field: "max_tokens", warm_up: true}
 ```
+
+When nothing answers at boot, the refusal says where the address is: "That
+address is this machine: start the model's server, or correct
+models.chat.params.url", or the same for the local network. A cloud address
+keeps "The language model needs a network". The robot refuses to run either
+way.
+
+Three params matter more for a local server than for a cloud one:
+
+- **`warm_up: true`** sends one request of one output token at boot, after
+  the model check, so the server loads the model before the first question.
+  On litert-lm the first question after the server started waited 15.5 s
+  for its first word, most of it the engine's load and its weight cache
+  being written, against 3.8 to 4.4 s once warm (laptop, 2026-10-27 and
+  28). A later start with that cache already on disk was not measured, so
+  what `warm_up` saves there is unknown. It warms the
+  load only, because the robot's system prompt is assembled after the
+  plugin starts. A warm-up that fails leaves the robot
+  running and the first question slow. Off by default, because against a
+  cloud vendor it spends a request at every boot.
+- **`max_tokens_field: "max_tokens"`** for a server that reads the older
+  name of the cap. Ollama documents `max_tokens` and not
+  `max_completion_tokens`; llama.cpp's server README names neither (both
+  read 2026-11-27), so the older name is the safe one there.
+- **`reasoning_effort`** is sent only when set, so a server that refuses the
+  field never sees it. llama.cpp passes it to the model's template and turns
+  thinking off at `none`, and Ollama reads it to control thinking (both read
+  2026-11-27).
+
+Each recipe starts a server bound to 127.0.0.1, so nothing else on the
+network reaches it. A web page open in a browser on the same machine still
+can, and the reference body's image is a desktop with a browser. A server
+that lets any page's script read its answers (CORS) serves that page, and a
+page can reach a local port through a name it controls (DNS rebinding),
+which a CORS limit does not stop and a key does. So:
+
+- **llama.cpp** checks a key when given `--api-key`, and its CORS allows
+  every origin unless `--cors-origins` limits it; `localhost` allows its own
+  pages only (its server README, read 2026-11-27). The recipe below sets
+  both, with the value of `EMET_LOCAL_KEY`.
+- **litert-lm** 0.18.1's server checks no key at all (its serve module,
+  read 2026-10-27), so it cannot be told to; what it answers a page's
+  script (CORS) was not read.
+- **Ollama** allows browser requests from the origins `127.0.0.1` and
+  `0.0.0.0` only unless `OLLAMA_ORIGINS` adds more, and its FAQ names no
+  key check (read 2026-11-27).
+
+**litert-lm** (Google, Apache-2.0), as run on a laptop with 0.18.1 on
+2026-10-27. It reads `max_completion_tokens`, so the default field works:
+
+```sh
+pip install litert-lm==0.18.1
+litert-lm import --from-huggingface-repo litert-community/gemma-4-E2B-it-litert-lm gemma-4-E2B-it.litertlm e2b
+litert-lm serve --host 127.0.0.1 --port 9379
+```
+
+```yaml
+    model: "e2b"
+    params: {url: "http://127.0.0.1:9379/v1", timeout_s: 300, warm_up: true}
+```
+
+**Ollama** (MIT). It listens on 127.0.0.1:11434 and unloads a model after 5
+idle minutes; a negative `OLLAMA_KEEP_ALIVE` keeps it loaded. Its context is
+4096 tokens unless `OLLAMA_CONTEXT_LENGTH` says otherwise (Ollama's FAQ and
+its OpenAI compatibility page, read 2026-11-27):
+
+```sh
+ollama pull llama3.2
+OLLAMA_KEEP_ALIVE=-1 ollama serve
+```
+
+```yaml
+    model: "llama3.2"
+    params: {url: "http://localhost:11434/v1", max_tokens_field: "max_tokens", warm_up: true}
+```
+
+**llama.cpp** (MIT). `llama-server` serves a GGUF file, and `cache_prompt`,
+on by default, reuses the cache of the start of a prompt it has already
+seen, and Emet's system prompt stays the same for a run. Its README gave
+the default port as 9931 on 2026-11-27, so the command names one. Run it
+from a shell where `EMET_LOCAL_KEY` holds the value in keys.env:
+
+```sh
+llama-server -m model.gguf --host 127.0.0.1 --port 8080 --api-key "$EMET_LOCAL_KEY" --cors-origins localhost
+```
+
+```yaml
+    model: "model.gguf"                # the id llama-server's /v1/models lists
+    params: {url: "http://127.0.0.1:8080/v1", max_tokens_field: "max_tokens", warm_up: true}
+```
+
+At a server other than OpenAI's or Anthropic's the model check asks for the
+model by id, and any answer but the model or a rejected key lists the
+models instead, as the check did before 0.5.7. So a server without the
+per-model path still boots, and so does an id that server does not know.
+The robot finds out at the first question. An answer carrying OpenAI's
+code `model_not_found` makes the model unavailable for the rest of the
+run, as at OpenAI; any other fails that turn as a server fault does, with
+the soul's `failed` line and `signal.offline`.
 
 ## Replaying a transcriber for nothing
 
@@ -221,7 +339,7 @@ Implement `TranscriberPlugin`, `LanguageModelPlugin` or `VoicePlugin` from
 
 ```toml
 [project.entry-points."emet.stt"]
-"deepgram" = "your_package.deepgram:DeepgramTranscriber"
+"whisper" = "your_package.whisper:WhisperTranscriber"
 
 [project.entry-points."emet.llm"]
 "gemini" = "your_package.gemini:GeminiLanguageModel"
@@ -229,6 +347,20 @@ Implement `TranscriberPlugin`, `LanguageModelPlugin` or `VoicePlugin` from
 [project.entry-points."emet.tts"]
 "kokoro" = "your_package.kokoro:KokoroVoice"
 ```
+
+Choose a name no installed package already offers in its group. Two
+distributions that offer one name, such as a second `deepgram` in
+`emet.stt` beside this package's, are refused at boot with
+`DuplicatePluginError`, which names both and the `pip uninstall` for each,
+since which one Python found first would depend on the order they were
+installed.
+
+Every `describe()` also says where the plugin sends what it is given:
+`endpoint`, the URL as configured with no credentials or query, and
+`key_env`, the variable the key was read from. Leave both None only for a
+provider that runs on the body. The boot line prints `, on this body` for
+an `endpoint` of None, and `--stats` counts nothing sent from it, so a
+cloud plugin that leaves it out is reported as sending nothing.
 
 A transcriber has three methods: `describe()` reports the model that
 answered, whether partials will arrive, and the sample rate the instance will

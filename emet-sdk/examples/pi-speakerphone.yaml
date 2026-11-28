@@ -84,19 +84,31 @@ audio:
 # ~/.config/emet/keys.env (EMET_DEEPGRAM_KEY, EMET_OPENAI_KEY) and the voice
 # downloaded once
 # (`python -m piper.download_voices en_US-ljspeech-medium --data-dir ~/.local/share/emet/voices`),
-# `--transcribe --reply --speak` runs against them and this block stays
-# commented. Without keys, or offline, uncomment it and the body takes the
+# `--transcribe --reply --speak` runs against them.
+#
+# The body names no chat provider, so the soul's runs, and `params` tune it.
+# Each plugin reads its own key and ignores the other's: `reasoning_effort`
+# is OpenAI's and `effort` Anthropic's. `low` keeps a spoken reply's
+# reasoning short, because reasoning tokens count against the reply's cap
+# of 300 and a reply that spends them all says nothing. `low` is the
+# measured choice for the reference soul's model (2026-11-27): 20 questions
+# at each of `none`, `low` and `medium` gave no reply emptied or cut at the
+# cap, and only `low` kept all 12 honesty answers. A body whose chat runs on
+# a local server that refuses the field leaves it out.
+#
+# Without keys, or offline, uncomment the lines below and the body takes the
 # stages over with the mocks: the transcriber reads nothing out of a real
 # microphone and so is given a line to say, the language model repeats what
 # it heard, and the mock voice makes a sound no one could mistake for speech.
-# models:
-#   stt:
-#     provider: mock
-#     params: {transcript: "testing the seam"}
-#   chat:
-#     provider: mock
-#   tts:
-#     provider: mock
+models:
+  chat:
+    # provider: mock
+    params: {reasoning_effort: low, effort: low}
+  # stt:
+  #   provider: mock
+  #   params: {transcript: "testing the seam"}
+  # tts:
+  #   provider: mock
 
 capabilities: []
 

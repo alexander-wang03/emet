@@ -34,8 +34,8 @@ TOOLS = Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import plan_file  # noqa: E402
-import release_audit  # noqa: E402
+import plan_file  # noqa: E402  a tool, imported by its bare name from tools/
+import release_audit  # noqa: E402  a tool, imported by its bare name from tools/
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "audit"
 PLAN = (FIXTURES / "plan.md").read_text(encoding="utf-8")

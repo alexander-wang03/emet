@@ -5,8 +5,8 @@ packages, and none of it goes in the repository's venv or on the body.
 
 | File | What it is |
 |---|---|
-| `requirements.in` | The CI-only tools, each at an exact version: zizmor, mutmut, vulture, coverage, pip-audit, build |
-| `requirements.txt` | The lock made from it: every tool and everything a tool needs, 47 pins, each with the hash of every file PyPI holds for that version |
+| `requirements.in` | The CI-only tools, each at an exact version: zizmor, mutmut, vulture, coverage, pip-audit, build, flake8 |
+| `requirements.txt` | The lock made from it: every tool and everything a tool needs, 51 pins, each with the hash of every file PyPI holds for that version |
 | `zizmor.yml` | zizmor's configuration. A finding the project accepts is listed under `ignore` with its reason |
 | `check_workflows.py` | The house rules of `.github/workflows/` and the Dependabot file's wait, three of them zizmor's audits too, standard library only |
 | `mutmut-targets.txt` | The functions the `mutmut` job may mutate (RP7). Its own header says how it is read |
@@ -30,8 +30,8 @@ tools/.venv/Scripts/python.exe -m pip install --require-hashes -r tools/ci/requi
 
 On Linux the interpreter is `tools/.venv/bin/python`.
 
-`tools/ci.py` finds zizmor, build and pip-audit in the tools venv, and
-`tools/check_health.py` finds vulture there. coverage and mutmut run inside
+`tools/ci.py` finds zizmor, build, pip-audit and flake8 in the tools venv,
+and `tools/check_health.py` finds vulture there. coverage and mutmut run inside
 the interpreter that runs the suites, so
 `tools/ci.py test` and `mutmut` find them only when the lock is installed
 there, which is CI's case; on the laptop those two steps are not run.
@@ -57,7 +57,11 @@ wait `.github/dependabot.yml` and `requirements.in` keep. The lock of
 2026-11-26 used 2026-11-19, and let PyYAML through to 2026-11-21 with
 `--exclude-newer-package pyyaml=2026-11-21T00:00:00Z`, because emet-sdk's
 floor is `pyyaml>=6.0.4` and 6.0.4 was uploaded on 2026-11-20. The command
-uv ran is the lock's second line.
+uv ran is the lock's second line. On 2026-11-27 flake8 7.5.0 joined with the
+same two dates, uv 0.13.10, and the lock gained four pins and changed no
+other: flake8 7.5.0, pyflakes 4.1.0, pycodestyle 2.15.0 and mccabe 0.7.0,
+uploaded 2026-10-28, 2026-10-28, 2026-09-22 and 2022-01-24 (PyPI's JSON
+API, read that day).
 
 Dependabot keeps the lock current through its `uv` ecosystem, which runs
 `uv pip compile` again with `--universal`, `--generate-hashes` and

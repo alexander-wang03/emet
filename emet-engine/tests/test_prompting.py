@@ -91,6 +91,36 @@ def test_a_soul_can_silence_a_line():
     assert lines["failed"] is None and lines["declined"] is None
 
 
+def test_the_engine_has_its_own_words_for_a_model_it_cannot_use_and_an_unpaid_account():
+    """0.5.7-D5's two lines, word for word. Neither asks the person to try
+    again, which neither fault would let succeed."""
+    assert DEFAULT_LINES["unavailable"] == (
+        "The part of me that thinks has been switched off. My owner needs to choose another."
+    )
+    assert DEFAULT_LINES["out_of_credit"] == (
+        "I can't answer right now. The account that pays for my thinking has run out."
+    )
+
+
+def test_a_soul_cannot_set_the_engines_own_two_lines():
+    """They are engine words until the soul can hold them (0.6): a soul that
+    names them anyway, past the schema, changes nothing."""
+    lines = persona_lines({"persona": {"lines": {"unavailable": "Gone.", "out_of_credit": None}}})
+    assert lines["unavailable"] == DEFAULT_LINES["unavailable"]
+    assert lines["out_of_credit"] == DEFAULT_LINES["out_of_credit"]
+
+
+def test_the_lines_a_soul_may_set_are_the_ones_its_schema_allows():
+    from emet_sdk.validate import load_schema
+
+    from emet_engine.prompting import _SOUL_LINES
+
+    block = load_schema("soul-bundle")["properties"]["persona"]["properties"]["lines"]
+    assert block["additionalProperties"] is False
+    assert sorted(block["properties"]) == sorted(_SOUL_LINES)
+    assert set(_SOUL_LINES) < set(DEFAULT_LINES)
+
+
 # --------------------------------------------------------- the body in it
 
 

@@ -59,6 +59,26 @@ which is to say nothing; `params.preflight: false` skips it. A failure
 during a sentence raises `PluginError` after the audio so far, and the
 engine goes on with the next sentence.
 
+**A refusal that names its kind.** `FAULT_CODES` is read against each
+refused request's status and `err_code` through `_http.fault_kind`, at boot
+and on every sentence. Deepgram's errors page
+(developers.deepgram.com/docs/errors and /reference/errors, both read
+2026-11-27) documents HTTP 403 with `err_code` `INSUFFICIENT_PERMISSIONS`,
+"Project does not have access to the requested model", which is
+`model_unavailable`. It documents HTTP 402 for speech-to-text only
+(`ASR_PAYMENT_REQUIRED`); a 402 is Payment Required, so the voice reads any
+402 as `out_of_credit`, and what the speak API sends with it is
+unverified. An unknown voice is HTTP 400 with the generic `Bad Request`
+and the message "No such model/language/tier combination found", so it
+stays `start_failed`, quoted in Deepgram's words. After a refusal of either
+kind `health()` reports it: `model_unavailable` for the rest of the run,
+`out_of_credit` until a request succeeds or fails for a reason that names
+no kind. After `model_unavailable` each
+sentence is lost with that sentence and nothing more is sent, as the chat
+plugins send nothing for a model that cannot answer. The engine reads only
+the language model's and the transcriber's `health()` after boot, so the
+kind is the voice's own record of why.
+
 Params, all optional, from the body's `models.tts.params`:
 
     sample_rate   8000, 16000, 24000, 32000 or 48000. Default 24000. The
@@ -88,13 +108,15 @@ from typing import Any, AsyncIterator, Mapping
 from emet_sdk.plugin import PluginError, VoicePlugin
 from emet_sdk.types import Health, VoiceDescriptor
 
-from emet_providers._http import api_error, open_client
+from emet_providers._http import api_error, endpoint_of, error_code, fault_kind, open_client, who
+from emet_providers.deepgram import fault_detail
 
 __all__ = [
     "DeepgramVoice",
     "DEFAULT_MODEL",
     "DEFAULT_KEY_ENV",
     "DEFAULT_URL",
+    "FAULT_CODES",
     "DEFAULT_SAMPLE_RATE",
     "SAMPLE_RATES",
     "MAX_CHARS",
@@ -111,6 +133,17 @@ DEFAULT_MODEL = "aura-2-thalia-en"
 
 #: The same variable the transcriber reads: one Deepgram key serves both.
 DEFAULT_KEY_ENV = "EMET_DEEPGRAM_KEY"
+
+#: What a refused request's status and `err_code` mean, read by
+#: `_http.fault_kind`. From Deepgram's errors page
+#: (developers.deepgram.com/docs/errors and /reference/errors, read
+#: 2026-11-27): 403 `INSUFFICIENT_PERMISSIONS` is a project with no access to
+#: the model asked for, and 402 is Payment Required; the page documents a
+#: 402 body for speech-to-text only, so the speak API's is unverified.
+FAULT_CODES: dict[tuple[int, str | None], str] = {
+    (402, None): "out_of_credit",
+    (403, "INSUFFICIENT_PERMISSIONS"): "model_unavailable",
+}
 
 #: What linear16 may be asked for, and the API's own default.
 SAMPLE_RATES: tuple[int, ...] = (8000, 16000, 24000, 32000, 48000)
@@ -187,6 +220,12 @@ class DeepgramVoice(VoicePlugin):
         self._key: str | None = None
         self._started = False
         self._fault: str | None = None
+        self._fault_kind = "start_failed"
+        #: A refusal of a known kind on a sentence's request, as
+        #: `(kind, detail)`: `model_unavailable` holds for the rest of the
+        #: run, `out_of_credit` until a request succeeds or fails for a reason
+        #: that names no kind.
+        self._run_fault: tuple[str, str] | None = None
         #: The last failure inside a sentence, for diagnostics. Not a fault.
         self.last_error: str | None = None
 
@@ -270,50 +309,83 @@ class DeepgramVoice(VoicePlugin):
             self._fail(
                 f"no key: the environment variable {self.key_env_name} is not set. "
                 f"Deepgram keys come from console.deepgram.com; put it in the keys "
-                f"file. The key is never written into a soul or a manifest."
+                f"file. The key is never written into a soul or a manifest.",
+                kind="no_key",
             )
             return
         client = open_client(self.url, timeout_s=self.timeout_s, transport=self._transport, extra="deepgram")
         if isinstance(client, str):
-            self._fail(client)
+            self._fail(client, kind="no_library")
             return
         self._client = client
         if self.preflight:
-            reason = await self._preflight()
-            if reason:
-                self._fail(reason)
+            refused = await self._preflight()
+            if refused:
+                reason, kind = refused
+                self._fail(reason, kind=kind)
                 return
         self._started = True
         log.info("deepgram voice: ready, %s at %d Hz", self.model_name, self.sample_rate)
 
-    async def _preflight(self) -> str | None:
-        """Say one word into the void. Returns the reason it could not."""
+    def _who(self) -> str:
+        """Deepgram at its own address, and the server at its host anywhere else."""
+        return who(self.url, default_url=DEFAULT_URL, vendor="Deepgram", host=self.describe().host)
+
+    def _judge(self, status: int, body: bytes) -> tuple[str, str] | None:
+        """The kind and the owner's sentence for a refused request whose
+        status and `err_code` are in `FAULT_CODES`, or None."""
+        kind = fault_kind(status, body, FAULT_CODES)
+        if kind is None:
+            return None
+        named = self._who()
+        detail = fault_detail(
+            kind,
+            who=named,
+            at_default=named == "Deepgram",
+            status=status,
+            code=error_code(body),
+            model=self.model_name,
+            setting="models.tts.model",
+            noun="voice",
+        )
+        return kind, detail
+
+    async def _preflight(self) -> tuple[str, str] | None:
+        """Say one word into the void. Returns the reason it could not, with
+        its fault kind."""
         try:
             response = await self._client.post(
                 self.url, params=self.query(), headers=self.headers(), json={"text": PREFLIGHT_TEXT}
             )
         except Exception as exc:  # noqa: BLE001 - reported through health, not raised
             return (
-                f"could not reach {self.url}: {type(exc).__name__}: {exc}. "
+                f"could not reach {endpoint_of(self.url)}: {type(exc).__name__}: {exc}. "
                 f"A cloud voice needs a network; the local one does not."
-            )
+            ), "start_failed"
         if response.status_code == 200:
             return None
+        judged = self._judge(response.status_code, response.content)
+        if judged is not None:
+            kind, detail = judged
+            return detail, kind
         if response.status_code in (401, 403):
             return (
                 f"Deepgram rejected the key in {self.key_env_name} "
                 f"(HTTP {response.status_code}). Check the key, and that it has the "
                 f"text-to-speech scope."
-            )
+            ), "start_failed"
         return (
             f"Deepgram refused to speak as {self.model_name!r}: "
             f"{api_error(response.status_code, response.content)}. Check the voice "
             f"name against Deepgram's model list."
-        )
+        ), "start_failed"
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, *, kind: str = "start_failed") -> None:
+        # INFO: the engine prints the reason through `health().detail`, so
+        # logging's last resort would print it twice (L16).
         self._fault = reason
-        log.error("deepgram voice: %s", reason)
+        self._fault_kind = kind
+        log.info("deepgram voice: %s", reason)
 
     async def shutdown(self) -> None:
         self._started = False
@@ -333,12 +405,16 @@ class DeepgramVoice(VoicePlugin):
             sample_rate=self.sample_rate,
             streaming=True,
             healthy=self._started,
+            endpoint=endpoint_of(self.url),
+            key_env=self.key_env_name,
         )
 
     def health(self) -> Health:
         if self._fault:
-            fault = "no_key" if "no key" in self._fault else "start_failed"
-            return Health(ok=False, detail=self._fault, faults=(fault,))
+            return Health(ok=False, detail=self._fault, faults=(self._fault_kind,))
+        if self._run_fault is not None:
+            kind, detail = self._run_fault
+            return Health(ok=False, detail=detail, faults=(kind,))
         return Health()
 
     # ---------------------------------------------------------------- speak
@@ -348,9 +424,32 @@ class DeepgramVoice(VoicePlugin):
             return
         if not self._started or self._client is None:
             raise PluginError("the deepgram voice was not started")
+        if self._run_fault is not None and self._run_fault[0] == "model_unavailable":
+            # Deepgram has said this project cannot use the voice, so nothing
+            # is sent for the rest of the run, as the chat plugins do.
+            raise PluginError(f"Deepgram could not say {text!r}: {self._run_fault[1]}")
         for piece in pieces(text):
             async for chunk in self._request(piece):
                 yield chunk
+
+    def _refusal(self, piece: str, status: int, body: bytes) -> PluginError:
+        """The error for a sentence's refused request, keeping a known kind for `health()`."""
+        judged = self._judge(status, body)
+        if judged is not None:
+            self._run_fault = judged
+            self.last_error = judged[1]
+        else:
+            self._forget_credit()
+            self.last_error = api_error(status, body)
+        # INFO: the engine prints the lost sentence (L16).
+        log.info("deepgram voice: %s", self.last_error)
+        return PluginError(f"Deepgram could not say {piece!r}: {self.last_error}")
+
+    def _forget_credit(self) -> None:
+        """End a kept `out_of_credit` once a request fails for a reason that names no kind."""
+        if self._run_fault is not None and self._run_fault[0] == "out_of_credit":
+            # News of the network or the server, never of the account.
+            self._run_fault = None
 
     async def _request(self, piece: str) -> AsyncIterator[bytes]:
         """One request, streamed. Chunks are kept to whole samples: a chunk
@@ -362,10 +461,10 @@ class DeepgramVoice(VoicePlugin):
                 "POST", self.url, params=self.query(), headers=self.headers(), json={"text": piece}
             ) as response:
                 if response.status_code != 200:
-                    body = await response.aread()
-                    self.last_error = api_error(response.status_code, body)
-                    log.warning("deepgram voice: %s", self.last_error)
-                    raise PluginError(f"Deepgram could not say {piece!r}: {self.last_error}")
+                    raise self._refusal(piece, response.status_code, await response.aread())
+                if self._run_fault is not None and self._run_fault[0] == "out_of_credit":
+                    # Deepgram spoke, so the account pays again.
+                    self._run_fault = None
                 async for raw in response.aiter_bytes():
                     data = carry + raw
                     if len(data) % 2:
@@ -377,8 +476,9 @@ class DeepgramVoice(VoicePlugin):
         except PluginError:
             raise
         except Exception as exc:  # noqa: BLE001 - one sentence lost, reported
+            self._forget_credit()
             self.last_error = f"{type(exc).__name__}: {exc}"
-            log.warning("deepgram voice: %s", self.last_error)
+            log.info("deepgram voice: %s", self.last_error)
             raise PluginError(f"Deepgram could not say {piece!r}: {self.last_error}") from exc
         if carry:
             log.debug("deepgram voice: dropped a dangling byte at the end of a sentence")

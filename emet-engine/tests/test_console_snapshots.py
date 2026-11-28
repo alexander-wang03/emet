@@ -27,7 +27,19 @@ and whose timing is the machine's.
 
 The registry is fixed (`registry()` below, the names the four packages
 ship, held to their `pyproject.toml` files by a test), so a missing-plugin
-message lists the same plugins on every machine.
+message lists the same plugins on every machine. Each entry point comes from
+a distribution the test writes in memory, so a boot line's `from
+emet-providers ...` names the package as discovery would, and the
+normaliser replaces the version after it.
+
+**The failure table.** Every row of `emet_engine.failures` is reached in
+both programs by at least one fake (`FAKES`, keyed by program and row): a
+fake transport behind the real vendor plugin where a vendor can raise the
+row, the mocks where only the engine can. Each fake is one snapshot,
+`snapshots/{listen|talk}-{row}-{vendor}.txt`, and its run is also held to
+the row: the row's line is on the stream the row names, and the line the
+row has the robot say follows the speaker's tag (`emet-talk`) or `spoke the
+line: ` (`emet-listen`, run with `--reply --speak` so both are printed).
 
 A mismatch prints a diff and the command that rewrites the snapshot.
 `EMET_UPDATE_SNAPSHOTS=1` is read by these tests only. A case it rewrites
@@ -42,15 +54,18 @@ from __future__ import annotations
 import asyncio
 import asyncio.base_events
 import difflib
+import importlib
+import json
 import logging
 import os
 import re
+import string
 import subprocess
 import sys
 import wave
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from importlib.metadata import EntryPoint
+from importlib import metadata
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, Callable
@@ -58,7 +73,6 @@ from typing import Any, Callable
 import pytest
 import yaml
 
-from emet_hal.audio import AudioError
 from emet_sdk.discovery import (
     GROUP_ACTUATOR,
     GROUP_AUDIO,
@@ -74,6 +88,9 @@ from emet_sdk.discovery import (
 from emet_sdk.types import ReplyDone
 
 from emet_engine import cli, keys, talk
+from emet_engine import session as session_module
+from emet_engine.failures import FAILURES, PROGRAMS, row
+from emet_engine.prompting import DEFAULT_MAX_TOKENS, persona_lines
 from emet_engine.session import ListenSession
 
 HERE = Path(__file__).resolve().parent
@@ -105,17 +122,42 @@ SHIPPED: dict[str, dict[str, str]] = {
 }
 
 
-def registry() -> PluginRegistry:
-    """The plugins the four packages ship, and nothing a machine adds."""
+class Written(metadata.Distribution):
+    """A distribution held in memory: its name, its version and its entry
+    points, read as discovery reads an installed one."""
 
-    def group(name: str) -> dict[str, EntryPoint]:
-        return {n: EntryPoint(n, value, name) for n, value in SHIPPED[name].items()}
+    def __init__(self, name: str, version: str, entries: dict[str, dict[str, str]]) -> None:
+        self._files = {
+            "METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+            "entry_points.txt": "".join(
+                f"[{group}]\n" + "".join(f"{n} = {v}\n" for n, v in names.items()) for group, names in entries.items()
+            ),
+        }
 
-    return PluginRegistry(
-        actuators=group(GROUP_ACTUATOR), sensors=group(GROUP_SENSOR), locomotion=group(GROUP_LOCOMOTION),
-        wake=group(GROUP_WAKE), audio=group(GROUP_AUDIO), audio_out=group(GROUP_AUDIO_OUT),
-        stt=group(GROUP_STT), llm=group(GROUP_LLM), tts=group(GROUP_TTS),
-    )
+    def read_text(self, filename: str) -> str | None:
+        return self._files.get(filename)
+
+    def locate_file(self, path: Any) -> Path:
+        return Path(str(path))
+
+
+def _shipped_by(distribution: str) -> dict[str, dict[str, str]]:
+    module = distribution.replace("-", "_") + "."
+    return {g: {n: v for n, v in names.items() if v.startswith(module)} for g, names in SHIPPED.items()}
+
+
+#: A second distribution that offers `openai` in `emet.llm`, as a fork
+#: installed beside `emet-providers` would.
+FORK = Written("emet-openai-fork", "0.1.0", {GROUP_LLM: {"openai": "emet_openai_fork:Model"}})
+
+
+def registry(*extra: metadata.Distribution) -> PluginRegistry:
+    """The plugins the four packages ship, and nothing a machine adds, each
+    from the package that ships it (and any `extra` distribution after
+    them)."""
+    shipped = [Written(name, cli._version(name), _shipped_by(name)) for name in ("emet-hal", "emet-providers")]
+    eps = [ep for dist in (*shipped, *extra) for ep in dist.entry_points]
+    return PluginRegistry.from_entry_points(eps)
 
 
 # ------------------------------------------------------------- snapshots
@@ -124,7 +166,8 @@ def registry() -> PluginRegistry:
 def normalise(text: str, tmp: Path) -> str:
     """What differs by machine, replaced: the temporary directory, as
     written and as a repr writes it; Windows' separator inside a path; the
-    versions and revision on the identity line; and argparse's usage."""
+    versions and revision on the identity line, and any other version of
+    one of the four packages; and argparse's usage."""
     text = text.replace("\r\n", "\n")
     for form in (repr(str(tmp))[1:-1], str(tmp), tmp.as_posix()):
         text = text.replace(form, "<tmp>")
@@ -133,6 +176,10 @@ def normalise(text: str, tmp: Path) -> str:
     text = re.sub(r"(?m)^(emet-listen|emet-talk): .*; revision .*$",
                   lambda m: re.sub(r"(emet-(?:sdk|hal|providers|engine)) [^,;\s]+", r"\1 <version>",
                                    m.group(0).split("; revision ")[0]) + "; revision <revision>", text)
+    # One of the four packages named with its version anywhere else: a
+    # boot line names the package a plugin came from, and the duplicate
+    # refusal names the two that offer one name.
+    text = re.sub(r"\b(emet-(?:sdk|hal|providers|engine)) \d+\.\d+[^\s,;)]*", r"\1 <version>", text)
     return re.sub(r"(?ms)^usage: .*?(?=^[\w .-]+: error: )",
                   "usage: (argparse's usage lines, which differ by Python version)\n", text)
 
@@ -267,11 +314,10 @@ class Case:
     files: dict[str, str | bytes] = field(default_factory=dict)
     setup: Callable[[pytest.MonkeyPatch, Path], None] | None = None
     plugins: bool = True
-    #: A ledger finding that keeps the state from printing as it should.
-    #: The case is expected to raise `AudioError`, strictly, until the
-    #: finding is fixed; then it fails for want of its snapshot, which is
-    #: written then.
-    xfail: str | None = None
+    #: The failure row the case reaches, for a case made from a `Fake`.
+    row: str | None = None
+    #: Distributions installed beside the four packages.
+    extra: tuple[metadata.Distribution, ...] = ()
 
     @property
     def program(self) -> str:
@@ -401,6 +447,280 @@ def model_gone_after_boot(monkeypatch: pytest.MonkeyPatch, _: Path) -> None:
     monkeypatch.setattr(ListenSession, "start", start)
 
 
+# ------------------------------------------------------------ the vendors
+#
+# Each vendor's real plugin, behind a fake transport. The bodies are built
+# from the plugin's own `FAULT_CODES`, so a fake sends the status and code
+# the plugin's author read from the vendor's error page, and no word of a
+# vendor's message is guessed here.
+
+MODEL = "gpt-5.6-terra"
+CLAUDE = "claude-opus-5"
+
+
+def _coded(module: str, kind: str) -> tuple[int, str]:
+    """The first status and code in a plugin's `FAULT_CODES` that names `kind`."""
+    codes = importlib.import_module(f"emet_providers.{module}").FAULT_CODES
+    return next((status, code) for (status, code), named in codes.items() if named == kind and code)
+
+
+def _error_body(code: str, message: str) -> dict[str, Any]:
+    """An error body in the shape both chat vendors use, `error.type` and
+    `error.code` both set, so each plugin reads the field it reads."""
+    return {"type": "error", "error": {"type": code, "code": code, "message": message}}
+
+
+def http_vendor(module: str, cls: str, answer: Callable[[Any, Any], Any], *, key: bool = True) -> Setup:
+    """A plugin of `emet_providers.<module>` whose every request `answer`
+    takes, as `answer(httpx, request)`, through `httpx.MockTransport`."""
+
+    def setup(monkeypatch: pytest.MonkeyPatch, _: Path) -> None:
+        httpx = pytest.importorskip("httpx")
+        plugin = getattr(importlib.import_module(f"emet_providers.{module}"), cls)
+        real_init = plugin.__init__
+
+        def init(self: Any, *args: Any, transport: Any = None, **kwargs: Any) -> None:
+            real_init(self, *args, transport=httpx.MockTransport(lambda request: answer(httpx, request)), **kwargs)
+
+        monkeypatch.setattr(plugin, "__init__", init)
+        if key:
+            monkeypatch.setenv("EMET_SNAPSHOT_KEY", "not-a-real-key")
+
+    return setup
+
+
+def _model(httpx: Any, request: Any, *, status: int = 200, **fields: Any) -> Any:
+    """A model object, as `GET /models/{id}` answers at either vendor."""
+    model = request.url.path.rsplit("/", 1)[-1]
+    if status != 200:
+        return httpx.Response(status, json=_error_body("model_not_found", f"The model `{model}` does not exist."))
+    return httpx.Response(200, json={"id": model, "object": "model", "type": "model", "display_name": model,
+                                     "created": 0, "created_at": "2026-01-01T00:00:00Z", **fields})
+
+
+def openai(*, model: int = 200, reply: tuple[int, str] | None = None, shutdown: str | None = None) -> Setup:
+    """OpenAI: the preflight's model answered with `model`, a reply refused
+    with `reply`'s status and code."""
+
+    def answer(httpx: Any, request: Any) -> Any:
+        if request.method == "GET":
+            return _model(httpx, request, status=model, **({"shutdown_date": shutdown} if shutdown else {}))
+        status, code = reply or (500, "server_error")
+        return httpx.Response(status, json=_error_body(code, "a refusal written by a snapshot test"))
+
+    return http_vendor("openai", "OpenAILanguageModel", answer)
+
+
+def anthropic(*, reply: tuple[int, str]) -> Setup:
+    """Anthropic, with the preflight's model active and a reply refused with `reply`."""
+
+    def answer(httpx: Any, request: Any) -> Any:
+        if request.method == "GET":
+            return _model(httpx, request, lifecycle="active", retires_at=None)
+        status, code = reply
+        return httpx.Response(status, json=_error_body(code, "a refusal written by a snapshot test"))
+
+    return http_vendor("anthropic", "AnthropicLanguageModel", answer)
+
+
+def nothing_answers(module: str, cls: str) -> Setup:
+    """A server that does not answer, at whatever address the plugin was
+    given."""
+
+    def answer(httpx: Any, request: Any) -> Any:
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    return http_vendor(module, cls, answer)
+
+
+def deepgram_voice(*, status: int, code: str | None = None) -> Setup:
+    """Deepgram's voice, its preflight answered with `status`."""
+
+    def answer(httpx: Any, request: Any) -> Any:
+        if status == 200:
+            return httpx.Response(200, content=bytes(480), headers={"content-type": "audio/l16"})
+        body = {"err_code": code, "err_msg": "a refusal written by a snapshot test"} if code else {}
+        return httpx.Response(status, json=body)
+
+    return http_vendor("deepgram_voice", "DeepgramVoice", answer)
+
+
+class _Closed(Exception):
+    """Shaped like websockets' `ConnectionClosed`, which carries `rcvd` and `sent`."""
+
+    def __init__(self) -> None:
+        super().__init__("closed 1000")
+        self.rcvd = self.sent = SimpleNamespace(code=1000, reason="")
+
+
+class _Refused(Exception):
+    """Shaped like websockets' `InvalidStatus`, which carries the handshake's response."""
+
+    def __init__(self, status: int, code: str | None) -> None:
+        super().__init__(f"server rejected WebSocket connection: HTTP {status}")
+        body = json.dumps({"err_code": code, "err_msg": "a refusal written by a snapshot test"}) if code else ""
+        self.response = SimpleNamespace(status_code=status, body=body.encode())
+
+
+class _Socket:
+    """A connection that takes what it is sent and closes when asked."""
+
+    async def send(self, message: Any) -> None:
+        pass
+
+    async def recv(self) -> Any:
+        raise _Closed()
+
+    async def close(self) -> None:
+        pass
+
+
+def deepgram(*, boot: Exception | None = None, turn: Exception | None = None) -> Setup:
+    """Deepgram's transcriber with a fake `connect`: the preflight's
+    connection refused with `boot`, or opened, and each utterance's refused
+    with `turn`."""
+
+    def setup(monkeypatch: pytest.MonkeyPatch, _: Path) -> None:
+        from emet_providers import deepgram as plugin
+
+        calls = {"n": 0}
+
+        async def connect(url: str, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            refusal = boot if calls["n"] == 1 else turn
+            if refusal is not None:
+                raise refusal
+            return _Socket()
+
+        real_init = plugin.DeepgramTranscriber.__init__
+
+        def init(self: Any, config: Any, fmt: Any, **kwargs: Any) -> None:
+            real_init(self, config, fmt, connect=connect)
+
+        monkeypatch.setattr(plugin.DeepgramTranscriber, "__init__", init)
+        monkeypatch.setenv("EMET_SNAPSHOT_KEY", "not-a-real-key")
+
+    return setup
+
+
+#: The soul's words when a turn failed, so the line is told from others.
+FAILED = "I lost the thread there. Say it again?"
+
+
+def fake_soul(**models: dict) -> str:
+    return soul(models={**MOCKS, **models}, lines={"failed": FAILED})
+
+
+@dataclass(frozen=True)
+class Fake:
+    """One way to reach a failure row: the vendor behind it and the run
+    that makes the vendor fail. `emet-listen` runs it with `--reply
+    --speak`, so the failure line and the line said aloud both print."""
+
+    vendor: str
+    files: dict[str, str | bytes]
+    setup: Setup | None = None
+    extra: tuple[metadata.Distribution, ...] = ()
+
+    def case(self, program: str, failure: str) -> Case:
+        prefix = "talk" if program == "emet-talk" else "listen"
+        argv = ("body.yaml", "soul.yaml") + (("--reply", "--speak") if program == "emet-listen" else ())
+        return Case(f"{prefix}-{failure}-{self.vendor}", argv, self.files, self.setup, row=failure, extra=self.extra)
+
+
+OPENAI = {"chat": {"provider": "openai", "model": MODEL, "key_env": "EMET_SNAPSHOT_KEY"}}
+DEEPGRAM_STT = {"stt": {"provider": "deepgram", "model": "nova-3", "key_env": "EMET_SNAPSHOT_KEY"}}
+
+
+def chat_body(**chat: Any) -> str:
+    """A body that takes the chat stage over with `params`, which a soul's
+    closed model block cannot hold."""
+    return body(models={"chat": chat})
+
+
+#: Each failure row and the fakes that reach it.
+ROW_FAKES: dict[str, tuple[Fake, ...]] = {
+    "llm-unavailable-at-boot": (
+        Fake("openai", documents(soul_text=fake_soul(**OPENAI), take=SPOKEN), openai(model=404)),
+    ),
+    "llm-unavailable-before": (
+        Fake("mock", documents(chat_body(provider="mock", params={
+            "fail_on_start": True, "fault": "model_unavailable",
+            "fault_detail": "The mock was told its model is retired."}), fake_soul(), SPOKEN)),
+    ),
+    "llm-unavailable-on-reply": (
+        Fake("openai", documents(soul_text=fake_soul(**OPENAI), take=SPOKEN),
+             openai(reply=_coded("openai", "model_unavailable"))),
+    ),
+    "llm-empty-at-cap": (
+        Fake("mock", documents(chat_body(provider="mock", params={"reasoning_tokens": 100000}), fake_soul(), SPOKEN)),
+    ),
+    "llm-cut-at-cap": (
+        Fake("mock", documents(chat_body(provider="mock", params={
+            "reply": "Well. The sky is blue because air scatters blue light the most.",
+            "reasoning_tokens": DEFAULT_MAX_TOKENS - 3}), fake_soul(), SPOKEN)),
+    ),
+    "llm-out-of-credit": (
+        Fake("openai", documents(soul_text=fake_soul(**OPENAI), take=SPOKEN),
+             openai(reply=_coded("openai", "out_of_credit"))),
+        Fake("anthropic", documents(soul_text=fake_soul(chat={
+            "provider": "anthropic", "model": CLAUDE, "key_env": "EMET_SNAPSHOT_KEY"}), take=SPOKEN),
+             anthropic(reply=_coded("anthropic", "out_of_credit"))),
+    ),
+    "llm-failed": (
+        Fake("mock", documents(soul_text=fake_soul(), take=SPOKEN), model_gone_after_boot),
+    ),
+    "llm-cannot-start": (
+        Fake("openai", documents(chat_body(provider="openai", model="qwen3", key_env="EMET_SNAPSHOT_KEY",
+                                           params={"url": "http://127.0.0.1:9380/v1"}), fake_soul()),
+             nothing_answers("openai", "OpenAILanguageModel")),
+        Fake("anthropic", documents(chat_body(provider="anthropic", model="qwen3", key_env="EMET_SNAPSHOT_KEY",
+                                              params={"url": "http://192.168.1.20:8080"}), fake_soul()),
+             nothing_answers("anthropic", "AnthropicLanguageModel")),
+    ),
+    "stt-out-of-credit-at-boot": (
+        Fake("deepgram", documents(soul_text=fake_soul(**DEEPGRAM_STT)),
+             deepgram(boot=_Refused(*_coded("deepgram", "out_of_credit")))),
+    ),
+    "voice-out-of-credit-at-boot": (
+        Fake("deepgram", documents(soul_text=fake_soul(tts={
+            "provider": "deepgram", "model": "aura-2-thalia-en", "key_env": "EMET_SNAPSHOT_KEY"})),
+             deepgram_voice(status=402)),
+    ),
+    "stt-out-of-credit": (
+        Fake("deepgram", documents(soul_text=fake_soul(**DEEPGRAM_STT), take=SPOKEN),
+             deepgram(turn=_Refused(*_coded("deepgram", "out_of_credit")))),
+    ),
+    "stt-model-rejected": (
+        Fake("deepgram", documents(soul_text=fake_soul(**DEEPGRAM_STT), take=SPOKEN),
+             deepgram(turn=_Refused(*_coded("deepgram", "model_unavailable")))),
+    ),
+    "stt-words-lost": (
+        Fake("deepgram", documents(soul_text=fake_soul(**DEEPGRAM_STT), take=SPOKEN),
+             deepgram(turn=ConnectionRefusedError("[Errno 111] Connection refused"))),
+    ),
+    "source-cannot-start": (
+        Fake("wav", {"body.yaml": body(audio={
+            "input": {"source": "wav", "device": "file", "params": {"path": "nothere.wav"}},
+            "output": {"sink": "null", "device": "none"}, "wake": {"engine": "mock"}}), "soul.yaml": fake_soul()}),
+    ),
+    "sink-cannot-start": (
+        Fake("wav", documents(body(audio={
+            "input": {"source": "wav", "device": "file", "params": {"path": "take.wav"}},
+            "output": {"sink": "wav", "device": "file", "params": {"path": "nofolder/said.wav"}},
+            "wake": {"engine": "mock"}}), fake_soul())),
+    ),
+    "duplicate-plugin": (
+        Fake("openai", documents(soul_text=fake_soul(**OPENAI)), extra=(FORK,)),
+    ),
+}
+
+#: Every row in both programs, each with its fakes.
+FAKES: dict[tuple[str, str], tuple[Fake, ...]] = {
+    (program, failure): fakes for failure, fakes in ROW_FAKES.items() for program in sorted(PROGRAMS)
+}
+
+
 CASES = [
     Case("listen-no-plugins", plugins=False),
     Case("talk-no-plugins", plugins=False),
@@ -428,6 +748,8 @@ CASES = [
         {"id": "ring", "type": "light", "role": "ambient", "driver": {"plugin": "acme_ws2812"}}]))),
     Case("listen-cannot-hear-the-name", files=documents(body(wake={"engine": "mock", "params": {"phrases": ["ok robot"]}}))),
     Case("listen-wake-not-installed", files=documents(body(wake={"engine": "pocketsphinx"})), setup=hide("pocketsphinx")),
+    # L16: the mock wake engine logs its refusal at INFO, so it prints once.
+    Case("listen-wake-cannot-start", files=documents(body(wake={"engine": "mock", "params": {"fail_on_start": True}}))),
     Case("listen-transcribe-no-provider", ("body.yaml", "soul.yaml", "--transcribe"), documents()),
     Case("listen-transcribe-not-installed", ("body.yaml", "soul.yaml", "--transcribe"),
          documents(soul_text=soul(models={"stt": {"provider": "whisper"}}))),
@@ -460,6 +782,10 @@ CASES = [
          openai_answers("key rejected")),
     Case("listen-reply-declined", ("body.yaml", "soul.yaml", "--reply"),
          documents(soul_text=soul(models={**STT, "chat": {"provider": "mock"}}), take=SPOKEN), provider_declines),
+    # C2: with --speak a refusal is answered aloud with the soul's declined line.
+    Case("listen-speak-declined", ("body.yaml", "soul.yaml", "--reply", "--speak"),
+         documents(soul_text=soul(models=MOCKS, lines={"declined": "I would rather not answer that."}), take=SPOKEN),
+         provider_declines),
     Case("listen-speak-no-voice", ("body.yaml", "soul.yaml", "--speak"),
          documents(soul_text=soul(models={**STT, "chat": {"provider": "mock"}}))),
     Case("listen-speak-voice-not-installed", ("body.yaml", "soul.yaml", "--speak"), documents(soul_text=soul(models={
@@ -474,15 +800,30 @@ CASES = [
     Case("listen-speak-deepgram-no-key", ("body.yaml", "soul.yaml", "--speak"), documents(soul_text=soul(models={
         **STT, "chat": {"provider": "mock"}, "tts": {"provider": "deepgram", "key_env": "EMET_SNAPSHOT_KEY"}}))),
     Case("listen-speak-and-echo", ("body.yaml", "soul.yaml", "--echo", "--speak"), documents()),
-    # B7-F1: a replay file's AudioError escapes main() as a traceback.
-    Case("listen-replay-missing", ("body.yaml", "soul.yaml", "--replay", "nothere.wav"), documents(),
-         xfail="B7-F1: an AudioError escapes emet-listen and emet-talk as a traceback"),
+    # B7-F1, ledger L11 of 0.5.7: a replay file the source cannot read is
+    # one line naming the source, and no traceback.
+    Case("listen-replay-missing", ("body.yaml", "soul.yaml", "--replay", "nothere.wav"), documents()),
     Case("listen-replay-wrong-rate", ("body.yaml", "soul.yaml", "--replay", "slow.wav"),
-         {**documents(), "slow.wav": wav(frame() * 3, rate=8000)},
-         xfail="B7-F1: an AudioError escapes emet-listen and emet-talk as a traceback"),
+         {**documents(), "slow.wav": wav(frame() * 3, rate=8000)}),
     Case("listen-replay-wrong-width", ("body.yaml", "soul.yaml", "--replay", "narrow.wav"),
-         {**documents(), "narrow.wav": wav(bytes(FRAME * 3), width=1)},
-         xfail="B7-F1: an AudioError escapes emet-listen and emet-talk as a traceback"),
+         {**documents(), "narrow.wav": wav(bytes(FRAME * 3), width=1)}),
+    Case("talk-replay-missing", ("body.yaml", "soul.yaml", "--replay", "nothere.wav"),
+         documents(soul_text=soul(models=MOCKS))),
+    # MC1 of 0.5.7: a model with a retirement date boots, with one notice.
+    Case("talk-model-retires", files=documents(soul_text=soul(models={**MOCKS, **OPENAI})),
+         setup=openai(shutdown="2099-12-31")),
+    # SF2 stage 1: where each stage runs, the key it read, the package it came from.
+    Case("talk-providers-named", files=documents(soul_text=soul(models={
+        **DEEPGRAM_STT, **OPENAI, "tts": {"provider": "deepgram", "model": "aura-2-thalia-en",
+                                          "key_env": "EMET_SNAPSHOT_KEY"}})),
+         setup=both(deepgram(), openai(), deepgram_voice(status=200))),
+    Case("listen-providers-named", ("body.yaml", "soul.yaml", "--speak"), documents(soul_text=soul(models={
+        **DEEPGRAM_STT, **OPENAI, "tts": {"provider": "mock"}})), setup=both(deepgram(), openai())),
+    # BVP12: --events writes what --stats prints, so it is refused alone.
+    Case("listen-events-without-stats", ("body.yaml", "soul.yaml", "--events", "run.jsonl"), documents()),
+    Case("talk-events-without-stats", ("body.yaml", "soul.yaml", "--events", "run.jsonl"), documents()),
+    Case("listen-events-unwritable", ("body.yaml", "soul.yaml", "--stats", "--events", "nofolder/run.jsonl"),
+         documents()),
     Case("listen-bad-chains", ("body.yaml", "soul.yaml", "--chains", "chains.yaml"), {**documents(), "chains.yaml": (
         "express.curiosity:\n  rungs:\n    - {actuator: {role: head}, action: tilt}\n"
         "    - {actuator: {voice: true}, action: sing}\n")}),
@@ -536,19 +877,41 @@ def at(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _params() -> list[Any]:
-    marks = {c.name: pytest.mark.xfail(strict=True, raises=AudioError, reason=c.xfail) for c in CASES if c.xfail}
-    return [pytest.param(c, id=c.name, marks=marks.get(c.name, ())) for c in CASES]
+#: Every case a fake makes, one for each program, row and vendor.
+FAKE_CASES = [fake.case(program, failure) for (program, failure), fakes in FAKES.items() for fake in fakes]
 
 
-@pytest.mark.parametrize("case", _params())
-def test_the_console_shows_this_failure_as_its_snapshot_does(case, at, monkeypatch, capsys):
+def run_case(
+    case: Case, at: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any, taken: list[str] | None = None
+) -> tuple[Any, str, str]:
+    """Run one case's program in `at`, as a terminal would show it.
+
+    `taken`, when given, gets the case of every failure row the session
+    took: each turn's, from `finish_turn`, and each boot row it took by
+    name. Rows that print the same line are told apart by it.
+    """
+    if taken is not None:
+        real_finish = ListenSession.finish_turn
+        real_row = session_module.row
+
+        async def finish_turn(self: ListenSession, utterance: Any, reply: Any) -> Any:
+            end = await real_finish(self, utterance, reply)
+            if end.failure is not None:
+                taken.append(end.failure.case)
+            return end
+
+        def by_name(name: str) -> Any:
+            taken.append(name)
+            return real_row(name)
+
+        monkeypatch.setattr(ListenSession, "finish_turn", finish_turn)
+        monkeypatch.setattr(session_module, "row", by_name)
     for name, content in case.files.items():
         if isinstance(content, bytes):
             (at / name).write_bytes(content)
         else:
             (at / name).write_text(content, encoding="utf-8")
-    chosen = registry() if case.plugins else PluginRegistry()
+    chosen = registry(*case.extra) if case.plugins else PluginRegistry()
     for module in (cli, talk):
         monkeypatch.setattr(module, "PluginRegistry", SimpleNamespace(discover=lambda: chosen))
     if case.setup is not None:
@@ -561,13 +924,119 @@ def test_the_console_shows_this_failure_as_its_snapshot_does(case, at, monkeypat
         except SystemExit as exc:
             code = exc.code
     captured = capsys.readouterr()
-    compare(case.name, normalise(render(case.program, list(case.argv), code, captured.out, captured.err), at))
+    return code, captured.out, captured.err
+
+
+@pytest.mark.parametrize("case", [pytest.param(c, id=c.name) for c in CASES + FAKE_CASES])
+def test_the_console_shows_this_failure_as_its_snapshot_does(case, at, monkeypatch, capsys):
+    taken: list[str] = []
+    code, out, err = run_case(case, at, monkeypatch, capsys, taken)
+    if case.row is not None:
+        problems = row_problems(case, out, err, taken)
+        assert problems == [], f"{case.name}: " + "; ".join(problems)
+    compare(case.name, normalise(render(case.program, list(case.argv), code, out, err), at))
+
+
+def pattern(template: str) -> re.Pattern[str]:
+    """A failure line's format string as a pattern any filling matches: a
+    `{name!r}` is a quoted name, `{cap}` a number, any other field any
+    text that is not empty, since every fake's fault has its sentence."""
+    parts = []
+    for literal, name, _, conversion in string.Formatter().parse(template):
+        parts.append(re.escape(literal))
+        if name is None:
+            continue
+        parts.append("'[^']*'" if conversion == "r" else r"\d+" if name == "cap" else r"\S.*")
+    return re.compile("".join(parts))
+
+
+#: How the one row with no words of its own is known: its whole line is the
+#: SDK's refusal, `{exc}`, which opens with its code.
+WHOLE_LINE_ROWS = {"duplicate-plugin": "[error] duplicate_plugin: "}
+
+
+def row_problems(case: Case, out: str, err: str, taken: list[str] | None = None) -> list[str]:
+    """What a fake's run lacks of its row: the row's line on the row's
+    stream, the row's spoken line after the speaker's tag or after
+    `spoke the line: `, and, given `taken`, the row among those the session
+    took, since three of the transcriber's rows print the same line. Each
+    problem names the row and what is missing."""
+    failure = row(case.row or "")
+    stream = out if failure.stream == "stdout" else err
+    template = failure.template(case.program)
+    problems = []
+    lines = stream.splitlines()
+    if not any(pattern(template).fullmatch(line) or pattern(template.rstrip()).fullmatch(line) for line in lines):
+        problems.append(f"no line on {failure.stream} matches the row {failure.case!r}: {template!r}")
+    opening = WHOLE_LINE_ROWS.get(failure.case)
+    if opening is not None and not any(line.startswith(opening) for line in lines):
+        problems.append(f"the row {failure.case!r} is the SDK's refusal and no line opens {opening!r}")
+    if taken is not None and opening is None and failure.case not in taken:
+        problems.append(f"the session took the row(s) {taken} and not {failure.case!r}")
+    if failure.spoken is not None:
+        words = persona_lines(yaml.safe_load(case.files["soul.yaml"]))[failure.spoken]
+        said = f"  emet: {words}" if case.program == "emet-talk" else f"    spoke the line: {words}"
+        if said not in out.splitlines():
+            problems.append(f"the row {failure.case!r} says {failure.spoken!r} and no line reads {said!r}")
+    return problems
+
+
+def test_every_failure_row_has_a_fake_in_both_programs():
+    """`FAKES` names, for each program, every row of the failure table, so
+    a row added to `emet_engine.failures` without a way to reach it fails
+    here, naming it."""
+    assert set(FAKES) == {(program, f.case) for f in FAILURES for program in f.programs}
+    assert all(FAKES.values())
+
+
+def test_a_run_missing_its_rows_line_is_named():
+    """The check every fake's snapshot runs, broken: a run that printed
+    neither the row's line nor its spoken line gets both named."""
+    case = Fake("mock", documents(soul_text=fake_soul())).case("emet-talk", "llm-failed")
+    problems = row_problems(case, "  (heard 'hey emet')\n  emet: something else\n", "")
+    assert problems == [
+        "no line on stdout matches the row 'llm-failed': '  (the language model failed: {detail})'",
+        f"the row 'llm-failed' says 'failed' and no line reads '  emet: {FAILED}'",
+    ]
+
+
+def test_the_row_check_tells_apart_rows_that_print_the_same_line():
+    """Three of the transcriber's rows print one line, so a run that took
+    the wrong one is named by the row it took; an empty detail is no
+    filling, and the registry's row is known by the SDK's own refusal."""
+    lost = Fake("deepgram", documents(soul_text=fake_soul())).case("emet-talk", "stt-model-rejected")
+    printed = f"  (the words never arrived: Deepgram does not serve the model 'nova-3'.)\n  emet: {FAILED}\n"
+    assert row_problems(lost, printed, "", ["stt-model-rejected"]) == []
+    assert row_problems(lost, printed, "", ["stt-words-lost"]) == [
+        "the session took the row(s) ['stt-words-lost'] and not 'stt-model-rejected'"
+    ]
+    assert row_problems(lost, f"  (the words never arrived: )\n  emet: {FAILED}\n", "", ["stt-model-rejected"]) == [
+        "no line on stdout matches the row 'stt-model-rejected': '  (the words never arrived: {detail})'"
+    ]
+    twice = Fake("openai", documents(soul_text=fake_soul())).case("emet-talk", "duplicate-plugin")
+    assert row_problems(twice, "", "\nsome other refusal entirely\n", []) == [
+        "the row 'duplicate-plugin' is the SDK's refusal and no line opens '[error] duplicate_plugin: '"
+    ]
 
 
 def test_every_snapshot_file_belongs_to_a_case():
     """A snapshot whose case was removed would sit in the folder unread."""
-    names = {c.name for c in CASES}
+    names = {c.name for c in CASES + FAKE_CASES}
     assert sorted(p.stem for p in SNAPSHOTS.glob("*.txt") if p.stem not in names) == []
+
+
+def test_each_plugin_comes_from_the_package_that_ships_it():
+    """The registry the cases run with knows each plugin's package, as
+    discovery does, and finds a name a second package offers."""
+    shipped = registry()
+    assert shipped.origin(GROUP_LLM, "openai").label == f"emet-providers {cli._version('emet-providers')}"
+    assert shipped.origin(GROUP_WAKE, "mock").distribution == "emet-hal"
+    assert sum(len(names) for names in _shipped_by("emet-hal").values()) + sum(
+        len(names) for names in _shipped_by("emet-providers").values()) == sum(len(n) for n in SHIPPED.values())
+    from emet_sdk.validate import DuplicatePluginError
+
+    with pytest.raises(DuplicatePluginError, match="emet-openai-fork 0.1.0"):
+        registry(FORK).load_llm("openai")
 
 
 def test_the_shipped_plugins_are_the_ones_the_pyproject_files_register():

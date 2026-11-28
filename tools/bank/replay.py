@@ -232,7 +232,7 @@ def preflight(manifest_path: Path, soul_path: Path) -> list[str]:
 
 
 def run_child(config_path: Path) -> int:
-    """The replay itself, in its own process: guards, preflight, cli.main."""
+    """The replay itself in its own process, with the guards, the preflight and then cli.main."""
     refused: list[str] = []
     install_guards(refused)
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
@@ -333,6 +333,19 @@ AUDIO = re.compile(r"^  audio    (\d+) Hz, (\d+) ms frames$")
 FRAMES = re.compile(r"^  frames +(\d+) ")
 WAKES = re.compile(r"^  wakes +(\d+) +turns (\d+)")
 NAME_CUT = re.compile(r"^  name cut +(\d+ of \d+) handover")
+#: The provider a `source` or `stt` boot line names: its first word, up to a
+#: space, a comma or a bracket, as `body_log_check.py`'s TRANSCRIBER and
+#: `tools/body/run.py`'s PROVIDER read it. From 0.5.7 the `stt` line goes on
+#: after the mode (`  stt      mock (streaming), on this body, from
+#: emet-providers 0.5.7`), and a comma straight after the name, as in
+#: `deepgram, model nova-3`, would otherwise be read as part of it.
+PROVIDER = re.compile(r"\s*([^\s,(]+)")
+
+
+def provider_of(line: str) -> str | None:
+    """The provider a boot line names after its label, or None for a line with none."""
+    m = PROVIDER.match(line, 11)
+    return m.group(1) if m else None
 
 
 class RunProblem(RuntimeError):
@@ -353,9 +366,9 @@ def read_console(text: str) -> dict[str, Any]:
         if (m := AUDIO.match(line)):
             header["rate"], header["frame_ms"] = int(m.group(1)), int(m.group(2))
         elif line.startswith("  source   "):
-            header["source"] = line.split()[1]
+            header["source"] = provider_of(line)
         elif line.startswith("  stt      "):
-            header["stt"] = line.split()[1]
+            header["stt"] = provider_of(line)
         elif HEARD.match(line):
             wakes.append({"line": None})
             after_heard = True
@@ -399,7 +412,7 @@ def read_turns(turns_dir: Path) -> list[dict[str, Any]]:
 
 
 def frame_index(pcm: bytes, frame_bytes: int) -> dict[bytes, list[int]]:
-    """Each whole frame of the recording by its digest: where it starts, in frames."""
+    """Where each whole frame of the recording starts, in frames, keyed by its digest."""
     index: dict[bytes, list[int]] = {}
     for j in range(len(pcm) // frame_bytes):
         index.setdefault(hashlib.sha256(pcm[j * frame_bytes:(j + 1) * frame_bytes]).digest(), []).append(j)
@@ -548,7 +561,7 @@ def compare(old: dict, new: dict) -> list[str]:
 
 
 def platform_name() -> str:
-    """win32-amd64, linux-aarch64, linux-x86_64: the golden's folder."""
+    """The golden's folder for this machine, such as win32-amd64, linux-aarch64 or linux-x86_64."""
     return f"{sys.platform}-{_platform.machine().lower()}"
 
 
@@ -655,7 +668,7 @@ def predating_note(missed: list[dict], days: dict[tuple[str, int], set[str]]) ->
 
 
 def write_misses(path: Path, misses: list[dict]) -> None:
-    """The paid list: each missed turn's facts, and its bytes beside the list."""
+    """Write the paid list of each missed turn's facts, with its bytes beside the list."""
     path.parent.mkdir(parents=True, exist_ok=True)
     out = []
     for m in misses:

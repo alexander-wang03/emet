@@ -81,7 +81,7 @@ ENGINE_ONLY_KINDS = frozenset({"signal", "speak"})
 
 _TAG = re.compile(r"^[A-Za-z_]+(?:\.[A-Za-z_]+)?$")
 
-#: A held bracket that could only have become a tag: letters, underscores and
+#: A held bracket that could only have become a tag: letters, `_` and
 #: at most one dot after the `[`, and at least one letter.
 _TAG_START = re.compile(r"^\[[A-Za-z_]+(?:\.[A-Za-z_]*)?$")
 

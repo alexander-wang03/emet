@@ -261,7 +261,7 @@ def steps_of(job: Job) -> list[list[Line]]:
 
 
 def matrix_of(job: Job) -> dict[str, list[str]]:
-    """The job's `strategy.matrix` lists written in flow style: `X: [a, b]`."""
+    """The job's `strategy.matrix` lists written in flow style, as `X: [a, b]`."""
     found: dict[str, list[str]] = {}
     for i, line in enumerate(job.lines):
         if key_of(line.code)[0] == "matrix" and not line.scalar:

@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --replay slow.wav
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the audio source 'wav' cannot start, so the robot would listen to nothing. It will not run. 'slow.wav' is 8000 Hz and this expects 16000 Hz. Convert the file rather than having the detector hear it at the wrong speed.

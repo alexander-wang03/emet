@@ -8,9 +8,24 @@ feed known timings in and assert the arithmetic comes back out.
 
 from __future__ import annotations
 
+import random
+import re
 import time
+from dataclasses import fields
 
-from emet_engine.metrics import SAMPLE_CAP, Handover, SessionStats, Stopwatch
+import pytest
+
+from emet_engine.metrics import (
+    OUTCOMES,
+    SAMPLE_CAP,
+    Handover,
+    Sent,
+    SessionStats,
+    Spread,
+    Stopwatch,
+    Tokens,
+    TurnRecord,
+)
 
 
 def stats(frame_ms: float = 80.0) -> SessionStats:
@@ -332,3 +347,314 @@ def test_the_clock_line_prints_what_is_left_after_the_dropped_frames():
 
     line = next(row for row in s.report(live=True).splitlines() if "clock" in row)
     assert "50 dropped frame(s), leaving " in line
+
+
+# ------------------------------------------------------------ the turn record
+
+#: The contract's example turn (0.5.7 contract 3.4): 960 ms of quiet, 410 to
+#: the final, 620 to the first word and 270 more to the first sound.
+EXAMPLE = dict(
+    turn=3,
+    outcome="answered",
+    tail_ms=960.0,
+    final_ms=410.0,
+    reply_first_ms=620.0,
+    voice_first_ms=890.0,
+    input_tokens=967,
+    output_tokens=18,
+    stt_audio_s=3.3,
+    stt_host="api.deepgram.com",
+    llm_chars=2071,
+    llm_host="api.openai.com",
+    voice_chars=78,
+    voice_host=None,
+    sentences=2,
+    cleaned=0,
+)
+
+#: The readers of the line under each wake and of the footer's `name cut`
+#: line, copied from `releases/v0.5.4/body_log_check.py` lines 64 to 66 and
+#: `tools/bank/replay.py` lines 330 to 331, so a per-turn line or a footer
+#: line they would mistake for one of theirs fails here.
+PER_WAKE = re.compile(r"lag (\d+) ms, (?:name )?cut (\d+) ms, level stop alone (\d+) ms")
+REPLAY_LINE = re.compile(r"^    lag (\d+) ms, name cut (\d+) ms, level stop alone (\d+) ms")
+
+
+def example(**changes) -> TurnRecord:
+    return TurnRecord(**{**EXAMPLE, **changes})
+
+
+def test_the_record_keeps_the_contracts_fields_in_its_order():
+    """The field order is the events record's key order."""
+    assert [f.name for f in fields(TurnRecord)] == [
+        "turn", "outcome", "tail_ms", "final_ms", "reply_first_ms", "voice_first_ms",
+        "input_tokens", "output_tokens", "stt_audio_s", "stt_host", "llm_chars", "llm_host",
+        "voice_chars", "voice_host", "sentences", "cleaned",
+    ]
+
+
+def test_a_new_record_holds_only_its_turn():
+    record = TurnRecord(turn=1)
+    assert record.outcome == "not_answered"
+    assert record.gap_ms is None and record.sent() == [] and not record.ran_a_stage
+    assert record.line() is None, "a turn that ran no stage and made no sound prints no line"
+
+
+def test_the_gap_is_the_quiet_the_wait_for_the_words_and_the_wait_for_the_first_sound():
+    assert example().gap_ms == 960.0 + 410.0 + 890.0
+    assert example(final_ms=None).gap_ms == 960.0 + 890.0, "no transcriber, no wait for the words"
+    assert example(voice_first_ms=None).gap_ms is None, "no sound, no gap"
+    assert example(tail_ms=None).gap_ms is None
+
+
+def test_the_per_turn_line_reads_as_the_contract_has_it():
+    assert example().line() == (
+        "turn gap 2260 ms = quiet 960 + stt final 410 + llm first 620 + voice 270; "
+        "967 tokens in, 18 out; sent 3.3 s of audio to api.deepgram.com, 2071 characters to api.openai.com"
+    )
+
+
+def test_the_lines_terms_add_up_to_its_gap_however_the_milliseconds_fall():
+    """Each term rounded alone would print 2262 = 960 + 410 + 620 + 270 for
+    the first of these, a sum wrong by two."""
+    rng = random.Random(57)
+    cases = [example(tail_ms=960.4, final_ms=410.4, reply_first_ms=620.4, voice_first_ms=890.8)]
+    for _ in range(500):
+        reply = rng.choice([None, rng.uniform(0, 3000)])
+        cases.append(example(
+            tail_ms=rng.uniform(0, 2000),
+            final_ms=rng.choice([None, rng.uniform(0, 3000)]),
+            reply_first_ms=reply,
+            voice_first_ms=(reply or 0.0) + rng.uniform(-200, 800),
+        ))
+    for record in cases:
+        head = record.line().split(";")[0]
+        total, terms = head.removeprefix("turn gap ").split(" ms = ")
+        shown = [int(term.rsplit(" ", 1)[1]) for term in terms.split(" + ")]
+        assert sum(shown) == int(total) == round(record.gap_ms), head
+        # And no term moves by a whole millisecond (review finding
+        # engine-core/tests#7 of 0.5.7).
+        exact = [record.tail_ms, record.final_ms, record.reply_first_ms]
+        exact = [term for term in exact if term is not None]
+        exact.append(record.voice_first_ms - (record.reply_first_ms or 0.0))
+        assert all(abs(seen - term) < 1 for seen, term in zip(shown, exact, strict=True)), (head, exact)
+
+
+def test_a_term_with_no_value_is_left_out_with_its_plus():
+    assert example(final_ms=None, reply_first_ms=None, voice_first_ms=300.0).line().startswith(
+        "turn gap 1260 ms = quiet 960 + voice 300; "
+    ), "emet-listen with no transcriber and no model"
+    assert example(reply_first_ms=None, voice_first_ms=500.0).line().startswith(
+        "turn gap 1870 ms = quiet 960 + stt final 410 + voice 500; "
+    ), "a line said with no reply, such as the unavailable line"
+
+
+def test_a_turn_that_made_no_sound_says_nothing_was_spoken():
+    line = example(voice_first_ms=None).line()
+    assert line.startswith("turn gap - (nothing was spoken); ")
+
+
+def test_a_turn_with_no_speech_that_was_answered_does_not_say_nothing_was_spoken():
+    """A wake, then silence, and the soul's line for it: a sound with no
+    last loud frame to count the gap from."""
+    line = example(tail_ms=None).line()
+    assert line.startswith("turn gap - (no speech to count from); ")
+
+
+def test_tokens_print_for_the_sides_that_were_counted():
+    assert "; 967 tokens in, 18 out; " in example().line()
+    assert "; 967 tokens in; " in example(output_tokens=None).line()
+    assert "; 18 tokens out; " in example(input_tokens=None).line()
+    assert "tokens" not in example(input_tokens=None, output_tokens=None).line()
+
+
+def test_sent_names_each_host_off_the_body_that_was_handed_something():
+    assert example(voice_host="api.deepgram.com").line().endswith(
+        "sent 3.3 s of audio to api.deepgram.com, 2071 characters to api.openai.com, "
+        "78 characters to api.deepgram.com"
+    )
+    assert example(stt_host=None).line().endswith("; sent 2071 characters to api.openai.com")
+    assert example(stt_audio_s=0.0).line().endswith("; sent 2071 characters to api.openai.com"), (
+        "a host handed nothing is not named"
+    )
+
+
+def test_a_turn_on_this_body_says_nothing_left_it():
+    line = example(stt_host=None, llm_host=None, voice_host=None).line()
+    assert line.endswith("; 967 tokens in, 18 out; nothing left the body")
+    assert "sent" not in line
+
+
+def test_the_line_is_none_only_for_a_turn_that_ran_no_stage_and_made_no_sound():
+    quiet = TurnRecord(turn=1, tail_ms=900.0)
+    assert quiet.line() is None, "emet-listen with no transcriber: a turn, and nothing to say of it"
+    assert TurnRecord(turn=1, tail_ms=900.0, voice_first_ms=200.0).line() == (
+        "turn gap 1100 ms = quiet 900 + voice 200; nothing left the body"
+    )
+    assert TurnRecord(turn=1, stt_audio_s=1.2, stt_host="api.deepgram.com").line() == (
+        "turn gap - (nothing was spoken); sent 1.2 s of audio to api.deepgram.com"
+    ), "a wake and then nothing still cost the transcriber its audio"
+
+
+def test_the_line_never_reads_as_the_line_under_a_wake():
+    for record in (example(), example(voice_first_ms=None), example(stt_host="cut.lag.example")):
+        line = record.line()
+        assert "name cut" not in line and not line.startswith("lag")
+        assert not PER_WAKE.search(line) and not REPLAY_LINE.match("    " + line)
+
+
+def test_every_outcome_is_accepted_and_any_other_refused_wherever_it_is_set():
+    for outcome in OUTCOMES:
+        assert TurnRecord(turn=1, outcome=outcome).outcome == outcome
+    with pytest.raises(ValueError, match="unknown turn outcome 'answred'"):
+        TurnRecord(turn=1, outcome="answred")
+    record = TurnRecord(turn=1)
+    with pytest.raises(ValueError, match="unknown turn outcome 'cut_at_limit'"):
+        record.outcome = "cut_at_limit"
+    assert record.outcome == "not_answered", "a refused outcome leaves the old one"
+    record.outcome = "failed"
+    assert record.outcome == "failed"
+
+
+@pytest.mark.parametrize("turn", [0, -1, True, 1.0, "1"])
+def test_a_turn_is_counted_from_one(turn):
+    with pytest.raises(ValueError, match="a turn is counted from 1"):
+        TurnRecord(turn=turn)
+
+
+def test_record_turn_keeps_the_turns_in_order():
+    s = stats()
+    first, second = TurnRecord(turn=1), TurnRecord(turn=2)
+    s.record_turn(first)
+    s.record_turn(second)
+    assert s.turn_records == [first, second]
+    first.voice_first_ms = 10.0
+    assert s.turn_records[0].voice_first_ms == 10.0, "the session fills the record in place"
+
+
+# ------------------------------------------------------- the footer's sums
+
+
+def footer(s: SessionStats, *, live: bool = False) -> list[str]:
+    s.record_frame(1.0)
+    return s.report(live=live).splitlines()
+
+
+def labels(rows: list[str]) -> list[str]:
+    return [row[2:16].strip() for row in rows]
+
+
+def test_the_four_lines_go_after_voice_done_and_before_clock():
+    s = stats()
+    s.speech_first_ms.append(400.0)
+    s.speech_done_ms.append(900.0)
+    s.record_turn(example())
+    for live in (False, True):
+        rows = footer(s, live=live)
+        order = labels(rows)
+        at = order.index("voice done")
+        assert order[at + 1:at + 6] == ["turn gap", "tokens", "sent", "cleaned", "clock"]
+        assert rows[0].startswith("  frames ") and rows[-1].startswith("  verdict ")
+        assert not any(row.startswith("  name cut") for row in rows[at + 1:at + 5])
+
+
+def test_the_new_lines_keep_the_label_column():
+    s = stats()
+    s.record_turn(example())
+    for row in footer(s):
+        if row[2:16].strip() in ("turn gap", "tokens", "sent", "cleaned"):
+            assert row[16] != " " and row[15] == " ", row
+
+
+def test_a_run_with_no_turns_prints_the_footer_it_always_printed():
+    s = stats()
+    rows = footer(s)
+    assert not {"turn gap", "tokens", "sent", "cleaned"} & set(labels(rows))
+    s.record_turn(TurnRecord(turn=1, tail_ms=900.0))
+    assert footer(s)[1:] == rows[1:], "a turn that ran no stage adds no line"
+
+
+def test_the_turn_gap_line_has_the_median_the_mean_and_the_max_of_the_turns_with_a_gap():
+    s = stats()
+    for turn, voice in enumerate([300.0, 500.0, 1700.0, None], start=1):
+        s.record_turn(TurnRecord(turn=turn, tail_ms=900.0, voice_first_ms=voice))
+    line = next(row for row in footer(s) if row.startswith("  turn gap"))
+    assert line == (
+        "  turn gap      median 1400 ms   mean 1733   max 2600   "
+        "(3 turn(s), last loud frame to first sound)"
+    )
+
+
+def test_the_tokens_line_sums_the_turns_that_counted_them():
+    s = stats()
+    s.record_turn(example())
+    s.record_turn(example(turn=4, input_tokens=1000, output_tokens=20))
+    s.record_turn(example(turn=5, input_tokens=None, output_tokens=None))
+    line = next(row for row in footer(s) if row.startswith("  tokens"))
+    assert line == (
+        "  tokens        1967 in, 38 out   (2 turn(s) that counted them; cached tokens are counted from 0.6)"
+    )
+    one_side = stats()
+    one_side.record_turn(example(input_tokens=None))
+    assert next(row for row in footer(one_side) if row.startswith("  tokens")).startswith("  tokens        18 out   (")
+
+
+def test_the_sent_line_sums_each_stage_and_host():
+    s = stats()
+    s.record_turn(example(turn=1, voice_host="api.deepgram.com"))
+    s.record_turn(example(turn=2, stt_audio_s=1.2, llm_chars=29, llm_host="192.168.1.20:9380"))
+    line = next(row for row in footer(s) if row.startswith("  sent"))
+    assert line == (
+        "  sent          4.5 s of audio to api.deepgram.com, 2071 characters to api.openai.com, "
+        "29 characters to 192.168.1.20:9380, 78 characters to api.deepgram.com   (what the turns sent off the body)"
+    ), "a server on the home network is off the body"
+
+
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1:9380", "localhost:11434", "[::1]:8080", "0.0.0.0:8080", "127.0.1.1", "LOCALHOST"]
+)
+def test_a_server_on_this_machine_is_not_counted_as_having_left_the_body(host):
+    """Review findings batch/critic#5 and engine-core/claims-scope#10 of
+    0.5.7: a model server on the body (DL5's llama-server at 127.0.0.1) is
+    named on the record and left out of what was sent."""
+    record = example(stt_host=None, voice_host=None, llm_host=host)
+    assert record.llm_host == host and record.sent() == []
+    assert record.line().endswith("; nothing left the body")
+    s = stats()
+    s.record_turn(record)
+    assert "  sent          nothing left the body" in footer(s)
+
+
+@pytest.mark.parametrize("host", ["api.openai.com", "192.168.1.20:9380", "[2001:db8::1]:443", "127.example.com", "localhost.example.com"])
+def test_any_other_host_is_counted_as_off_the_body(host):
+    assert [entry.host for entry in example(stt_host=None, voice_host=None, llm_host=host).sent()] == [host]
+
+
+def test_a_run_whose_stages_all_ran_on_the_body_says_nothing_left_it():
+    s = stats()
+    s.record_turn(example(stt_host=None, llm_host=None, voice_host=None))
+    assert "  sent          nothing left the body" in footer(s)
+
+
+def test_the_cleaned_line_counts_the_sentences_cleaning_changed():
+    s = stats()
+    s.record_turn(example(sentences=3, cleaned=1))
+    s.record_turn(example(turn=4, sentences=2, cleaned=0))
+    assert "  cleaned       1 of 5 sentence(s) changed before the voice" in footer(s)
+    none = stats()
+    none.record_turn(example(sentences=0, cleaned=0))
+    assert "cleaned" not in labels(footer(none)), "no sentence reached the voice"
+
+
+def test_the_sums_read_the_records_as_the_session_left_them():
+    s = stats()
+    record = TurnRecord(turn=1, tail_ms=900.0)
+    s.record_turn(record)
+    assert s.gap_spread() is None and s.token_totals() is None and s.cleaned_totals() is None
+    record.voice_first_ms, record.output_tokens, record.sentences = 100.0, 7, 1
+    assert s.gap_spread() == Spread(1000.0, 1000.0, 1000.0, 1)
+    assert s.token_totals() == Tokens(None, 7, 1)
+    assert s.cleaned_totals() == (0, 1)
+    assert s.sent_totals() == [] and s.ran_a_stage
+    record.llm_host, record.llm_chars = "api.openai.com", 12
+    assert s.sent_totals() == [Sent("llm", "api.openai.com", 12)]

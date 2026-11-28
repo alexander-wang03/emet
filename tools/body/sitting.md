@@ -18,6 +18,9 @@ Print this page. Read it standing at the robot.
 - The log holds what the screen shows: your questions as heard and its
   answers. No audio is kept. Deepgram hears each turn and OpenAI reads it,
   as in any `emet-talk` run, through the keys in `~/.config/emet/keys.env`.
+- Turns 3 to 10 also write an events file, `~/sitting-X.Y.Z.events.jsonl`:
+  each turn's timings, tokens and what left the body, as numbers. It holds
+  no word anybody said.
 
 ## 1. On the Pi: the release's code
 
@@ -36,18 +39,23 @@ cd ~/Documents/emet && source .venv/bin/activate && pip install -e 'emet-sdk[dev
 
 ## 2. Turns 1 and 2, with no flags
 
+Both runs use the branch's `emet-sdk/examples/pi-speakerphone.yaml`, the
+reference body as this release ships it, with its settings for the model
+(its reasoning effort among them). Your own `~/pi-speakerphone.yaml` stays
+as it is. The two name the same body, so the state file carries over.
+
 ```sh
-cd ~/Documents/emet && source .venv/bin/activate && script -qa ~/sitting-X.Y.Z.log -c "emet-talk ~/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml"
+cd ~/Documents/emet && source .venv/bin/activate && script -qa ~/sitting-X.Y.Z.log -c "emet-talk emet-sdk/examples/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml"
 ```
 
 Wait for `(ctrl-c to stop)`. Say turns 1 and 2. Press Ctrl-C once and wait
 for the shell prompt to come back: after `stopped.` it still writes the
 state file and a note.
 
-## 3. Turns 3 to 10, with `--stats`
+## 3. Turns 3 to 10, with `--stats` and `--events`
 
 ```sh
-cd ~/Documents/emet && source .venv/bin/activate && script -qa ~/sitting-X.Y.Z.log -c "emet-talk ~/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml --stats"
+cd ~/Documents/emet && source .venv/bin/activate && script -qa ~/sitting-X.Y.Z.log -c "emet-talk emet-sdk/examples/pi-speakerphone.yaml emet-sdk/examples/emet-soul.yaml --stats --events ~/sitting-X.Y.Z.events.jsonl"
 ```
 
 Wait for `(ctrl-c to stop)`. Say turns 3 to 10. Press Ctrl-C once and wait
@@ -75,7 +83,7 @@ the sheet.
 | 10 | near | A follow-up to its last answer, in your own words | a turn that needs what was said before |
 
 From about 3 m it may take more than one try to wake. Count the tries in
-the notes and keep going.
+the Tries column and keep going.
 
 ## What each box means
 
@@ -87,23 +95,27 @@ the notes and keep going.
   question.
 - **Voice:** the voice sounds right: clear, at its usual speed, with no
   clicks, gaps or cut-off words.
-- **Soon:** the answer came soon enough for a conversation.
+- **Wait (1 to 5):** how the wait for the answer felt, one number:
+  1, I would stop talking to it; 3, acceptable; 5, as quick as a person.
+- **Tries:** how many times you said the name before it woke, 1 when it
+  woke the first time.
 - **Body:** turn 5 only. It said it cannot come, and why.
+- **Notes:** anything else about the turn, a few words.
 
 ## The sheet
 
-| # | Asked | Whole | Held | Voice | Soon | Body | Tries and notes |
-|---|---|---|---|---|---|---|---|
-| 1 | [ ] | [ ] | | [ ] | [ ] | | |
-| 2 | [ ] | [ ] | | [ ] | [ ] | | |
-| 3 | [ ] | [ ] | | [ ] | [ ] | | |
-| 4 | [ ] | [ ] | [ ] | [ ] | [ ] | | |
-| 5 | [ ] | [ ] | | [ ] | [ ] | [ ] | |
-| 6 | [ ] | [ ] | | [ ] | [ ] | | |
-| 7 | [ ] | [ ] | | [ ] | [ ] | | |
-| 8 | [ ] | [ ] | | [ ] | [ ] | | |
-| 9 | [ ] | [ ] | | [ ] | [ ] | | |
-| 10 | [ ] | [ ] | | [ ] | [ ] | | |
+| # | Asked | Whole | Held | Voice | Wait (1 to 5) | Tries | Body | Notes |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | [ ] | | [ ] | | | | |
+| 2 | [ ] | [ ] | | [ ] | | | | |
+| 3 | [ ] | [ ] | | [ ] | | | | |
+| 4 | [ ] | [ ] | [ ] | [ ] | | | | |
+| 5 | [ ] | [ ] | | [ ] | | | [ ] | |
+| 6 | [ ] | [ ] | | [ ] | | | | |
+| 7 | [ ] | [ ] | | [ ] | | | | |
+| 8 | [ ] | [ ] | | [ ] | | | | |
+| 9 | [ ] | [ ] | | [ ] | | | | |
+| 10 | [ ] | [ ] | | [ ] | | | | |
 
 Anything else you noticed, one line each:
 
@@ -113,23 +125,32 @@ Anything else you noticed, one line each:
 
 ## When something goes wrong
 
-- **It does not wake:** say the name again, a little closer. Note the tries.
+- **It does not wake:** say the name again, a little closer, and count each try under Tries.
 - **It answers before you finish:** leave Whole unticked for that turn and
   go on.
 - **The run stops with an error:** write down its last line, then run the
-  same block again. The log keeps both.
+  same block again. The log keeps both. The events file starts again with
+  the new run, so it holds fewer than the eight turns the join needs; your
+  ratings are kept all the same, and the agent says the turns were not
+  joined.
 
 ## Afterwards
 
-Tell the agent "sitting done", with the rows and boxes left unticked and a
-word on each, or a photo of this sheet. The agent then collects the log and
-checks it, from the laptop:
+Tell the agent "sitting done", with each row's boxes, wait and tries, or a
+photo of this sheet. The agent writes your answers into a copy of the sheet,
+`releases/vX.Y.Z/sitting-sheet.md`, then collects the log and the events
+file and checks them, from the laptop:
 
 ```sh
-python tools/body/run.py --release X.Y.Z --collect-only --fetch '~/sitting-X.Y.Z.log'
+python tools/body/run.py --release X.Y.Z --collect-only --fetch '~/sitting-X.Y.Z.log' --fetch '~/sitting-X.Y.Z.events.jsonl' --sheet ../releases/vX.Y.Z/sitting-sheet.md
 ```
 
-That copies the log to `releases/vX.Y.Z/body/<date>/`, checks the line
+That copies both files to `releases/vX.Y.Z/body/<date>/`, checks the line
 under each wake against the footer's counts, and adds the sitting's runs to
-the table of the date each flag last ran on the body. The sheet's ticks go
-into the pull request beside the numbers.
+the table of the date each flag last ran on the body. It also writes
+`sitting.json` there: each row's answers, and for turns 3 to 10 the
+events file's record of that turn, so each wait you rated sits beside the
+turn gap the robot measured. When the events file holds other than eight
+turns (a false wake, or a run started again), the turns are not joined and
+`sitting.json` says so; the ratings are kept. The sheet's answers go into
+the pull request beside the numbers.

@@ -1,4 +1,4 @@
-"""Body-local state: what one body learned about itself, kept beside it."""
+"""Body-local state is what one body learned about itself, kept beside it."""
 
 from __future__ import annotations
 
@@ -643,13 +643,13 @@ def test_health_is_recorded_by_capability_and_replaces_the_last_record():
     body.record_health(
         {
             "head": Health(),
-            "base": Health(ok=False, detail="left motor stalled", faults=("overcurrent", "timeout")),
+            "base": Health(ok=False, detail="left motor stalled", faults=("x_overcurrent", "x_timeout")),
         }
     )
     path = body.save()
 
     assert read_json(path)["health"] == {
-        "base": {"ok": False, "detail": "left motor stalled", "faults": ["overcurrent", "timeout"]},
+        "base": {"ok": False, "detail": "left motor stalled", "faults": ["x_overcurrent", "x_timeout"]},
         "head": {"ok": True, "detail": None, "faults": []},
     }
 

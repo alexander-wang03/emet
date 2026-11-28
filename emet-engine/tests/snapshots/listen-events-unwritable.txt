@@ -1,0 +1,7 @@
+$ emet-listen body.yaml soul.yaml --stats --events nofolder/run.jsonl
+exit 1
+--- stdout
+emet-listen: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+emet-listen: cannot write the events file 'nofolder/run.jsonl': [Errno 2] No such file or directory: 'nofolder/run.jsonl'

@@ -49,8 +49,11 @@ VOICE_ACTIONS: frozenset[str] = frozenset(
 #: What `explain` can be asked about. The first two are facts about the body
 #: and come from the same compilation as the self-model. `offline` is the
 #: soul's words for failure; `error` names the parts that are not working, or
-#: falls back to those words.
-EXPLAIN_TOPICS: frozenset[str] = frozenset({"cannot_move", "cannot_turn", "offline", "error"})
+#: falls back to those words. `unavailable` is what the robot says at the end
+#: of a wake's turn while its language model is one the vendor has retired or
+#: does not know, which `signal.unavailable` explains: the engine's own words
+#: until a soul can give its own.
+EXPLAIN_TOPICS: frozenset[str] = frozenset({"cannot_move", "cannot_turn", "offline", "error", "unavailable"})
 
 #: The system tones the engine can play for a `tone` rung.
 TONE_PRESETS: frozenset[str] = frozenset({"rising_pair", "soft_click", "falling_pair"})

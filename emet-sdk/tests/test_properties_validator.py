@@ -61,17 +61,11 @@ HERE = Path(__file__).resolve().parent
 FILE = "tests/test_properties_validator.py"
 
 #: Seeds of the default range on which a property is refuted, by finding.
-KNOWN: dict[str, dict[str, tuple[int, ...]]] = {
-    "B7-F3": {"raises": (9, 30, 38, 50, 88, 119, 123, 149)},  # 9, 30, 38, 50, 119 TypeError; 88, 123, 149 AttributeError
-    "B7-F5": {"chains-raises": (18,)},
-}
+#: Empty since B7-F3 and B7-F5 were fixed; a finding the properties refute
+#: again is added here with its reason, as `test_properties_resolver.py` does.
+KNOWN: dict[str, dict[str, tuple[int, ...]]] = {}
 
-REASONS = {
-    "B7-F3": "B7-F3: a reserved part's driver or mounted_on of a type the schema leaves open "
-             "makes validate_manifest raise AttributeError or TypeError",
-    "B7-F5": "B7-F5: a chain file whose top-level key is not a string makes "
-             "validate_chain_document raise AttributeError",
-}
+REASONS: dict[str, str] = {}
 
 
 def seeds_for(test: str) -> list:
@@ -323,6 +317,134 @@ def test_chain_validation_raises_nothing_on_any_input(seed):
     except Exception as exc:  # noqa: BLE001 - the property is that nothing is raised
         raise AssertionError(f"{where}: {type(exc).__name__}: {exc}") from exc
     assert isinstance(report, ValidationReport), where
+
+
+# ------------------------------------- the cases the seeds above once refuted
+
+#: The least a manifest holds, for the cases below to add a part to.
+BARE = {
+    "manifest_version": "0.1",
+    "body": {"id": "bare", "scale": "desk", "power": "plugged_in"},
+    "audio": {"input": {"device": "default"}, "output": {"device": "default"}},
+}
+
+#: A P0 part a reserved part may be mounted on.
+LAMP = {"id": "lamp", "type": "light", "role": "status", "driver": {"plugin": "acme_leds"}}
+
+
+def with_parts(*parts: dict) -> dict:
+    return {**copy.deepcopy(BARE), "capabilities": [copy.deepcopy(p) for p in parts]}
+
+
+@pytest.mark.parametrize("driver", [2.5, ["acme_servo"], "acme_servo", True, 0, None, {}])
+def test_a_reserved_part_whose_driver_is_no_mapping_names_no_plugin(driver):
+    """Seeds 88, 123 and 149 of the property above (finding B7-F3): the
+    schema leaves a reserved part's fields open, so its `driver` may be a
+    number, a list or a word. None of these names a plugin, so the part is
+    passed over as one with no driver is, with no finding even when drivers
+    are verified."""
+    doc = with_parts({"id": "grip", "type": "manipulator", "driver": driver})
+    for strict in (False, True):
+        report = validate_manifest(doc, registry=registry(verify_drivers=strict))
+        assert report.findings == [], (driver, strict, [str(f) for f in report.findings])
+
+
+def test_a_reserved_part_whose_driver_is_a_mapping_still_has_its_plugin_checked():
+    """validate.py: "an unrecognised driver name is a warning here by
+    default", and `verify_drivers=True` "makes it an error", for a reserved
+    part as for any other."""
+    doc = with_parts({"id": "grip", "type": "manipulator", "driver": {"plugin": "acme_missing"}})
+    lenient = validate_manifest(doc, registry=registry())
+    assert [(f.severity, f.code, f.path) for f in lenient.findings] == [
+        ("warning", "driver_not_installed", "/capabilities")]
+    strict = validate_manifest(doc, registry=registry(verify_drivers=True))
+    assert [(f.severity, f.code, f.path) for f in strict.findings] == [
+        ("error", "missing_plugin", "/capabilities/0/driver/plugin")]
+    installed = with_parts({"id": "grip", "type": "manipulator", "driver": {"plugin": "acme_servo"}})
+    assert validate_manifest(installed, registry=registry(verify_drivers=True)).findings == []
+
+
+@pytest.mark.parametrize("mount", [{"k": [None]}, ["lamp"], 7, 2.5, True])
+def test_a_reserved_part_mounted_on_no_string_is_an_unknown_reference(mount):
+    """Seeds 9, 30, 38, 50 and 119 of the property above (finding B7-F3):
+    `mounted_on` names the part it sits on by its id, a string. A list or a
+    mapping names no part, and is reported as a number always was, as a
+    reference to no capability in the manifest."""
+    report = validate_manifest(with_parts(LAMP, {"id": "grip", "type": "manipulator", "mounted_on": mount}),
+                               registry=registry())
+    assert [(f.code, f.path) for f in report.findings] == [("unknown_reference", "/capabilities/1/mounted_on")]
+    assert report.errors[0].message == (
+        f"'grip' is mounted_on {mount!r}, which is not a capability in this manifest. Known ids: grip, lamp")
+
+
+@pytest.mark.parametrize("mount", ["lamp", "body", None])
+def test_a_reserved_part_mounted_on_a_part_the_manifest_declares_is_no_finding(mount):
+    """validate.py: "a capability id referenced by a camera mount" has to be
+    a part the manifest declares, and `body` or no mount at all is always
+    one."""
+    report = validate_manifest(with_parts(LAMP, {"id": "grip", "type": "manipulator", "mounted_on": mount}),
+                               registry=registry())
+    assert report.findings == []
+
+
+VOICE_ONLY = {"rungs": [{"actuator": {"voice": True}, "action": "inflect",
+                         "params": {"preset": "rising", "filler": "hm?"}}]}
+
+
+def test_a_chain_named_by_no_string_is_an_unknown_intent_and_the_rest_are_still_checked():
+    """Seed 18 of the property above (finding B7-F5): YAML reads an
+    unquoted `1:`, `null:` or `yes:` as a number, a null or a boolean, and
+    a chain named so is outside the closed vocabulary. Each such name is
+    reported where it stands, and the names after it are checked too."""
+    doc = {1: VOICE_ONLY, None: VOICE_ONLY, 2.5: VOICE_ONLY, "express.glee": VOICE_ONLY,
+           "express.curiosity": VOICE_ONLY}
+    report = validate_chain_document(doc)
+    assert [(f.code, f.path) for f in report.findings] == [
+        ("unknown_intent", "/1"), ("unknown_intent", "/None"), ("unknown_intent", "/2.5"),
+        ("unknown_intent", "/express.glee")]
+    assert [f.message for f in report.errors[:3]] == [
+        f"a chain is named {name!r} ({kind}), and an intent's name is a string such as "
+        f"'express.curiosity'. YAML reads an unquoted 1, null or yes as a number, a null or a boolean."
+        for name, kind in ((1, "int"), (None, "NoneType"), (2.5, "float"))]
+    assert validate_chain_document({True: VOICE_ONLY}).errors[0].message.startswith(
+        "a chain is named True (bool), and an intent's name is a string")
+
+
+@pytest.mark.parametrize("doc", [None, [], ["express.curiosity"], "express.curiosity", 7])
+def test_a_chain_file_that_is_no_mapping_is_one_schema_error(doc):
+    """`validate_chain_document` reads "a mapping of intent name to chain",
+    and a file of any other shape is one schema error saying so."""
+    report = validate_chain_document(doc)
+    assert [(f.severity, f.code, f.message, f.path) for f in report.findings] == [
+        ("error", "schema", "a chain file must be a mapping of intent name to chain", "")]
+
+
+def test_a_chain_in_mode_all_validates_with_one_warning_that_names_it():
+    """`ChainMode.ALL`: "RSV. Bind every matching rung". The validator
+    accepts it and warns, at the chain's `mode`, that P0 binds one rung."""
+    report = validate_chain_document({"express.curiosity": {**VOICE_ONLY, "mode": "all"}})
+    assert [(f.severity, f.code, f.message, f.path) for f in report.findings] == [
+        ("warning", "reserved_mode",
+         "chain 'express.curiosity' uses mode: all, which is RSV. The P0 engine binds the first matching rung only.",
+         "/express.curiosity/mode")]
+
+
+def test_a_chain_file_whose_yaml_key_is_no_string_is_refused_by_the_loader(tmp_path):
+    """`load_chains`, which `emet explain --chains` and the engine's
+    `--chains` call: an override "is held to `emet validate`'s rules before
+    it is laid over anything", and a problem "raises `ChainError` naming the
+    file". A file whose one key YAML reads as a null is refused so, where it
+    raised `AttributeError` before."""
+    from emet_sdk.chains import ChainError
+    from emet_sdk.resolve import load_chains
+    from emet_sdk.validate import load_yaml
+
+    path = tmp_path / "null-key.yaml"
+    path.write_text("null:\n  rungs:\n    - actuator: {voice: true}\n      action: utter\n"
+                    "      params: {text: hm}\n", encoding="utf-8")
+    assert list(load_yaml(path)) == [None]
+    with pytest.raises(ChainError, match=r"null-key\.yaml: a chain is named None \(NoneType\)"):
+        load_chains([path])
 
 
 def test_every_rerun_line_selects_the_one_test_it_was_printed_for():

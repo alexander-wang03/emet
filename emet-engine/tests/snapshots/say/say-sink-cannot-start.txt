@@ -1,0 +1,7 @@
+$ emet-say body.yaml soul.yaml Hello.
+exit 1
+--- stdout
+emet-say: emet-sdk <version>, emet-hal <version>, emet-providers <version>, emet-engine <version>; revision <revision>
+--- stderr
+
+the audio sink 'broken' cannot start, so nothing the robot says could be heard. It will not run. the card is gone

@@ -25,9 +25,9 @@ REPO = TOOLS.parent
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import api_diff  # noqa: E402
-import check_health  # noqa: E402
-from check_health import COMPLEXITY_OVER, MEASURES, PACKAGES, SDK_LINE_CAP  # noqa: E402
+import api_diff  # noqa: E402  a tool, imported by its bare name from tools/
+import check_health  # noqa: E402  a tool, imported by its bare name from tools/
+from check_health import COMPLEXITY_OVER, MEASURES, PACKAGES, SDK_LINE_CAP  # noqa: E402  a tool, imported by its bare name from tools/
 
 DAY_ONE = ("2026-01-01", "aaaaaaa")
 DAY_TWO = ("2026-02-02", "bbbbbbb")

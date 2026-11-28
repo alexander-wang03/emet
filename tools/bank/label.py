@@ -67,7 +67,7 @@ import time
 import wave
 from array import array
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))

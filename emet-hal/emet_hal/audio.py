@@ -47,6 +47,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+from emet_sdk.plugin import PluginError
 from emet_sdk.types import SAMPLE_BYTES, AudioFormat, AudioSink, AudioSource
 
 __all__ = [
@@ -68,8 +69,13 @@ __all__ = [
 log = logging.getLogger("emet_hal.audio")
 
 
-class AudioError(RuntimeError):
-    """Audio could not be brought up, with a message a person can act on."""
+class AudioError(PluginError):
+    """Audio could not be brought up, with a message a person can act on.
+
+    A `PluginError`, so the engine, which may not import this package,
+    catches it at a source's or a sink's `start()` and prints one line
+    naming the plugin in place of a traceback.
+    """
 
 
 @dataclass(frozen=True, slots=True)

@@ -44,9 +44,24 @@ on an intent is performed through its binding (`emet_engine.acting`): the
 reply's sentences as `speak` intents, the tags the model wrote at the place
 it wrote them, and the engine's own state as `signal` intents, `booting`
 when it is up, `listening` on a wake, `thinking` while the model works,
-`speaking` from the first sentence, `offline` when, in `talk()`, a
-provider's words or reply do not arrive, `error` when a declared part is not
-working, and `muted` when it stops listening for good.
+`speaking` from the first sentence, `offline` when a turn's words or its
+reply are lost and the stage's report names no kind for it (a network, a
+server, or a request the vendor refused, such as a revoked key),
+`unavailable` at the end of each wake's turn while the chat model is one
+its vendor has retired or does not know, `error` when a
+declared part is not working, and `muted` when it stops listening for good.
+
+**How a turn ends.** Both programs hand each turn to `finish_turn()` once,
+which names its outcome, picks its row from `emet_engine.failures` by four
+facts (when the fault was found, which stage, the outcome, and the fault
+kind the stage's own `health()` names), performs the row's signal and says
+its line. No error message's wording is read to choose a line.
+
+**A chat model that cannot answer.** One whose `health().faults` names
+`model_unavailable` boots all the same (E17 (c), 0.5.7-D4), since a robot
+that refused to boot would tell nobody why. Each wake then ends at its
+endpoint with the unavailable line, and nothing is sent to the transcriber
+or the model.
 
 **Body-local state.** With a `body.id` in the manifest, what is true of this
 hardware and meaningless on the next is kept in the body's state file
@@ -60,19 +75,30 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from array import array
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
-from emet_sdk.discovery import PluginRegistry
+from emet_sdk.discovery import (
+    GROUP_ACTUATOR,
+    GROUP_LLM,
+    GROUP_LOCOMOTION,
+    GROUP_SENSOR,
+    GROUP_STT,
+    GROUP_TTS,
+    PluginRegistry,
+)
 from emet_sdk.models import chat_selection, stt_selection, tts_selection
+from emet_sdk.plugin import PluginError
 from emet_sdk.resolve import BindingTable, load_chains
 from emet_sdk.types import (
     AudioFormat,
     AudioSink,
     AudioSource,
+    Health,
     Intent,
     LanguageModelDescriptor,
     ReplyDone,
@@ -92,9 +118,10 @@ from emet_sdk.validate import (
 )
 
 from emet_engine.acting import Actor, Performed, signal, speak
-from emet_engine.body import Body
+from emet_engine.body import RESERVED_TYPES, Body
+from emet_engine.failures import Failure, find, row
 from emet_engine.intent_tags import IntentTags
-from emet_engine.metrics import Handover, SessionStats, Stopwatch
+from emet_engine.metrics import Handover, SessionStats, Stopwatch, TurnRecord
 from emet_engine.prompting import (
     DEFAULT_MAX_TOKENS,
     Conversation,
@@ -103,12 +130,12 @@ from emet_engine.prompting import (
     system_prompt,
 )
 from emet_engine.self_model import compile_self_model
-from emet_engine.speech import Mouth, Sentences, SpokenSentence, split_sentences
+from emet_engine.speech import Mouth, Sentences, SpokenSentence, speakable, split_sentences
 from emet_engine.state import BodyState
 from emet_engine.turn import DEFAULT_PATIENCE_MS, Endpointer, Utterance, looks_incomplete
 from emet_engine.vad import rms
 
-__all__ = ["EngineError", "ListenSession", "Exchange", "sentences_of"]
+__all__ = ["EngineError", "ListenSession", "Exchange", "TurnEnd", "read_health", "sentences_of"]
 
 log = logging.getLogger("emet_engine.session")
 
@@ -375,6 +402,20 @@ def _dbfs(level: float) -> float:
     return 20.0 * math.log10(max(level, 1e-3) / 32768.0)
 
 
+#: The lowest level `on_frame` reports, in dB below full scale. Digital
+#: silence reads as this, so the live line keeps its width.
+_FRAME_LEVEL_FLOOR_DB = -99.9
+
+
+def _frame_level(frame: bytes) -> float:
+    """One frame's level for the live line: `20*log10(rms/32768)` of mono
+    int16, never below `_FRAME_LEVEL_FLOOR_DB`."""
+    level = rms(frame)
+    if level <= 0.0:
+        return _FRAME_LEVEL_FLOOR_DB
+    return max(_FRAME_LEVEL_FLOOR_DB, 20.0 * math.log10(level / 32768.0))
+
+
 def sentences_of(text: str) -> list[str]:
     """A fixed piece of text as the sentences a voice is handed, in order."""
     sentences = Sentences()
@@ -383,18 +424,109 @@ def sentences_of(text: str) -> list[str]:
     return out + ([rest] if rest else [])
 
 
+def read_health(plugin: Any) -> Health:
+    """A plugin's `health()`, or a refusal when it raises.
+
+    Every health report the session reads comes through here: the wake
+    engine's, the transcriber's, the language model's and the voice's at
+    boot, and a stage's after a turn's request failed. A report that raises
+    becomes `Health(ok=False, detail="<type>: <message>", faults=("health",))`,
+    as a body part's does (`emet_engine.body`). So an outside plugin whose
+    report names a fault kind the SDK refuses is refused at boot with the
+    `ValueError`'s own words, and mid-run its turn is the plain failure of
+    its stage, never a traceback.
+    """
+    try:
+        return plugin.health()
+    except Exception as exc:  # noqa: BLE001 - a report that raises is itself the fault
+        return Health(ok=False, detail=f"{type(exc).__name__}: {exc}", faults=("health",))
+
+
+def _said_of(exc: BaseException) -> str:
+    """An exception's message for a refusal, or its type's name when the
+    message is empty."""
+    return str(exc) or type(exc).__name__
+
+
+def _count_tokens(record: TurnRecord, done: ReplyDone) -> None:
+    """Add one reply's token counts to its turn. A count the provider did
+    not give leaves the turn's as it was, so a turn none of whose replies
+    counted keeps None."""
+    if done.input_tokens is not None:
+        record.input_tokens = (record.input_tokens or 0) + done.input_tokens
+    if done.output_tokens is not None:
+        record.output_tokens = (record.output_tokens or 0) + done.output_tokens
+
+
+def _count_voice(record: TurnRecord, spoken: Sequence[SpokenSentence]) -> None:
+    """Add what the voice was handed to its turn: every text, a line or a
+    filler included, after cleaning, so a sentence the cleaning emptied
+    adds nothing."""
+    record.voice_chars += sum(len(s.text) for s in spoken)
+
+
+#: The outcome of a reply that stopped on an error, by the fault the model's
+#: own report names; any other fault, or none, is a plain failure.
+_ERROR_OUTCOMES = {"model_unavailable": "unavailable", "out_of_credit": "out_of_credit"}
+
+
+def _line_of(outcome: str, failure: Failure | None) -> tuple[str | None, str | None]:
+    """The key of the line a turn's end says, and the signal it performs.
+
+    A failure row says both. A turn with no row keeps the lines it always
+    had, the soul's `declined` after a refusal and its `nothing_heard`
+    after no words, with no signal; any other says nothing.
+    """
+    if failure is not None:
+        return failure.spoken, failure.signal
+    if outcome == "declined":
+        return "declined", None
+    if outcome in ("nothing_heard", "no_speech"):
+        return "nothing_heard", None
+    return None, None
+
+
+def _has_words(text: str) -> bool:
+    """Whether a reply's text holds a word the person would hear: its tags
+    lifted out and its marks cleaned off, as the voice would be handed it.
+    A reply that wrote only `[express.curiosity]`, or only `**`, has none."""
+    tags = IntentTags()
+    clean, _ = tags.feed(text)
+    return any(ch.isalnum() for ch in speakable(clean + tags.flush()))
+
+
 class EngineError(RuntimeError):
     """The engine cannot run, with a message naming what to fix."""
+
+
+@dataclass(frozen=True, slots=True)
+class TurnEnd:
+    """How one turn ended, as `ListenSession.finish_turn()` decided it.
+
+    `outcome` is one of `emet_engine.failures.OUTCOMES`. `failure` is the
+    row of the failure table the turn took, or None for a turn with no
+    failure line (answered, declined, nothing heard, no speech, or not
+    answered). `line` is the text the robot said for it, or None when it
+    said nothing, and `spoken` what became of each sentence of that line.
+    """
+
+    outcome: str
+    failure: Failure | None = None
+    line: str | None = None
+    spoken: tuple[SpokenSentence, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Exchange:
     """One turn of `talk()`: what was heard, what was answered, what was said.
 
-    `reply` is None for a turn with no words in it. `line` is a fallback
-    from the soul's `persona.lines` that was spoken (after a refusal, a
-    failure, or a false wake), or None. `intents` are the tags the model
-    put in its text, lifted out before the words were spoken.
+    `reply` is None for a turn with no words in it, and for every wake while
+    the chat model cannot answer. `line` is a fallback that was spoken (the
+    soul's `persona.lines` after a refusal, a failure or a false wake, or one
+    of the engine's own two), or None. `intents` are the tags the model put
+    in its text, lifted out before the words were spoken. `outcome`,
+    `failure` and `record` come from `finish_turn()`: how the turn ended,
+    the failure line's row, and the turn's `TurnRecord`.
     """
 
     wake: WakeEvent
@@ -403,6 +535,9 @@ class Exchange:
     spoken: tuple[SpokenSentence, ...]
     line: str | None = None
     intents: tuple[Intent, ...] = ()
+    outcome: str = "answered"
+    failure: Failure | None = None
+    record: TurnRecord | None = None
 
     @property
     def heard(self) -> str:
@@ -422,13 +557,24 @@ class ListenSession:
     microphone never should.
 
     `turns()` yields once per turn, after the person has stopped talking.
-    Five callbacks let a caller show something while the turn is still
+    Six callbacks let a caller show something while the turn is still
     going: `on_wake` fires the moment the name is heard, `on_handover` fires
     with what goes to the transcriber with it (a `Handover`), before any of
     it is fed, `on_partial` fires with each partial transcript while a
     transcriber is listening, `on_extended` fires with the words so far when
     the turn's silence window is extended because they looked unfinished,
-    and `on_performed` fires with `signal.listening` once it is performed.
+    `on_performed` fires with `signal.listening` once it is performed, and
+    `on_frame` fires once for every frame the loop reads, with the frame's
+    level in dBFS and, inside a turn, the speech and the quiet counted so
+    far in milliseconds (None and None while it waits for the name). The
+    level is worked out only when `on_frame` is set, and the call is
+    outside the per-frame timing, so a caller that draws a live line costs
+    the budget nothing.
+
+    `finish_turn(utterance, reply)` ends each turn, once, after its reply,
+    or after its final when no reply was asked: it names the outcome, says
+    the line a failure calls for, and fills the turn's record
+    (`last_turn`).
 
     `answer(text)` is the next step, taken by the caller after a turn: the
     words go to the language model with the persona and the conversation so
@@ -452,6 +598,7 @@ class ListenSession:
         on_extended: Callable[[str], None] | None = None,
         on_intent: Callable[[Intent], None] | None = None,
         on_performed: Callable[[Performed], None] | None = None,
+        on_frame: Callable[[float, float | None, float | None], None] | None = None,
         chains: Sequence[str | Path] = (),
         state: str | Path | None = None,
         carry: bool | None = None,
@@ -523,6 +670,9 @@ class ListenSession:
         self.on_extended = on_extended
         #: Fires with each intent the model tagged into its reply.
         self.on_intent = on_intent
+        #: Fires once a frame with its level and, inside a turn, the speech
+        #: and the quiet so far: the live line's hook.
+        self.on_frame = on_frame
 
         #: The language model the soul and the body agree on, and whether to
         #: bring it up. The persona is the system prompt until `start()` adds
@@ -533,6 +683,20 @@ class ListenSession:
         self.reply = reply
         self.system_prompt = system_prompt(soul)
         self.conversation = Conversation()
+        #: The token cap every reply is asked with, which the line for a
+        #: reply that spent it all before any words names.
+        self.reply_cap = DEFAULT_MAX_TOKENS
+        #: The chat model's own sentence while it cannot answer (its fault
+        #: is `model_unavailable`), from the boot or from the turn whose
+        #: reply found it; None while it can. While it is set every wake
+        #: ends at its endpoint with the unavailable line, and nothing is
+        #: sent to the transcriber or the model.
+        self.chat_unavailable: str | None = None
+        #: The boot's notices, one sentence each, which the programs print
+        #: as warnings before they listen: a provider that started healthy
+        #: and said something worth one line (a retirement date), and a chat
+        #: model that cannot answer.
+        self.notices: list[str] = []
 
         #: The voice the soul and the body agree on, and whether to bring it
         #: up. The soul's `voice` block (its speaking rate) reaches the
@@ -562,6 +726,9 @@ class ListenSession:
         #: while nothing was reading the microphone.
         self._playbacks = 0
         self._playbacks_heard = 0
+        #: Whether the boot said it had booted. Only then does `stop()` say it
+        #: has stopped: a boot refused before the rising pair makes no sound.
+        self._booted_aloud = False
         #: After the robot spoke: how much audio after listening resumed is
         #: the tail of its voice still in the air, whole frames, and how much
         #: has been fed since. None when there is no tail to judge.
@@ -570,6 +737,19 @@ class ListenSession:
         #: Wakes ignored because the phrase ended in that tail.
         self.own_voice_wakes = 0
         self._warned_no_discard = False
+        #: The turn being counted, from its endpoint until `finish_turn()`
+        #: ends it; None between turns. What the turn spends is added to it.
+        self._turn: TurnRecord | None = None
+        #: Bytes of audio handed to the transcriber since the last wake,
+        #: the handover before it included.
+        self._turn_stt_bytes = 0
+        #: Whether the chat model could not answer when this turn's wake
+        #: came, so nothing of the turn was sent.
+        self._turn_unavailable = False
+        #: When the turn's wait for the first sound began, by the
+        #: performance counter: the final transcript, or the endpoint when
+        #: no transcriber ran.
+        self._turn_mark: float | None = None
 
         self._wake: Any = None
         self._stt: Any = None
@@ -603,6 +783,12 @@ class ListenSession:
         self.body_state = BodyState.load(self.body_id, self.state_arg)
 
         self._wake = self._build_wake()
+        # Both audio plugins are found by name before anything starts, so a
+        # name nobody installed, or one two distributions offer, is refused
+        # before the body moves, any device opens or the boot tone plays.
+        source_cls = self.registry.load_audio(self.source_name)
+        sink_cls = self.registry.load_audio_out(self.sink_name)
+        self._refuse_clashes()
         await self._wake.start()
 
         self.descriptor = self._wake.describe()
@@ -640,9 +826,18 @@ class ListenSession:
         else:
             sink_rate = int(self._output_block.get("sample_rate") or 22050)
         self.sink_format = AudioFormat(sample_rate=sink_rate)
-        sink_cls = self.registry.load_audio_out(self.sink_name)
-        self._sink = sink_cls(self._output_block, self.sink_format)
-        await self._sink.start()
+        try:
+            # Built inside the guard as well: a sink checks its block as it
+            # is built (a `gain_db` that is not a finite number), and that is
+            # the same refusal as a device that will not open.
+            self._sink = sink_cls(self._output_block, self.sink_format)
+            await self._sink.start()
+        except PluginError as exc:
+            # The plugin's own reason, in one line; a plugin's bug, which
+            # raises anything else, keeps its traceback.
+            raise EngineError(
+                row("sink-cannot-start").text("emet-listen", name=self.sink_name, exc=_said_of(exc))
+            ) from exc
         if self._tts is not None:
             self._mouth = Mouth(self._tts, self._sink)
 
@@ -659,16 +854,23 @@ class ListenSession:
             on_performed=self.on_performed,
         )
 
+        # A replay's file is opened before the boot tone, so a wrong path is
+        # refused with no sound made; a file has no queue for the tone to
+        # fill, and nothing of it reaches the clock.
+        replay = self.source_name == "wav"
+        if replay:
+            await self._start_source(source_cls)
+
         # Booted, and said so, before the microphone opens: the rising pair is
         # not in the first frames the wake engine hears, and no backlog of
         # frames builds up while it plays to be counted as audio by the clock.
+        self._booted_aloud = True
         await self._signal("booting")
         if self.body.faults:
             await self._signal("error")
 
-        source_cls = self.registry.load_audio(self.source_name)
-        self._audio = source_cls(self._input_block, self.format)
-        await self._audio.start()
+        if not replay:
+            await self._start_source(source_cls)
         self._record_state()
         # The boot tones played before the microphone opened, so nothing of
         # them waits in its queue.
@@ -681,6 +883,19 @@ class ListenSession:
             self.source_name,
             self.format.sample_rate,
         )
+
+    async def _start_source(self, source_cls: Any) -> None:
+        """Build and start the audio source, or refuse with its row's one
+        line. Built inside the guard, as the sink is, so a block the source
+        refuses as it is built is the same refusal as a file that will not
+        open."""
+        try:
+            self._audio = source_cls(self._input_block, self.format)
+            await self._audio.start()
+        except PluginError as exc:
+            raise EngineError(
+                row("source-cannot-start").text("emet-listen", name=self.source_name, exc=_said_of(exc))
+            ) from exc
 
     def _build_wake(self) -> Any:
         """The wake engine, with whatever it carried over on this body laid
@@ -790,6 +1005,8 @@ class ListenSession:
                 await self._mouth.say(sentence, from_reply=from_reply)
             spoken = await self._mouth.finish()
             self._count_playback(spoken)
+            if self._turn is not None:
+                _count_voice(self._turn, spoken)
             return spoken
         except BaseException:
             # Interrupted mid-line: stop the words now, so nothing said on
@@ -816,6 +1033,42 @@ class ListenSession:
         elif self._mouth is not None:
             await self._mouth.say(sentence)
 
+    def _loaded_names(self) -> list[tuple[str, str]]:
+        """The group and name of each provider and driver this run loads."""
+        stages = (
+            (self.transcribe, GROUP_STT, self.stt_name),
+            (self.reply, GROUP_LLM, self.chat_name),
+            (self.speak, GROUP_TTS, self.tts_name),
+        )
+        names = [(group, name) for runs, group, name in stages if runs and name]
+        for block in self.manifest.get("capabilities") or []:
+            names.extend(self._part_names(block))
+        return names
+
+    @staticmethod
+    def _part_names(block: Any) -> list[tuple[str, str]]:
+        """A declared part's driver, and its kinematics when it drives, as `Body` loads them."""
+        if not isinstance(block, Mapping) or str(block.get("type") or "") in RESERVED_TYPES:
+            return []
+        names = [(GROUP_ACTUATOR, str((block.get("driver") or {}).get("plugin") or ""))]
+        if block.get("type") == "drive":
+            names.append((GROUP_LOCOMOTION, str(block.get("kinematics") or "")))
+        return names
+
+    def _refuse_clashes(self) -> None:
+        """Refuse a name two distributions offer before anything starts.
+
+        Each name is found where it would be loaded: a provider's after the
+        stages before it had started, and sent their preflights, and a
+        driver's after the providers. `origin()` raises the same
+        `DuplicatePluginError` the load would, and leaves a name nobody
+        installed to the load's own refusal. A driver is looked for among
+        the actuators first, then the sensors, as `load_driver` finds it.
+        """
+        for group, name in self._loaded_names():
+            if self.registry.origin(group, name) is None and group == GROUP_ACTUATOR:
+                self.registry.origin(GROUP_SENSOR, name)
+
     async def _start_stt(self) -> None:
         """Bring up speech recognition, or say precisely why not.
 
@@ -839,6 +1092,7 @@ class ListenSession:
         self.stt_descriptor = self._stt.describe()
         if not self.stt_descriptor.healthy:
             raise EngineError(self._mute_message())
+        self._notice(self._stt)
         if self.stt_descriptor.sample_rate != self.format.sample_rate:
             raise EngineError(
                 f"the speech recognition provider {self.stt_name!r} would run at "
@@ -849,7 +1103,14 @@ class ListenSession:
             )
 
     async def _start_llm(self) -> None:
-        """Bring up the language model, or say precisely why not."""
+        """Bring up the language model, or say precisely why not.
+
+        One unhealthy model boots: one whose `health().faults` names
+        `model_unavailable`, a model its vendor has retired or does not
+        know (E17 (c), 0.5.7-D4). It is noted in `chat_unavailable` and in
+        the boot's notices, and every wake then gets the unavailable line.
+        Every other unhealthy model refuses the boot, as before.
+        """
         if self.chat is None or self.chat_name is None:
             installed = ", ".join(self.registry.llm_names) or "(none)"
             raise EngineError(
@@ -863,14 +1124,16 @@ class ListenSession:
 
         self.llm_descriptor = self._llm.describe()
         if not self.llm_descriptor.healthy:
-            detail = ""
-            health = self._llm.health()
-            if not health.ok and health.detail:
-                detail = f" {health.detail}"
-            raise EngineError(
-                f"the language model {self.chat_name!r} cannot start, so the robot "
-                f"would hear questions it can never answer. It will not run.{detail}"
-            )
+            health = read_health(self._llm)
+            detail = (health.detail or "") if not health.ok else ""
+            if "model_unavailable" in health.faults:
+                self.chat_unavailable = detail or "The provider gave no reason."
+                notice = row("llm-unavailable-at-boot").text("emet-talk", name=self.chat_name, detail=detail)
+                # The table holds the line as printed; a notice is its text.
+                self.notices.append(notice.strip().removeprefix("!").strip())
+                return
+            raise EngineError(row("llm-cannot-start").text("emet-talk", name=self.chat_name, detail=detail))
+        self._notice(self._llm)
 
     async def _start_tts(self) -> None:
         """Bring up the voice, or say precisely why not.
@@ -892,14 +1155,18 @@ class ListenSession:
 
         self.tts_descriptor = self._tts.describe()
         if not self.tts_descriptor.healthy:
-            detail = ""
-            health = self._tts.health()
-            if not health.ok and health.detail:
-                detail = f" {health.detail}"
-            raise EngineError(
-                f"the voice {self.tts_name!r} cannot start, so the robot would "
-                f"answer and never be heard. It will not run.{detail}"
-            )
+            health = read_health(self._tts)
+            detail = (health.detail or "") if not health.ok else ""
+            raise EngineError(row("voice-out-of-credit-at-boot").text("emet-talk", name=self.tts_name, detail=detail))
+        self._notice(self._tts)
+
+    def _notice(self, plugin: Any) -> None:
+        """Keep a started provider's notice: a healthy report's `detail`,
+        such as the date its vendor will retire the model, which the
+        programs print once before they listen."""
+        health = read_health(plugin)
+        if health.ok and health.detail:
+            self.notices.append(health.detail)
 
     def _deaf_message(self) -> str:
         """Say what is wrong in the terms the person can act on.
@@ -908,7 +1175,7 @@ class ListenSession:
         layer could invent, so prefer it and fall back to naming the phrase.
         """
         detail = ""
-        health = self._wake.health()
+        health = read_health(self._wake)
         if not health.ok and health.detail:
             detail = f" {health.detail}"
         return (
@@ -918,14 +1185,11 @@ class ListenSession:
         )
 
     def _mute_message(self) -> str:
-        detail = ""
-        health = self._stt.health()
-        if not health.ok and health.detail:
-            detail = f" {health.detail}"
-        return (
-            f"the speech recognition provider {self.stt_name!r} cannot start, so "
-            f"what people say would go nowhere. It will not run half-deaf.{detail}"
-        )
+        """The transcriber's refusal, the same words whatever its fault:
+        the table's row for one out of credit at boot."""
+        health = read_health(self._stt)
+        detail = (health.detail or "") if not health.ok else ""
+        return row("stt-out-of-credit-at-boot").text("emet-talk", name=self.stt_name, detail=detail)
 
     async def stop(self) -> None:
         """Safe to call twice, and safe if `start()` raised part way through.
@@ -962,7 +1226,7 @@ class ListenSession:
 
         if self._mouth is not None:
             await step("the mouth", self._mouth.hush, counts=False)
-        if self._actor is not None and self._sink is not None:
+        if self._actor is not None and self._sink is not None and self._booted_aloud:
             await step("the muted signal", self._muted, counts=False)
         self._actor = None
         self._mouth = None
@@ -1032,10 +1296,11 @@ class ListenSession:
     async def say(self, pcm: bytes) -> None:
         """Play mono int16 audio at the sink's rate.
 
-        The whole of Emet's output side for now. 0.4 puts speech synthesis in
-        front of it; nothing below this line needs to change when it does,
-        which is the point of the sink being a discovered contract rather than
-        a speaker this module imported.
+        Raw audio straight to the sink: the boot and listening tones, and
+        `emet-listen --echo`. Speech reaches the same sink through the mouth,
+        which puts the voice in front of it, and nothing below this line
+        changed when the voice arrived. That is the point of the sink being
+        a discovered contract rather than a speaker this module imported.
         """
         if self._sink is None:
             raise EngineError("session was not started")
@@ -1082,6 +1347,8 @@ class ListenSession:
                 await self._utter(sentence)
             spoken = await self._mouth.finish()
             self._count_playback(spoken)
+            if self._turn is not None:
+                _count_voice(self._turn, spoken)
             return spoken
         except BaseException:
             await self._mouth.hush()
@@ -1113,6 +1380,8 @@ class ListenSession:
             with Stopwatch() as watch:
                 event = await self._wake.process(frame)
             self._record(watch.elapsed_ms)
+            if self.on_frame is not None:
+                self.on_frame(_frame_level(frame), None, None)
             if await self._own_tail(event):
                 event = None
             if event is not None:
@@ -1131,7 +1400,9 @@ class ListenSession:
         The transcriber, when there is one, is fed every frame after the wake,
         lead-in silence included. So a quiet speaker the energy detector missed
         is still transcribed, and a false wake costs a provider a few seconds
-        of silence. Its final transcript rides on the utterance.
+        of silence. Its final transcript rides on the utterance. While the
+        chat model cannot answer (`chat_unavailable`) it is fed nothing, and
+        the utterance carries no transcript.
 
         Before those frames it is fed what the wake engine had already heard
         after the phrase ended (`WakeEvent.lag_ms`): a detector fires a moment
@@ -1156,6 +1427,9 @@ class ListenSession:
 
         endpointer: Endpointer | None = None
         pending: WakeEvent | None = None
+        # Whether this turn's frames go to the transcriber: there is one,
+        # and the chat model can answer what it would write down.
+        feeding = False
         # The last frames the wake engine heard, for the words said with the
         # name. Only kept when there is a transcriber to hand them to.
         recent: deque[bytes] = deque(maxlen=math.ceil(MAX_WAKE_LAG_MS / self.format.frame_ms) + 1)
@@ -1170,16 +1444,16 @@ class ListenSession:
                     # rather than dropping it: a truncated question is still
                     # more useful than silence. It is a turn like any other.
                     closed = endpointer.close()
-                    self.stats.turns += 1
-                    if closed.extended:
-                        self.stats.extended += 1
-                    yield pending, await self._transcribed(closed)
+                    self._end_of_turn(closed)
+                    yield pending, await self._transcribed(closed, fed=feeding)
                 return
 
             if endpointer is None:
                 with Stopwatch() as watch:
                     event = await self._wake.process(frame)
                 self._record(watch.elapsed_ms)
+                if self.on_frame is not None:
+                    self.on_frame(_frame_level(frame), None, None)
                 if self._stt is not None:
                     recent.append(frame)
                 if await self._own_tail(event):
@@ -1189,15 +1463,25 @@ class ListenSession:
                     await self._wake.reset()
                     pending = event
                     self._latest_partial = ""
+                    # A wake no model can answer is answered at its endpoint
+                    # with the unavailable line, and nothing of it is sent:
+                    # no transcription is spent on a question with nowhere
+                    # to go (0.5.7-D4). The endpointer then judges by energy
+                    # alone, as it does with no transcriber.
+                    self._turn_unavailable = self.chat_unavailable is not None
+                    feeding = self._stt is not None and not self._turn_unavailable
+                    # A turn nobody finished is over once the next wake comes.
+                    self._turn = None
+                    self._turn_stt_bytes = 0
                     endpointer = Endpointer(
                         self.format,
                         patience_ms=self.patience_ms,
-                        extend_if=self._extend_if if self.extend_on_incomplete and self._stt is not None else None,
-                        words=self._words_so_far if self._stt is not None else None,
+                        extend_if=self._extend_if if self.extend_on_incomplete and feeding else None,
+                        words=self._words_so_far if feeding else None,
                     )
                     if self.on_wake is not None:
                         self.on_wake(event)
-                    if self._stt is not None:
+                    if feeding:
                         frames, name = cut_before_the_question(event.lag_ms, recent, self.format)
                         if frames:
                             record = handover_record(event.lag_ms, recent, self.format, name)
@@ -1205,8 +1489,9 @@ class ListenSession:
                             if self.on_handover is not None:
                                 self.on_handover(record)
                         for before in frames:
+                            self._turn_stt_bytes += len(before)
                             self._heard(await self._stt.feed(before))
-                        recent.clear()
+                    recent.clear()
                     await self._listening(endpointer)
                 continue
 
@@ -1216,19 +1501,28 @@ class ListenSession:
             partial: Transcript | None = None
             with Stopwatch() as watch:
                 utterance = endpointer.feed(frame)
-                if self._stt is not None:
+                if feeding:
                     # Inside the timing on purpose. A provider that blocks
                     # here on the network is loop cost, and the budget line
                     # should say so rather than flatter it.
+                    self._turn_stt_bytes += len(frame)
                     partial = await self._stt.feed(frame)
             self._record(watch.elapsed_ms)
             self._heard(partial)
+            if self.on_frame is not None:
+                # Read after the frame was judged, so the quiet is the count
+                # the patience was just held against. The endpointer forgets
+                # a turn as it ends it, so the last frame reads the turn's
+                # own figures.
+                if utterance is None:
+                    so_far = (endpointer.speech_ms, endpointer.quiet_ms)
+                else:
+                    so_far = (utterance.duration_ms, utterance.tail_ms or 0.0)
+                self.on_frame(_frame_level(frame), *so_far)
             if utterance is not None:
                 assert pending is not None
-                self.stats.turns += 1
-                if utterance.extended:
-                    self.stats.extended += 1
-                yield pending, await self._transcribed(utterance)
+                self._end_of_turn(utterance)
+                yield pending, await self._transcribed(utterance, fed=feeding)
                 endpointer = None
                 pending = None
 
@@ -1356,31 +1650,79 @@ class ListenSession:
             self.on_partial(partial)
 
     def _words_so_far(self) -> str:
-        """The endpointer's other question: what has the transcriber heard?"""
+        """Answer the endpointer's other question, what the transcriber has heard."""
         return self._latest_partial
 
     def _extend_if(self) -> bool:
-        """The endpointer's question: do the words so far look unfinished?"""
+        """Answer the endpointer's question, whether the words so far look unfinished."""
         if not looks_incomplete(self._latest_partial):
             return False
         if self.on_extended is not None:
             self.on_extended(self._latest_partial)
         return True
 
-    async def _transcribed(self, utterance: Utterance) -> Utterance:
+    def _end_of_turn(self, utterance: Utterance) -> None:
+        """The endpoint: count the turn and open its record.
+
+        The record is appended to `stats` now and filled in place as the
+        turn goes on: the final, the reply, the first sound, what each
+        stage was sent. Its hosts are the descriptors' of the stages that
+        run, so a stage that sent nothing this turn names its host and an
+        amount of 0.
+        """
+        assert self.format is not None
+        self.stats.turns += 1
+        if utterance.extended:
+            self.stats.extended += 1
+        stt = self.stt_descriptor if self._stt is not None else None
+        llm = self.llm_descriptor if self._llm is not None else None
+        tts = self.tts_descriptor if self._tts is not None else None
+        record = TurnRecord(
+            turn=self.stats.turns,
+            outcome="not_answered",
+            tail_ms=utterance.tail_ms,
+            final_ms=None,
+            reply_first_ms=None,
+            voice_first_ms=None,
+            input_tokens=None,
+            output_tokens=None,
+            stt_audio_s=self._turn_stt_bytes / (2 * self.format.sample_rate),
+            stt_host=stt.host if stt is not None else None,
+            llm_chars=0,
+            llm_host=llm.host if llm is not None else None,
+            voice_chars=0,
+            voice_host=tts.host if tts is not None else None,
+            sentences=0,
+            cleaned=0,
+        )
+        self.stats.record_turn(record)
+        self._turn = record
+        self._turn_mark = time.perf_counter()
+
+    @property
+    def last_turn(self) -> TurnRecord | None:
+        """The newest turn's record, or None before the first endpoint."""
+        records = self.stats.turn_records
+        return records[-1] if records else None
+
+    async def _transcribed(self, utterance: Utterance, *, fed: bool = True) -> Utterance:
         """Close the transcriber's utterance and attach what it heard.
 
         Timed, and kept apart from the per-frame budget: this is the wait
         between the person stopping and the words existing, which is the
-        first latency 0.4 has to answer for.
+        first latency 0.4 had to answer for.
 
         The microphone is not read while this waits, the same as during a
         reply, so frames dropped meanwhile are the loop's own choice and are
         charged as such. A provider that took five seconds to send a final
         on the reference body cost 37 frames, and the verdict blamed the
         listening loop for them.
+
+        A turn whose frames were never `fed` (a wake while the chat model
+        cannot answer) asks the transcriber for nothing, and its utterance
+        carries no transcript.
         """
-        if self._stt is None:
+        if self._stt is None or not fed:
             return utterance
         before = self.dropped
         try:
@@ -1389,6 +1731,9 @@ class ListenSession:
         finally:
             self._charge_busy(before)
         self.stats.record_final(watch.elapsed_ms)
+        if self._turn is not None:
+            self._turn.final_ms = watch.elapsed_ms
+        self._turn_mark = time.perf_counter()
         return replace(utterance, transcript=final)
 
     # --------------------------------------------------------------- answer
@@ -1410,9 +1755,22 @@ class ListenSession:
         """
         if self._llm is None:
             raise EngineError("the language model was not started; construct the session with reply=True")
+        if self.chat_unavailable is not None:
+            # Nothing is sent to a model that cannot answer: the reply is
+            # the model's own sentence, as an error, and the words stay out
+            # of the conversation.
+            yield ReplyDone(text="", stop_reason="error", error=self.chat_unavailable)
+            return
         await self._signal("thinking")
         self.conversation.add_user(text)
-        prompt = self.conversation.prompt(self.system_prompt, max_tokens=DEFAULT_MAX_TOKENS)
+        prompt = self.conversation.prompt(self.system_prompt, max_tokens=self.reply_cap)
+        turn = self._turn
+        if turn is not None:
+            # What is handed to the model, counted as the model is shown it:
+            # the system prompt and every message that rides along. Counted
+            # before the plugin connects, since the engine cannot see the
+            # socket, so a request that never left the body still counts.
+            turn.llm_chars += len(prompt.system) + sum(len(m.content) for m in prompt.messages)
 
         before = self.dropped
         first_ms: float | None = None
@@ -1424,8 +1782,12 @@ class ListenSession:
                     if isinstance(event, ReplyDone):
                         if event.stop_reason != "error" and event.text.strip():
                             self.conversation.add_assistant(event.text.strip())
+                        if turn is not None:
+                            _count_tokens(turn, event)
                     yield event
             self.stats.record_reply(first_ms, watch.elapsed_ms)
+            if turn is not None and turn.reply_first_ms is None:
+                turn.reply_first_ms = first_ms
         finally:
             self._charge_busy(before)
 
@@ -1585,6 +1947,14 @@ class ListenSession:
             spoken=sum(1 for s in heard if s.from_reply),
             lost=sum(1 for s in spoken if not s.ok and s.from_reply),
         )
+        turn = self._turn
+        if turn is not None:
+            _count_voice(turn, spoken)
+            written = [s for s in spoken if s.from_reply]
+            turn.sentences += len(written)
+            turn.cleaned += sum(1 for s in written if s.cleaned)
+            if heard and turn.voice_first_ms is None:
+                turn.voice_first_ms = first_ms
         self._charge_busy(after_reply)
 
     @property
@@ -1604,14 +1974,16 @@ class ListenSession:
         at a time, until the source ends.
 
         Every stage has to be up, which `start()` guarantees when the session
-        was built with `transcribe`, `reply` and `speak` all on. A turn with
-        no words in it (a false wake, a cough) gets the soul's
+        was built with `transcribe`, `reply` and `speak` all on. Each turn
+        ends in `finish_turn()`, which says the line it calls for: a turn
+        with no words in it (a false wake, a cough) gets the soul's
         `nothing_heard` line, or silence; a turn whose words never arrived
-        because the transcriber could not reach its service gets the `failed`
-        line instead, because somebody spoke and deserves an answer. A reply
-        the provider declined or the network broke gets the soul's `declined`
-        or `failed` line after whatever was heard, so the robot fails loudly
-        and in its own voice.
+        gets the `failed` line, because somebody spoke and deserves an
+        answer; a reply the provider declined, a network broke or the token
+        cap emptied gets the soul's `declined` or `failed` line after
+        whatever was heard, so the robot fails loudly and in its own voice.
+        An unpaid account and a chat model that cannot answer get the
+        engine's own two lines, which ask for nothing a retry could fix.
 
         `on_said` fires with the final transcript before the reply begins;
         `on_delta` with each piece of the reply's text as it streams, tags
@@ -1625,19 +1997,12 @@ class ListenSession:
         async for wake, utterance in self.turns():
             transcript = utterance.transcript
             text = transcript.text.strip() if transcript else ""
-            if not text:
+            if self._turn_unavailable or not text:
                 # A cough and a dead speech service both arrive here as no
-                # words. They are different events to the person in the room:
-                # one of them spoke. So a transcript that says why the words
-                # are missing gets the failure line, and a plain empty one
-                # keeps the old silence.
-                broke = transcript is not None and transcript.error is not None
-                if broke:
-                    spoken, line = await self._say_failure()
-                else:
-                    line = self.lines.get("nothing_heard")
-                    spoken = await self.speak_text(line) if line else []
-                yield Exchange(wake, utterance, None, tuple(spoken), line, ())
+                # words, and so does every wake no model can answer.
+                # `finish_turn` tells them apart.
+                end = await self.finish_turn(utterance, None)
+                yield self._exchange(wake, utterance, None, (), (), end)
                 continue
             if on_said is not None:
                 on_said(text)
@@ -1647,33 +2012,186 @@ class ListenSession:
                     on_delta(event.text)
                 elif isinstance(event, ReplyDone):
                     done = event
-            spoken = list(self.last_spoken)
+            spoken = tuple(self.last_spoken)
             intents = tuple(self.last_intents)
-            line: str | None = None
-            if done is not None and done.stop_reason == "refusal":
-                line = self.lines.get("declined")
-                if line:
-                    spoken += await self.speak_text(line)
-            elif done is not None and done.stop_reason == "error":
-                more, line = await self._say_failure()
-                spoken += more
-            yield Exchange(wake, utterance, done, tuple(spoken), line, intents)
+            end = await self.finish_turn(utterance, done)
+            yield self._exchange(wake, utterance, done, spoken, intents, end)
 
-    async def _say_failure(self) -> tuple[list[SpokenSentence], str | None]:
-        """A provider's words or reply did not arrive: `signal.offline`, and
-        the soul's `failed` line, said once.
+    def _exchange(
+        self,
+        wake: WakeEvent,
+        utterance: Utterance,
+        reply: ReplyDone | None,
+        spoken: tuple[SpokenSentence, ...],
+        intents: tuple[Intent, ...],
+        end: TurnEnd,
+    ) -> Exchange:
+        """One exchange of `talk()`, with what `finish_turn` decided."""
+        return Exchange(
+            wake,
+            utterance,
+            reply,
+            spoken + end.spoken,
+            end.line,
+            intents,
+            outcome=end.outcome,
+            failure=end.failure,
+            record=self.last_turn,
+        )
 
-        On a body with nothing else to show it with, the signal's voice rung
-        is `explain`, whose words for `offline` are the soul's `failed`
-        line, and saying it is the whole of both. Where a status light shows
-        the state instead, the words are still owed to the person who asked,
-        and are said after it. Returns what was heard and the line.
+    async def finish_turn(self, utterance: Utterance, reply: ReplyDone | None) -> TurnEnd:
+        """End one turn: name how it ended, and say what that calls for.
+
+        Called once a turn, by `talk()` and by `emet-listen`: after the
+        reply; after the final when no reply was asked; at the endpoint for
+        a wake no model can answer. `reply` is the reply's `ReplyDone`, or
+        None when no model was asked.
+
+        The outcome is read from what happened, in this order: a wake while
+        the chat model could not answer is `unavailable`, with nothing sent;
+        a turn no transcriber listened to is `not_answered` after speech and
+        `no_speech` after none; a final that carried an error and no words
+        is `words_lost`, or `out_of_credit`; an empty final is
+        `nothing_heard` after speech and `no_speech` after none; words with
+        no reply asked are `not_answered`; then the reply's stop: an error
+        is `failed`, `unavailable` or `out_of_credit`, a stop at the token
+        cap is `cut_at_cap`, or `empty_at_cap` with no word the person would
+        hear (only a tag, say), a refusal is `declined`, and anything else
+        is `answered`.
+
+        After an error stop the fault is read from that stage's own
+        `health()`, through `read_health`: `model_unavailable` when its
+        faults name it, else `out_of_credit` when they name that, else none.
+        No message's wording is read. The four facts pick the row of
+        `emet_engine.failures`, and the row alone says which signal is
+        performed and which line is said. A reply that finds the model
+        unavailable sets `chat_unavailable`, so every wake after it gets the
+        unavailable line with nothing sent.
+
+        Lines are said only when the session was built with `speak=True`;
+        without a voice the row's signal is still performed, and its
+        hardware rungs act. A turn with no row keeps the lines it always
+        had: the soul's `declined` after a refusal, and its `nothing_heard`,
+        which is silence by default, after no words.
+
+        The turn's record (`last_turn`) takes the outcome, the first sound
+        of a line said with no reply before it, and what the voice was
+        handed. The turn is over when this returns.
         """
-        performed = await self._signal("offline")
-        if performed is not None and performed.said:
+        outcome, when, stage, fault = self._judge(utterance, reply)
+        failure = find(when, stage, outcome, fault) if stage is not None else None
+        if outcome == "unavailable" and when == "during":
+            health = read_health(self._llm) if self._llm is not None else Health()
+            self.chat_unavailable = health.detail or (reply.error if reply is not None else None) or (
+                "The provider gave no reason."
+            )
+        turn = self._turn
+        if turn is not None:
+            turn.outcome = outcome
+        spoken, line = await self._say_line(*_line_of(outcome, failure))
+        self._turn = None
+        return TurnEnd(outcome=outcome, failure=failure, line=line, spoken=tuple(spoken))
+
+    def _judge(
+        self, utterance: Utterance, reply: ReplyDone | None
+    ) -> tuple[str, str, str | None, str | None]:
+        """A turn's outcome, and the `when`, `stage` and `fault` that find
+        its failure row; `stage` is None for a turn with none to find."""
+        if self._turn_unavailable and utterance.had_speech:
+            # A wake with nobody speaking is a false wake, and a false wake
+            # is silent (the soul's settled rule), so it takes the no-speech
+            # path below and the unavailable line is kept for a question.
+            return "unavailable", "before", "llm", "model_unavailable"
+        transcript = utterance.transcript
+        if transcript is None:
+            # No transcriber listened (`emet-listen` without `--transcribe`),
+            # so nothing can be said of the words and no model was asked.
+            return ("not_answered" if utterance.had_speech else "no_speech"), "during", None, None
+        if not transcript.text.strip():
+            if transcript.error is not None:
+                fault = self._fault_of(self._stt)
+                return ("out_of_credit" if fault == "out_of_credit" else "words_lost"), "during", "stt", fault
+            return ("nothing_heard" if utterance.had_speech else "no_speech"), "during", None, None
+        if reply is None:
+            return "not_answered", "during", None, None
+        return self._judge_reply(reply)
+
+    def _judge_reply(self, reply: ReplyDone) -> tuple[str, str, str | None, str | None]:
+        """The outcome of a turn whose model was asked, read from the reply's
+        stop and, after an error stop, from the fault the model's report names."""
+        if reply.stop_reason == "error":
+            fault = self._fault_of(self._llm)
+            return _ERROR_OUTCOMES.get(fault or "", "failed"), "during", "llm", fault
+        if reply.stop_reason == "length":
+            # Words as the person would hear them: a reply that wrote only a
+            # tag, or only marks the cleaning empties, stopped with none.
+            return ("cut_at_cap" if _has_words(reply.text) else "empty_at_cap"), "during", "llm", None
+        if reply.stop_reason == "refusal":
+            return "declined", "during", None, None
+        return "answered", "during", None, None
+
+    @staticmethod
+    def _fault_of(plugin: Any) -> str | None:
+        """The fault kind a stage's own report names after an error stop:
+        `model_unavailable`, else `out_of_credit`, else None."""
+        if plugin is None:
+            return None
+        faults = read_health(plugin).faults
+        for kind in ("model_unavailable", "out_of_credit"):
+            if kind in faults:
+                return kind
+        return None
+
+    async def _say_line(self, key: str | None, signal_name: str | None) -> tuple[list[SpokenSentence], str | None]:
+        """Perform `signal_name` and say the line `key` names, once.
+
+        On a body with nothing else to show it with, a signal's voice rung
+        is `explain`, whose words are the line (the soul's `failed` line for
+        `offline`, the engine's unavailable line for `unavailable`), and
+        saying it is the whole of both. Where a status light shows the state
+        instead, the words are still owed to the person who asked, and are
+        said after it. With no signal the line is said on its own. Without
+        a voice nothing is said and the signal's other rungs still act.
+        Returns what was heard and the line, which is None when nothing was
+        said.
+        """
+        mouth = self._mouth
+        if mouth is None:
+            if signal_name is not None:
+                await self._signal(signal_name)
+            return [], None
+        first: list[float] = []
+        earlier = mouth.on_first_audio
+        mouth.on_first_audio = lambda: first.append(time.perf_counter())
+        try:
+            spoken, line = await self._signal_and_line(key, signal_name)
+        finally:
+            mouth.on_first_audio = earlier
+        self._time_the_line(spoken, first[0] if first else None)
+        return spoken, line
+
+    async def _signal_and_line(
+        self, key: str | None, signal_name: str | None
+    ) -> tuple[list[SpokenSentence], str | None]:
+        """Perform the signal, and say the line when its voice rung did not."""
+        performed = await self._signal(signal_name) if signal_name is not None else None
+        if performed is not None and performed.outcome == "done" and performed.said:
             return list(performed.spoken), performed.said
-        line = self.lines.get("failed")
-        return (await self.speak_text(line) if line else []), line
+        if key is not None and self.lines.get(key):
+            line = self.lines[key]
+            return await self.speak_text(line), line
+        return [], None
+
+    def _time_the_line(self, spoken: Sequence[SpokenSentence], first: float | None) -> None:
+        """A line with no reply before it: its first sound, by the performance
+        counter, is the turn's, counted from the mark the final transcript
+        set, or the endpoint's when no transcriber ran."""
+        turn = self._turn
+        heard = any(s.ok and s.audio_bytes for s in spoken)
+        if turn is None or not heard or first is None or self._turn_mark is None:
+            return
+        if turn.voice_first_ms is None:
+            turn.voice_first_ms = (first - self._turn_mark) * 1000.0
 
     def _charge_busy(self, dropped_before: int) -> None:
         """Attribute frames dropped during `say()` or `answer()` to the loop's

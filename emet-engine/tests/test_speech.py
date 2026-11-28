@@ -1,22 +1,32 @@
 """Speaking a reply as it is written.
 
-Three things are proved here without a model, a voice or a speaker: that
+Four things are proved here without a model, a voice or a speaker: that
 sentences are found in a stream of deltas where a person would end them,
-that the mouth plays them in order while the next is still being made, and
-that a sentence the voice loses is one sentence lost and not the turn.
+that the mouth plays them in order while the next is still being made, that
+a sentence the voice loses is one sentence lost and not the turn, and that
+the voice is handed only what a person would say aloud while the
+conversation keeps what the model wrote.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
+import json
+import logging
+import wave
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from emet_sdk.plugin import PluginError, VoicePlugin
-from emet_sdk.types import VoiceDescriptor
+from emet_sdk.types import TextDelta, VoiceDescriptor
+from emet_sdk.validate import load_yaml
 
-from emet_engine.speech import Mouth, Sentences, split_sentences, speak_stream
+from emet_engine.intent_tags import IntentTags
+from emet_engine.speech import Mouth, Sentences, SpokenSentence, speakable, split_sentences, speak_stream
 
 
 def run(coro):
@@ -455,3 +465,379 @@ def test_hush_while_speaking_still_cancels_the_sink():
 
     run(scenario())
     assert sink.cancelled == 1
+
+
+# ------------------------------------------------------- what the voice hears
+
+#: The thirty fixed strings of BVS1's first stage, word for word, in its
+#: order (`releases/v0.5.7/evidence/B1/bvs1-strings.json`, outside this
+#: repository, written 2026-11-27 14:03 PST by the evidence stream). Escaped
+#: so this file stays ASCII. The digest below is that file's, so a copy that
+#: drifts from the evidence fails here.
+BVS1_STRINGS: tuple[tuple[str, str, str], ...] = (
+    ("md-bold", "That is **really** important.", "markdown"),
+    ("md-italic", "I think it's *probably* fine.", "markdown"),
+    ("md-heading", "## Today's plan\nWe start with the timer.", "markdown"),
+    ("md-code", "Run `emet-talk --stats` to see the timings.", "markdown"),
+    ("md-link", "See [the guide](https://example.com/guide) for more.", "markdown"),
+    ("bullet-dash", "Three things:\n- eggs\n- milk\n- bread", "bullet"),
+    ("bullet-star", "* First, wake me.\n* Then ask.", "bullet"),
+    ("bullet-numbered", "1. Turn left.\n2. Stop.", "bullet"),
+    ("emoji-end", "Good morning! \U0001f60a", "emoji"),
+    ("emoji-mid", "I love that \U0001f389 idea.", "emoji"),
+    ("emoji-zwj", "Your family \U0001f468\u200d\U0001f469\u200d\U0001f467 sounds lovely.", "emoji"),
+    ("emoji-vs16", "Thanks \u2764\ufe0f so much.", "emoji"),
+    ("link-raw", "The page is https://www.example.com/a/b?c=1 today.", "link"),
+    ("link-domain", "Look at example.org for the details.", "link"),
+    ("link-email", "Write to someone@example.com today.", "link"),
+    ("time-12h", "The timer ends at 3:45 PM.", "time"),
+    ("time-24h", "We leave at 14:30.", "time"),
+    ("time-duration", "That took 1h 20m.", "time"),
+    ("unit-temp", "It is 21\xb0C outside, about 70\xb0F.", "unit"),
+    ("unit-distance", "The park is 2.5 km away, or 1.6 mi.", "unit"),
+    ("unit-mass", "Add 250 g of flour and 5 ml of milk.", "unit"),
+    ("money-dollar", "It costs $4.99.", "money"),
+    ("money-million", "They raised $1.2M last year.", "money"),
+    ("money-euro-pound", "That is \u20ac20, or \xa317.50.", "money"),
+    ("abbrev-titles", "Dr. Smith lives on Elm St. near the U.S. border.", "abbreviation"),
+    ("abbrev-latin", "Bring hats, scarves, etc., e.g. the red one.", "abbreviation"),
+    ("number-large", "There are 1,234,567 stars in that patch.", "number"),
+    ("number-ordinal-percent", "You came 2nd with 87.5% of the vote.", "number"),
+    ("number-date", "It runs from 2026-11-27 to 12/03.", "number"),
+    ("mixed-reply", "**Sure!** Here's a quick list:\n\n1. **Eggs** \U0001f95a\n2. Milk, about $3.", "mixed"),
+)
+BVS1_SHA256 = "6dca24d95de352e5c40b82536e601fa1e4e0e81f6a481b0ac47a6c75a451d487"
+
+#: What the voice is asked for, string by string, where the pass changes
+#: something or the splitter does. An emptied sentence is absent here: the
+#: voice is never asked for it. The list's dashes stay, because
+#: `Sentences.flush()` has joined its lines and a dash inside a line is
+#: punctuation (the evidence heard the voice pass over it); its numbered
+#: sibling keeps its numbers.
+HEARD: dict[str, list[str]] = {
+    "md-bold": ["That is really important."],
+    "md-italic": ["I think it's probably fine."],
+    "md-heading": ["Today's plan We start with the timer."],
+    "md-code": ["Run emet-talk --stats to see the timings."],
+    "md-link": ["See the guide for more."],
+    "bullet-dash": ["Three things: - eggs - milk - bread"],
+    "bullet-star": ["First, wake me.", "Then ask."],
+    "bullet-numbered": ["1. Turn left.", "2. Stop."],
+    "emoji-end": ["Good morning!"],
+    "emoji-mid": ["I love that idea."],
+    "emoji-zwj": ["Your family sounds lovely."],
+    "emoji-vs16": ["Thanks so much."],
+    "link-raw": ["The page is example.com today."],
+    "mixed-reply": ["Sure! Here's a quick list: 1. Eggs 2. Milk, about $3."],
+}
+
+#: The strings the pass changes, of the sixteen with a marker, an emoji or a
+#: link. `bullet-dash` and `bullet-numbered` reach the voice as written.
+CHANGED = {
+    "md-bold", "md-italic", "md-heading", "md-code", "md-link", "bullet-star", "emoji-end",
+    "emoji-mid", "emoji-zwj", "emoji-vs16", "link-raw", "mixed-reply",
+}
+
+
+def through_the_engine(text: str) -> tuple[list[str], list[SpokenSentence]]:
+    """One reply, as a single delta, down the path `answer_aloud()` takes:
+    the tag lifter, the splitter, then the mouth. Returns what the voice was
+    asked for and what the mouth reports."""
+    voice = _Voice()
+    mouth = Mouth(voice, _Sink())
+
+    async def scenario():
+        tags, sentences = IntentTags(), Sentences()
+        mouth.open()
+        for piece in tags.pieces(text):
+            if isinstance(piece, str):
+                for sentence in sentences.feed(piece):
+                    await mouth.say(sentence)
+        for sentence in sentences.feed(tags.flush()):
+            await mouth.say(sentence)
+        rest = sentences.flush()
+        if rest:
+            await mouth.say(rest)
+        return await mouth.finish()
+
+    spoken = run(scenario())
+    return voice.asked, spoken
+
+
+def test_the_thirty_strings_are_the_evidence_streams_word_for_word():
+    as_written = [{"id": i, "text": t, "kind": k} for i, t, k in BVS1_STRINGS]
+    file_bytes = (json.dumps(as_written, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    assert hashlib.sha256(file_bytes).hexdigest() == BVS1_SHA256
+    assert len(BVS1_STRINGS) == 30 and set(HEARD) | CHANGED <= {i for i, _, _ in BVS1_STRINGS}
+
+
+@pytest.mark.parametrize(("key", "text"), [(i, t) for i, t, _ in BVS1_STRINGS], ids=[i for i, _, _ in BVS1_STRINGS])
+def test_each_of_the_thirty_strings_reaches_the_voice_as_a_person_would_say_it(key, text):
+    asked, spoken = through_the_engine(text)
+    assert asked == HEARD.get(key, [text])
+    assert any(s.cleaned for s in spoken) == (key in CHANGED)
+    for s in spoken:
+        assert s.ok and (s.audio_bytes > 0) == bool(s.text), s
+        assert "*" not in s.text and "`" not in s.text and "#" not in s.text and "://" not in s.text
+
+
+def test_a_string_with_nothing_to_remove_comes_back_as_the_same_object():
+    """The fourteen strings with no marker, emoji or link, and the voice
+    rung's fillers, are passed on exactly as written."""
+    for key, text, _ in BVS1_STRINGS:
+        if key not in HEARD:
+            assert speakable(text) is text, key
+
+
+@pytest.mark.parametrize(
+    ("written", "said"),
+    [
+        # emphasis, nested, struck through, and the marks that are no emphasis
+        ("A ***very*** big **bold *and italic* step**.", "A very big bold and italic step."),
+        ("This is _quite_ __plain__ now.", "This is quite plain now."),
+        ("~~Old~~ new plan.", "Old new plan."),
+        ("Call snake_case_name and 5*3*2 by name.", "Call snake_case_name and 5*3*2 by name."),
+        # headings, quotes, bullets and rules, at a line's start and joined
+        ("### Next steps", "Next steps"),
+        ("Done. ## Next", "Done. Next"),
+        ("> Quoted words.", "Quoted words."),
+        ("Three things: * eggs * milk", "Three things: eggs milk"),
+        ("Steps:\n* one\n* two", "Steps: one two"),
+        ("Intro text ## Section two", "Intro text Section two"),
+        ("# Title", "Title"),
+        ("\u2022 one \u2022 two", "one two"),
+        ("Lists:\n- one\n+ two", "Lists: one two"),
+        ("Above\n---\nbelow.", "Above below."),
+        # code
+        ("```python print(1) ```", "print(1)"),
+        ("Press ``ctrl`` now.", "Press ctrl now."),
+        # links, images and URLs
+        ("See [https://example.com/x](https://example.com/x) now.", "See example.com now."),
+        ("See [](https://www.example.com) now.", "See example.com now."),
+        ('Read [the notes](https://example.com/n "Notes") first.', "Read the notes first."),
+        ("![a red door](https://example.com/door.png)", "a red door"),
+        ("Go to <https://example.com/start>.", "Go to example.com."),
+        ("Try https://user:pw@Example.COM:8080/x?y=1, then rest.", "Try example.com, then rest."),
+        ("Visit www.example.com/a, then rest.", "Visit example.com, then rest."),
+        ("The docs (https://example.com/docs) say so.", "The docs (example.com) say so."),
+        ("Open ftp://files.example.net/a.txt please.", "Open files.example.net please."),
+        # emoji: a flag, a skin tone, a keycap, a picture made by its selector
+        ("Bonjour \U0001f1eb\U0001f1f7 Paris.", "Bonjour Paris."),
+        ("Nice \U0001f44d\U0001f3fd work.", "Nice work."),
+        ("\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f Go.", "Go."),
+        ("Step 1\ufe0f\u20e3 is first.", "Step 1 is first."),
+        ("Press #\ufe0f\u20e3 to end.", "Press to end."),
+        ("Made \u00a9\ufe0f 2026.", "Made 2026."),
+        ("Done \u2705, and \u2b50 for you!", "Done, and for you!"),
+        ("It is \u231a time \u23f3.", "It is time."),
+        ("\U0001f60a, hello there.", "hello there."),
+        # a stray selector after a digit takes the selector, and the digit stays
+        ("Version 2.0️ is out.", "Version 2.0 is out."),
+        # a tag written with words in its brackets (0.5.7's DL6, L51)
+        ("[I express.curiosity] That is a good question.", "That is a good question."),
+        ("[please move.approach now] Coming.", "Coming."),
+    ],
+)
+def test_markers_emoji_and_urls_come_out(written, said):
+    assert speakable(written) == said
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2 plus 2 is 4.",
+        "2 + 2 is 4, and 5 > 3.",
+        "It was late - very late - and cold.",
+        "Made \u00a9 2026, and it is the \u2122 of nobody.",
+        "Two  spaces and a\nline break stay.",
+        "Look at example.org, or write to someone@example.com.",
+        "C# and F# are languages, and #1 is first.",
+        "The Greek letter Ω and the arrow \u2192 stay.",
+        "...",
+        "hm?",
+        "Wait... then go.",
+        "[laughs] is lifted earlier, so a bracket alone is left.",
+        "Prices: $4.99, \u20ac20, \xa317.50, 21\xb0C.",
+        # a lone star or hash between words is said, as at 0.5.6
+        "What is 6 * 7? It is 42.",
+        "2 * 3 * 4 is 24.",
+        "Price: $5 * 2.",
+        "Press # then 1.",
+        "Use the * key.",
+        # A reply wrapped whole in brackets (0.5.7's DL6, L51) is left: it is
+        # no tag, and the reference voice says nothing for a bracket.
+        "[Sure, I can set a timer for ten minutes.]",
+    ],
+)
+def test_text_with_nothing_to_remove_is_left_exactly_as_written(text):
+    assert speakable(text) is text
+
+
+def test_the_local_models_two_bracket_shapes_reach_the_voice_as_ruled():
+    """DL6's two shapes (0.5.7, L51), down `answer_aloud()`'s path: a tag
+    with a word inside its brackets is never said, and a reply wrapped in
+    brackets is said as written."""
+    asked, spoken = through_the_engine("[I express.curiosity] That is a good question.")
+    assert asked == ["That is a good question."] and [s.cleaned for s in spoken] == [True]
+    asked, spoken = through_the_engine("[Sure, I can set a timer for ten minutes.]")
+    assert asked == ["[Sure, I can set a timer for ten minutes.]"] and [s.cleaned for s in spoken] == [False]
+
+
+def test_a_sentence_the_sink_loses_is_logged_at_info_since_the_console_prints_it(caplog):
+    """L16: the programs print each lost sentence with its reason, so the
+    mouth logs it at INFO and logging's last resort, which prints WARNING
+    and above, does not print it a second time."""
+
+    class _Gone(_Sink):
+        async def play(self, pcm: bytes) -> None:
+            raise OSError("the card is gone")
+
+    mouth = Mouth(_Voice(), _Gone())
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("Hello there.")
+        return await mouth.finish()
+
+    with caplog.at_level(logging.DEBUG, logger="emet_engine.speech"):
+        (spoken,) = run(scenario())
+    assert spoken.error == "playback failed: OSError: the card is gone"
+    records = [r for r in caplog.records if r.name == "emet_engine.speech"]
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (logging.INFO, "speaker: playback failed: OSError: the card is gone")
+    ]
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["\U0001f60a", "\U0001f60a\U0001f389.", "**!**", "---", "* * *", "[](https://)", "\u2764\ufe0f \u2b50"],
+)
+def test_a_sentence_with_nothing_left_to_say_is_emptied(written):
+    assert speakable(written) == ""
+
+
+@pytest.mark.parametrize("written", ["[" * 3000 + "](" * 3000, "*a " * 6000, "~~a " * 4000])
+def test_a_wall_of_unmatched_markers_is_read_in_well_under_a_second(written):
+    """The pass runs on the event loop for every sentence. Unbounded, the
+    link and emphasis patterns searched from every bracket or star to the
+    end of the text: the first case took 2.7 s on the laptop
+    (2026-11-27), and it takes milliseconds bounded."""
+    import time
+
+    start = time.perf_counter()
+    speakable(written)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_an_emptied_sentence_is_never_sent_and_keeps_its_place():
+    """`Good morning! [smile emoji]` is two sentences to the splitter. The
+    second is empty after the pass: the voice is never asked for it, and the
+    mouth reports it, in order, with no audio and `cleaned` set."""
+    voice, sink = _Voice(), _Sink()
+    heard: list[SpokenSentence] = []
+    firsts: list[str] = []
+    mouth = Mouth(voice, sink, on_spoken=heard.append, on_first_audio=lambda: firsts.append("first"))
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("\U0001f60a")
+        await mouth.say("Good **morning**!")
+        await mouth.say("\U0001f389", from_reply=False)
+        await mouth.say("Bye.")
+        return await mouth.finish()
+
+    spoken = run(scenario())
+    assert voice.asked == ["Good morning!", "Bye."]
+    assert [(s.text, s.cleaned, s.from_reply) for s in spoken] == [
+        ("", True, True),
+        ("Good morning!", True, True),
+        ("", True, False),
+        ("Bye.", False, True),
+    ]
+    assert spoken[0] == SpokenSentence(text="", audio_bytes=0, cleaned=True)
+    assert all(s.ok for s in spoken) and spoken[2].audio_bytes == 0
+    assert heard == spoken, "the callback hears every sentence, an emptied one included"
+    assert mouth.failures == [] and firsts == ["first"]
+
+
+def test_a_reply_of_emoji_alone_reaches_no_voice_and_no_sink():
+    voice, sink = _Voice(), _Sink()
+    firsts: list[str] = []
+    mouth = Mouth(voice, sink, on_first_audio=lambda: firsts.append("first"))
+
+    async def scenario():
+        mouth.open()
+        await mouth.say("\U0001f60a \U0001f389")
+        return await mouth.finish()
+
+    (spoken,) = run(scenario())
+    assert voice.asked == [] and sink.played == [] and firsts == []
+    assert spoken == SpokenSentence(text="", audio_bytes=0, cleaned=True)
+
+
+def test_a_voice_rungs_own_words_and_the_engines_lines_pass_through_untouched():
+    """The survey's rule for the voice rung: its own words ("hm?") are never
+    changed. Every filler in the shipped chains and every line the engine
+    can say has nothing to remove."""
+    from emet_sdk.resolve import load_chains
+
+    from emet_engine.prompting import DEFAULT_LINES
+
+    words = [line for line in DEFAULT_LINES.values() if line]
+    for chain in load_chains().values():
+        rung = getattr(chain, "voice_rung", None)
+        fillers = rung.params.get("filler") if rung is not None else None
+        words += [fillers] if isinstance(fillers, str) else list(fillers or [])
+    assert len(words) > 10
+    for said in words:
+        assert speakable(said) is said, said
+
+
+# ------------------------------------------- the history keeps the model's text
+
+EXAMPLES = Path(__file__).resolve().parents[2] / "emet-sdk" / "examples"
+
+
+def _talking(tmp_path: Path, reply: str):
+    """The bodiless body on the mocks, its ears on a second of quiet and its
+    mouth on the null sink, with the mock model scripted to `reply`."""
+    from emet_engine.session import ListenSession
+
+    wav = tmp_path / "quiet.wav"
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(bytes(32000))
+    manifest = copy.deepcopy(load_yaml(EXAMPLES / "bodiless.yaml"))
+    manifest["audio"]["input"] = {"source": "wav", "device": "file", "params": {"path": str(wav)}, "aec": "hardware"}
+    manifest["audio"]["output"] = {"sink": "null", "device": "none"}
+    manifest["audio"]["wake"] = {"engine": "mock", "params": {}}
+    manifest["models"] = {
+        "stt": {"provider": "mock"},
+        "chat": {"provider": "mock", "params": {"reply": reply}},
+        "tts": {"provider": "mock"},
+    }
+    soul = {"identity": {"name": "Emet", "wake_word": "hey emet"}}
+    return ListenSession(manifest, soul, transcribe=True, reply=True, speak=True)
+
+
+def test_the_conversation_keeps_the_models_text_and_only_the_voice_hears_it_cleaned(tmp_path):
+    written = "**Sure!** See https://www.example.com/a?b=1 today. \U0001f60a"
+    session = _talking(tmp_path, written)
+
+    async def scenario():
+        async with session:
+            events = [e async for e in session.answer_aloud("hello")]
+            return events, list(session.conversation.messages), list(session._tts.said), session.last_spoken
+
+    events, messages, said, spoken = run(scenario())
+    printed = "".join(e.text for e in events if isinstance(e, TextDelta))
+    assert printed == written, "what the person reads is what the model wrote"
+    assert (messages[-1].role, messages[-1].content) == ("assistant", written)
+    assert said == ["Sure! See example.com today."], "the emoji alone was never sent"
+    assert [(s.text, s.cleaned, s.from_reply) for s in spoken] == [
+        ("Sure! See example.com today.", True, True),
+        ("", True, True),
+    ]
+    assert spoken[0].audio_bytes > 0 and spoken[1].audio_bytes == 0

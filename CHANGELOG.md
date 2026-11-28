@@ -12,6 +12,302 @@ is one line per change. The evidence behind it, what was run and on which
 machine and what the numbers were, lives in the pull request the entry
 names, and GitHub keeps that beside the commit.
 
+## [0.5.7] - 2026-11-27
+
+Say plainly what failed, what it spent, and how long you waited.
+
+### Added
+- A robot whose chat model its vendor has retired or does not know boots
+  with a notice, and at the end of each wake's turn in which a person
+  spoke says "The part of me that thinks has been switched off. My owner
+  needs to choose another.", sending nothing to the transcriber or the
+  model; a false wake stays silent (#21)
+- A reply the vendor refuses because the account is out of credit is
+  answered aloud with "I can't answer right now. The account that pays for
+  my thinking has run out." (#21)
+- A reply that spends its whole token cap before any words, or writes only
+  a tag or marks the voice would not say, gets the soul's `failed` line,
+  where the robot said nothing (#21)
+- The voice says only what a person would say aloud: markdown markers and
+  emoji are removed before it speaks, a URL is read as its host, and a
+  sentence left with nothing to say is never sent; what is printed and what
+  the conversation keeps are the model's own words. A lone `*` or `#` is
+  dropped only where a bullet or a heading stands, so "6 * 7" and "the *
+  key" reach the voice as written, and a tag the model wrote with words
+  inside its brackets is lifted whole (#21)
+- A body that declares `aec: none`, or no `aec`, tells its model it cannot
+  hear anyone while it speaks, so a person has to wait until it finishes
+  (#21)
+- `signal.unavailable` and the `unavailable` explain topic, for a language
+  model the vendor has retired or does not know; its voice rung says the
+  engine's line whatever the soul's `failed` line is (#21)
+- `emet-say MANIFEST SOUL TEXT`, a third console script of `emet-engine`,
+  says a line in the soul's voice with no microphone, wake engine,
+  transcriber or language model, and performs the text's tags through the
+  voice rungs of their chains; a text with nothing left to say once its
+  marks are removed is refused with exit 2 (#21)
+- `emet-say --to FILE` writes what is said to a mono 16-bit WAV at the
+  voice's rate, whatever sink the manifest names (#21)
+- `emet-say --keys FILE` reads provider keys from a file as `emet-talk`
+  does, and `--chains FILE`, which may be repeated, lays a chain file over
+  the SDK's as `emet explain --chains` does (#21)
+- Each provider's boot line in `emet-listen` and `emet-talk` says where its
+  stage runs (`at` the host; `on this body` for Emet's own plugins that
+  send nothing; `where it sends is not stated` for another package's plugin
+  that names no address), the variable its key was read from, and the
+  installed package that offered the plugin (#21)
+- `--stats` ends each turn of `emet-listen` and `emet-talk` with a line: the
+  turn gap from the person's last loud frame to the robot's first sound with
+  the terms it adds up to, the tokens the replies counted, and what each
+  stage sent to which host off this machine; a model server on the body
+  sends nothing off it (#21)
+- The `--stats` footer prints the turn gap's median, mean and max, the
+  tokens, what the turns sent off the body, and how many sentences cleaning
+  changed, after `voice done` and before `clock` (#21)
+- Under `--stats` at a terminal, `emet-listen` and `emet-talk` draw a live
+  line, redrawn at most twice a second: the input level in dBFS, the
+  endpointer's state (`waiting for the name`, or the speech and the quiet
+  against the patience, twice it in an extended turn) and the last wake's
+  score and age, which
+  pocketsphinx gives as 1.00 for every wake. Every other line, warning and
+  traceback clears it first, and a run whose stdout is no terminal prints
+  nothing new (#21)
+- `--events PATH` on `emet-listen` and `emet-talk`, with `--stats`, writes a
+  header naming the format, its version, the four packages and the platform,
+  then one JSON record for each line `--stats` prints, numbers and verdicts
+  only and no word anybody said; without `--stats` it is refused with exit 2
+  (#21)
+- The events file's JSON Schema ships in the engine's wheel as
+  `emet_engine/schemas/events-1.schema.json`, and the wheel job fails an
+  engine wheel without it (#21)
+- `emet_engine.failures`, one table of the failure lines both programs
+  print, with the line the robot says and the signal it shows for each (#21)
+- `ListenSession.finish_turn()` ends every turn of `emet-listen` and
+  `emet-talk`. It names the turn's outcome, takes its line and its signal
+  from the failure table, and fills the turn's record (`last_turn`) (#21)
+- `emet_engine.metrics.TurnRecord`, one per turn on
+  `SessionStats.turn_records`, and `emet_engine.events`, which writes the
+  `--events` file (#21)
+- `ListenSession.on_frame` reports each frame's level and the turn's speech
+  and quiet so far, outside the per-frame timing (#21)
+- `Utterance.tail_ms` holds the quiet from the last loud frame to the
+  endpoint, the first part of the turn gap (#21)
+- `SpokenSentence.cleaned` says whether the voice was handed other text than
+  the model wrote (#21)
+- `FAULT_KINDS` and `FAULT_PREFIX` name the kinds `Health.faults` may hold,
+  ten with `model_unavailable` and `out_of_credit` new (#21)
+- The speech recognition, language model and voice descriptors carry
+  `endpoint` and `key_env`, and `host` gives the host and port with no
+  credentials. The Deepgram, OpenAI and Anthropic plugins report where they
+  send and the variable their key was read from, and Piper and the mocks
+  report that they run on the body. A plugin that sends anything off the
+  body sets both; one left None reads `where it sends is not stated` when
+  it comes from another package, and `--stats` counts nothing sent for it
+  (#21)
+- `PluginRegistry` keeps each plugin's distribution and version
+  (`PluginOrigin`, `origin()`, `from_entry_points()`) (#21)
+- The OpenAI plugin sends `models.chat.params.reasoning_effort` as
+  `reasoning_effort` when a body sets it, and the reference body's manifest
+  sets `low` for OpenAI and Anthropic alike (#21)
+- `models.chat.params.warm_up` makes the OpenAI plugin send one request of
+  one output token at boot, so a local server loads the model before the
+  first question; it is off by default (#21)
+- `emet-providers`' README has a recipe for litert-lm, Ollama and llama.cpp
+  behind the OpenAI plugin (#21)
+- `emet_providers/lifecycle.py` lists every default model with the dates its
+  vendor has given for retiring it, and `release_check.py` holds each
+  default model to its row with 180 days of runway, refusing a default
+  model or a soul stage it cannot read (#21)
+- The Deepgram transcriber and voice name an unpaid account (HTTP 402) as
+  `out_of_credit` and a model the project cannot use (HTTP 403
+  `INSUFFICIENT_PERMISSIONS`) as `model_unavailable`, at boot and mid-run,
+  each in one sentence that says what to do; after that 403 the voice
+  sends nothing more and loses each later sentence (#21)
+- The mock language model takes `params.reasoning_tokens`, spent against the
+  prompt's `max_tokens` before its first word, so a test gets the empty
+  reply at the token cap, or the reply cut at it, without a vendor (#21)
+- The mocks take `params.fault`, the kind a `fail_on_start` mock reports,
+  and `params.endpoint`, a host for a mock to report (#21)
+- A test guard in every suite: a test that opens a sound device stream,
+  connects off the machine or looks a name up fails, save
+  `test_audio_virtual.py` for streams and the live-vendor files for the
+  network; a reloaded `sounddevice` is guarded again (#21)
+- `check_style.py` refuses a one-line "X: Y" docstring, a closed list of
+  litotes, negative parallelism on one line and the banned words' other
+  forms, and reads a file outside the tree with `--file`, the release's pull
+  request body included (#21)
+- flake8 in the `layering` job, holding the four codes the code's markers
+  name (#21)
+- `release_check.py` refuses a comment that names a shipped release as still
+  to come (#21)
+- The dco job refuses a branch commit that carries a co-author or a tool's
+  line (#21)
+- The `test` job on 3.13 installs the `piper` and `audio` extras in a venv
+  of their own and holds their licences to the gate (#21)
+- The monthly canary asks each vendor's models endpoint about each default
+  model, following no redirect, so a vendor's key reaches no other address
+  (#21)
+- `tools/reply_audio.py` says fixed replies through `emet-say --to` into WAV
+  files and reports each file's largest gap, largest step out of near
+  silence and loudness step between sentences against 700 ms, 0.10 and 6 dB,
+  exiting 1 when one is crossed; `--measure` measures files it is given
+  (#21)
+- `tools/events_file.py` reads an `--events` file, refuses another format or
+  a major version other than 1, skips kinds it does not know, and prints a
+  run's turns, turn gap, tokens and what was sent (#21)
+- `tools/bank/sweep.py` writes the exponential sine sweep a phone plays for
+  the bank's room responses, outside the repository, with its parameters and
+  sha256 beside it (#21)
+- The body runner's budget table measures the turn gap's median on the local
+  path, last loud frame to first sound on the one-breath replay, and holds
+  it to the last release's as every row; DESIGN.md section 13 gives it a
+  budget of 2.0 s at the median and 1.0 s as the stretch (#21)
+- `tools/body/run.py --collect-only --sheet PATH` writes `sitting.json`,
+  each rating of the release sitting's sheet beside its turn's record from
+  the sitting's events file (#21)
+
+### Changed
+- The bank tools' pins move to the newer releases of 11 packages,
+  ctranslate2 4.9.0, onnxruntime 1.32.0 and numpy 2.5.5 among them,
+  Dependabot's change from #20 carried into this version, with the
+  pins' licence table read again (#21)
+- `signal.offline` is performed when a turn's words or reply are lost to a
+  failure the plugin names no kind for, such as a network that is down, a
+  server error, a 400 or a revoked key's 401. It is never performed for a
+  retired model, an unpaid account or an empty reply at the cap (#21)
+- The session reads every plugin's `health()` through `read_health()`. A
+  report that raises refuses the boot in one line with its own words and is
+  never a traceback; mid-run it fails its turn (#21)
+- A soul's `persona.lines` sets `declined`, `failed` and `nothing_heard`.
+  The engine's `unavailable` and `out_of_credit` lines are fixed until 0.6
+  (#21)
+- `emet-listen --speak` says a failed turn's line, and the soul's `declined`
+  line after a refusal, aloud as `emet-talk` does, and prints
+  `spoke the line:`; a turn heard with no transcriber says nothing (#21)
+- `emet-listen`'s `stt` line puts the mode straight after the provider's
+  name (`stt      mock (streaming), model ...`) (#21)
+- `emet_hal.audio.AudioError` is an `emet_sdk.plugin.PluginError`, and still
+  a `RuntimeError` (#21)
+- `emet validate --pair` names the two files on its pairing line, and
+  `emet explain` names the chain files when they fail to load (#21)
+- `Health` refuses a fault kind outside `FAULT_KINDS`; a plugin outside Emet
+  that named its own kind writes it `x_`, then a lower-case letter or a
+  digit, then lower-case letters, digits or `_` (`"overcurrent"` becomes
+  `"x_overcurrent"`), and a kind that misspells one of the set, such as
+  `"model-unavailable"`, is offered that kind (#21)
+- A name two installed distributions offer in one entry-point group is
+  refused with `DuplicatePluginError` before any part of the robot starts,
+  naming both and the `pip uninstall` for each; before, one of the two was
+  loaded without a word (#21)
+- `emet-hal`, `emet-providers` and `emet-engine` require `emet-sdk` 0.5.7
+  (#21)
+- The OpenAI and Anthropic plugins' boot check asks for the soul's model by
+  id: a model the vendor has retired or does not know reports
+  `model_unavailable`, a retirement date still to come prints once at boot,
+  and another server behind either plugin that answers anything there but
+  the model or a rejected key is asked for the model list as before (#21)
+- After a reply refused with HTTP 404, the Anthropic plugin asks whether the
+  model is gone, and sends a retired model nothing more for the rest of the
+  run (#21)
+- An OpenAI or Anthropic account out of credit or at a spend limit reports
+  `out_of_credit`, with the vendor's code and where to add credit, until a
+  request succeeds or fails for a reason that names no kind, as the
+  Deepgram transcriber and voice do (#21)
+- A language model server on this machine or on the local network that does
+  not answer at boot is named as there, with the fix, in place of "The
+  language model needs a network", behind the OpenAI and Anthropic plugins
+  alike (#21)
+- A vendor's error line names its code after its type when the two differ
+  (#21)
+- The Anthropic plugin sends `anthropic-version: 2026-10-21`, and sends none
+  of the fields that version refuses (#21)
+- The Anthropic plugin counts input tokens read from and written to the
+  prompt cache, and takes the final counts from the last `message_delta`
+  (#21)
+- A Deepgram handshake refused for a reason with no kind quotes Deepgram's
+  own error message, such as "No such model/language/tier combination
+  found", in place of the library's "server rejected WebSocket connection"
+  (#21)
+- The Deepgram plugins report a missing `websockets` or `httpx` as
+  `no_library`, in place of `start_failed` (#21)
+- The mock language model honours the prompt's `max_tokens`, a word counted
+  as a token, and stops at `length` past it (#21)
+- Every one-line docstring shaped "X: Y" is one plain sentence, and a
+  message that named the character `_` writes it (#21)
+- The release sitting's sheet rates each wait from 1 to 5 ("1, I would stop
+  talking to it; 3, acceptable; 5, as quick as a person") in place of the
+  "Soon" tick, counts tries in a column of their own, and runs turns 3 to 10
+  with `--events` (#21)
+- The body runner's `speaker-talk` and `live-stats` steps write an events
+  file, which comes home and gives each step its turns and its turn gap's
+  median, and `--fetch` also takes `~/sitting-*.events.jsonl` (#21)
+- The body runner installs pip-audit from the hashed pins of
+  `tools/ci/requirements.txt` with `--require-hashes`, and makes its audit
+  venv again when those pins change (#21)
+- Bank v1's sitting 2 holds one block with the microphone's gain control
+  off: two sweeps at each of five talker positions, and the same slots near
+  and at 3 m as files recorded with it on; the sitting is 30 files and 33
+  min 40 s (#21)
+- `tools/bank/replay.py` reads a boot line's provider up to a space, a comma
+  or a bracket, so the `stt` line's place and origin leave it as it was
+  (#21)
+- DESIGN.md says a robot whose chat model is retired or unknown boots and
+  says the unavailable line, that `signal.offline` is for network and server
+  errors, and that the part declared first wins a rung two parts fit (#21)
+
+### Fixed
+- An audio source or sink that cannot start, such as a missing replay file
+  or a sink file that cannot be opened, is refused in one line naming the
+  plugin and the program exits 1, where it printed a traceback of about 40
+  lines (#21)
+- A refusal at boot, a failed reply, a lost turn, a lost sentence and a part
+  that will not start each print once, since the plugins, the engine's voice
+  and the body log them at INFO (#21)
+- No empty `emet:` or `reply:` line stands before a reply that failed or was
+  declined before any text (#21)
+- A Deepgram voice whose account is out of credit no longer tells the owner
+  to check the voice name (#21)
+- `emet explain` and the engine read a reserved part whose `role` or `form`
+  is no string, whose `joints` are no list, or whose joint's `axis` is no
+  string, as a part without them, where resolving its chains raised
+  `TypeError` (#21)
+- `emet validate` and the engine's boot report a reserved part's
+  `mounted_on` that is a list or a mapping as an unknown reference, and pass
+  over a reserved part's `driver` that is no mapping, where both raised
+  `TypeError` or `AttributeError` (#21)
+- A chain file whose intent name YAML reads as a number, a null or a boolean
+  (`1:`, `null:`, `yes:`) is refused as an unknown intent that says so,
+  where `emet validate` printed `AttributeError` and `--chains` raised it
+  (#21)
+- The body runner upgrades pip in its venv to 26.2 before the install, which
+  fixes six advisories in the venv's pip 25.1.1 (#21)
+- The canary makes `--out` absolute, so a relative one writes nothing inside
+  the repository and `canary.json` reads the live tests' results (#21)
+- Four unused imports are gone, and a test's closure no longer reads a name
+  the test deletes (#21)
+- The bank replay's golden-folder test and the SDK's test of the shipped
+  plugins find their files from where they sit, so both pass in mutmut's
+  copy of the tree (#21)
+- Two `tools/dev.py` tests pass on Python 3.12 (#21)
+- A test holds the plan template's flag-gap table to the columns
+  `tools/plan_file.py` reads (#21)
+- An audio plugin name nobody installed is refused before the body starts
+  or the boot tone plays, and a replay file that will not open is refused
+  before the boot tone, with no sound made (#21)
+- An audio source or sink that refuses its block as it is built, such as a
+  `gain_db` of `.inf`, is refused in one line (#21)
+- A password written into `params.url` reaches no refusal: a URL with no
+  scheme loses it as well, the Deepgram plugins' "could not reach" lines
+  name the URL without it, and a URL that cannot be read is refused at
+  boot in one line that names the field (#21)
+- With no key set at a server other than the vendor's, the OpenAI and
+  Anthropic plugins no longer send the owner to the vendor's console (#21)
+- The canary calls the cassettes stale when a final's words change; a
+  final that differs in case or punctuation alone stays fresh, with a note
+  (#21)
+- The body runner's pip reads no configuration file, so it installs from
+  PyPI alone (#21)
+
 ## [0.5.6] - 2026-11-27
 
 Run every release by one playbook.

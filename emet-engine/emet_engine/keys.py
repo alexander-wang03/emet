@@ -65,7 +65,7 @@ _UNSHOWN = "The line is not shown, since it may hold a key."
 
 
 def user_keys_path() -> Path:
-    """A person's keys: `$XDG_CONFIG_HOME/emet/keys.env`, or `~/.config/emet/keys.env`."""
+    """The path of a person's keys, `$XDG_CONFIG_HOME/emet/keys.env` or else `~/.config/emet/keys.env`."""
     base = os.environ.get("XDG_CONFIG_HOME")
     root = Path(base) if base else Path.home() / ".config"
     return root / "emet" / "keys.env"

@@ -163,6 +163,7 @@ def args(**overrides) -> argparse.Namespace:
         "chains": None,
         "state": None,
         "explain": False,
+        "events": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -499,7 +500,7 @@ def test_a_false_wake_gets_no_reply(tmp_path, monkeypatch, capsys):
 
 
 def test_keys_are_read_from_a_file_before_the_providers_start(tmp_path, monkeypatch, capsys):
-    """The BYOK noun: a key file, loaded once, names printed and values not."""
+    """The BYOK noun is a key file, loaded once, with its names printed and its values never shown."""
     monkeypatch.delenv("EMET_TEST_KEY", raising=False)
     keys = tmp_path / "keys.env"
     keys.write_text("EMET_TEST_KEY=hunter2\n", encoding="utf-8")
@@ -575,7 +576,7 @@ def test_speak_says_the_reply_and_implies_reply_and_transcribe(tmp_path, monkeyp
 
 
 def test_speak_writes_what_was_said_through_the_wav_sink(tmp_path, monkeypatch, capsys):
-    """The whole 0.4 path on a laptop: wake, words, reply, voice, sink."""
+    """The whole 0.4 path runs on a laptop, through wake, words, reply, voice and sink."""
     wav = write_wav(tmp_path / "w.wav", spoken(b"hello", b"there"))
     manifest = body(wav)
     out = str(tmp_path / "said.wav")
@@ -678,7 +679,9 @@ def test_a_false_wake_is_not_spoken_to(tmp_path, monkeypatch, capsys):
     asyncio.run(cli._run(args(speak=True)))
 
     out = capsys.readouterr().out
-    assert "spoke" not in out and "reply:" not in out
+    # Neither note: the per-turn line under --stats says the turn was silent.
+    assert not re.search(r"(?m)^    spoke", out) and "reply:" not in out
+    assert "    turn gap - (nothing was spoken)" in out
 
 
 def footer_session(**overrides):
@@ -742,7 +745,7 @@ def test_a_run_that_lost_frames_both_ways_says_both(capsys):
 
 
 def test_on_a_terminal_the_caption_is_redrawn_in_place(capsys):
-    """Whole-text partials were for this: each one replaces the line."""
+    """Each whole-text partial replaces the line, which is what they were for."""
     import io
 
     screen = io.StringIO()
@@ -787,7 +790,7 @@ def test_the_header_names_the_body_and_the_state_file(tmp_path, monkeypatch, cap
 
     out = capsys.readouterr().out
     assert "  body     a laptop pretending (cli_body)" in out
-    assert "  chains   31 resolved at boot" in out
+    assert "  chains   32 resolved at boot" in out
     assert "cli_body.json" in out
     assert "  self " not in out, "without a language model nobody reads the self-model"
 
@@ -1247,3 +1250,376 @@ def test_the_footers_name_cut_line_is_still_the_only_one_that_starts_so(tmp_path
     starting = [row for row in rows if row.strip().startswith("name cut")]
     assert len(starting) == 1 and starting[0].startswith("  name cut      1 of 2 handover(s)")
     assert "  board         during the run: under-voltage now, throttled now" in rows
+
+
+# ------------------------------------------------------------- 0.5.7's lines
+
+
+class _Terminal:
+    """A stream that says it is a terminal and keeps what was written."""
+
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return True
+
+    @property
+    def text(self) -> str:
+        return "".join(self.written)
+
+
+def test_events_writes_a_record_beside_each_line_stats_prints(tmp_path, monkeypatch, capsys):
+    """BVP12: the header, a record for each line under a wake, one for each
+    turn's line and one for the footer, and never a word anybody said."""
+    import json
+
+    wav = write_wav(tmp_path / "e.wav", spoken(b"what", b"time", b"is it") + spoken(b"and", b"now"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
+    path = tmp_path / "run.jsonl"
+
+    rc = asyncio.run(cli._run(args(reply=True, events=str(path))))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert records[0]["format"] == "emet-events" and records[0]["program"] == "emet-listen"
+    kinds = [r.get("kind") for r in records[1:]]
+    printed_wakes = len(re.findall(r"(?m)^    lag ", out))
+    printed_turns = len(re.findall(r"(?m)^    turn gap ", out))
+    assert printed_turns == 2
+    assert kinds.count("wake") == printed_wakes and kinds.count("turn") == printed_turns
+    assert kinds[-1] == "footer"
+    assert [r["wake"] for r in records if r.get("kind") == "wake"] == list(range(1, printed_wakes + 1))
+    words = path.read_text(encoding="utf-8")
+    assert "what time" not in words and "You said" not in words
+
+
+def _schema_checked(path: Path) -> list[dict]:
+    """Every record of an events file, each held to the shipped schema."""
+    import json
+
+    from jsonschema import Draft202012Validator
+
+    from emet_engine.events import SCHEMA
+
+    validator = Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    for record in records:
+        validator.validate(record)
+    return records
+
+
+def test_events_writes_a_wake_record_for_each_handover_line_with_its_confidence(tmp_path, monkeypatch, capsys):
+    """Two wakes whose engine fires a frame late, so each hands audio over
+    and prints its line: two wake records, numbered from 1, each carrying the
+    score its `heard` line printed, every record valid against the schema."""
+    stub_loaders(monkeypatch, handing_over(tmp_path, "h.wav"), soul(provider="mock", chat={"provider": "mock"}))
+    path = tmp_path / "run.jsonl"
+
+    rc = asyncio.run(cli._run(args(transcribe=True, reply=True, events=str(path))))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    printed = [float(c) for c in re.findall(r"(?m)^  heard 'hey emet'  \(confidence (\d\.\d\d)\)$", out)]
+    assert len(re.findall(r"(?m)^    lag ", out)) == 2 and len(printed) == 2
+    wakes = [r for r in _schema_checked(path) if r.get("kind") == "wake"]
+    assert [r["wake"] for r in wakes] == [1, 2]
+    assert [round(r["confidence"], 2) for r in wakes] == printed
+
+
+def test_events_writes_no_turn_record_for_a_turn_that_printed_no_line(tmp_path, monkeypatch, capsys):
+    """A wake-only run with `--stats`: no stage ran, so no turn prints its
+    line and no handover prints one either, and the file holds the header
+    and the footer only."""
+    wav = write_wav(tmp_path / "w.wav", saying(2))
+    stub_loaders(monkeypatch, body(wav), soul())
+    path = tmp_path / "run.jsonl"
+
+    rc = asyncio.run(cli._run(args(events=str(path))))
+
+    out = capsys.readouterr().out
+    assert rc == 0 and out.count("  heard 'hey emet'") == 2
+    assert "    turn gap " not in out and "    lag " not in out
+    assert [r.get("kind") for r in _schema_checked(path)[1:]] == ["footer"]
+
+
+def test_events_changes_no_line_the_console_prints(tmp_path, monkeypatch, capsys):
+    """The same run with the file and without it prints the same, timings
+    aside."""
+    wav = write_wav(tmp_path / "same.wav", spoken(b"what", b"time"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
+
+    def lines(**extra) -> list[str]:
+        asyncio.run(cli._run(args(reply=True, **extra)))
+        return [re.sub(r"\d+(\.\d+)?", "N", line) for line in capsys.readouterr().out.splitlines()]
+
+    assert lines(events=str(tmp_path / "run.jsonl")) == lines()
+
+
+def test_events_without_stats_is_refused_with_exit_2(capsys, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["body.yaml", "soul.yaml", "--events", "run.jsonl"]) == 2
+    assert capsys.readouterr().err == "emet-listen: --events writes what --stats prints; add --stats\n"
+    # Refused before the file is opened: a mid-build tree once left an
+    # emet-engine/run.jsonl behind this very call (I1's finding F1 of 0.5.7).
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_each_turn_ends_with_its_own_line_under_stats(tmp_path, monkeypatch, capsys):
+    """The turn's line under --stats is its last, after the sentences
+    spoken (TT8 and OC1 of 0.5.7)."""
+    wav = write_wav(tmp_path / "t.wav", spoken(b"what", b"time", b"is it"))
+    stub_loaders(monkeypatch, body(wav), talking_soul())
+
+    asyncio.run(cli._run(args(speak=True)))
+
+    out = capsys.readouterr().out.splitlines()
+    turn = next(i for i, line in enumerate(out) if line.startswith("    turn gap "))
+    assert out[turn - 1].startswith("    spoke ")
+    assert out[turn + 1] == ""
+
+
+def test_without_stats_no_turn_line_is_printed(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "q.wav", spoken(b"what", b"time"))
+    stub_loaders(monkeypatch, body(wav), talking_soul())
+
+    asyncio.run(cli._run(args(speak=True, stats=False)))
+
+    assert "turn gap" not in capsys.readouterr().out
+
+
+def test_a_reply_that_fails_before_any_word_prints_no_empty_reply_tag(tmp_path, monkeypatch, capsys):
+    """The `reply: ` tag is printed with the first word (ledger L16)."""
+    from emet_providers.mock import MockLanguageModel
+
+    wav = write_wav(tmp_path / "f.wav", spoken(b"hello"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock", chat={"provider": "mock"}))
+    real_start = ListenSession.start
+
+    async def start(self):
+        await real_start(self)
+        self._llm._started = False
+
+    monkeypatch.setattr(ListenSession, "start", start)
+    assert MockLanguageModel  # the mock answers an unstarted model with an error
+
+    asyncio.run(cli._run(args(reply=True, stats=False)))
+
+    out = capsys.readouterr().out
+    assert "reply:" not in out
+    assert "    the language model failed: the mock language model was not started" in out
+
+
+def test_the_stt_line_keeps_a_space_after_the_provider(tmp_path, monkeypatch, capsys):
+    """`tools/bank/replay.py` reads the line's second word as the provider
+    and refuses any but `mock`, so the mode follows the name and a comma
+    never does."""
+    wav = write_wav(tmp_path / "s.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+
+    asyncio.run(cli._run(args(transcribe=True)))
+
+    line = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("  stt      "))
+    assert line.split()[1] == "mock"
+    assert line == "  stt      mock (streaming), on this body, from emet-providers " + cli._version("emet-providers")
+
+
+def test_a_provider_line_names_the_host_the_key_and_the_package(monkeypatch):
+    """SF2 stage 1: where the stage sends, the variable its key came from,
+    and the distribution that offered the plugin; never the key itself."""
+    from types import SimpleNamespace
+
+    from emet_sdk.discovery import PluginOrigin
+    from emet_sdk.types import LanguageModelDescriptor, TranscriberDescriptor, VoiceDescriptor
+
+    origins = {"openai": PluginOrigin("emet.llm", "openai", "x:Y", "emet-providers", "0.5.7"),
+               "piper": PluginOrigin("emet.tts", "piper", "x:Z", "emet_providers", "0.5.7")}
+    session = SimpleNamespace(
+        registry=SimpleNamespace(origin=lambda group, name: origins.get(name)),
+        stt_name="deepgram",
+        stt_descriptor=TranscriberDescriptor(provider="deepgram", model="nova-3", streaming=True, sample_rate=16000,
+                                             endpoint="wss://api.deepgram.com/v1/listen", key_env="EMET_DEEPGRAM_KEY"),
+        chat_name="openai",
+        llm_descriptor=LanguageModelDescriptor(provider="openai", model="qwen3",
+                                               endpoint="http://user:pw@127.0.0.1:9380/v1"),
+        tts_name="piper",
+        tts_descriptor=VoiceDescriptor(provider="piper", model="en_US-ljspeech-medium", sample_rate=22050),
+    )
+    assert cli.provider_lines(session, "emet-listen") == [
+        "  stt      deepgram (streaming), model nova-3, at api.deepgram.com, key EMET_DEEPGRAM_KEY",
+        "  llm      openai, model qwen3, at 127.0.0.1:9380, from emet-providers 0.5.7",
+        "  voice    piper, model en_US-ljspeech-medium (22050 Hz), on this body, from emet_providers 0.5.7",
+    ]
+    assert cli.provider_lines(session, "emet-talk") == [
+        "  words    deepgram, nova-3, at api.deepgram.com, key EMET_DEEPGRAM_KEY",
+        "  answers  openai, qwen3, at 127.0.0.1:9380, from emet-providers 0.5.7",
+        "  voice    piper, en_US-ljspeech-medium (22050 Hz), on this body, from emet_providers 0.5.7",
+    ]
+
+
+def test_a_plugin_from_another_package_with_no_endpoint_is_not_said_to_stay_on_the_body():
+    """Every plugin of Emet's own fills `endpoint`, so one of theirs with
+    none runs on the body. A plugin from another package may have been
+    written before the field existed, and its None says nothing, so the
+    line says the place is not stated rather than claim the audio stayed."""
+    from emet_sdk.discovery import PluginOrigin
+    from emet_sdk.types import TranscriberDescriptor
+
+    outside = TranscriberDescriptor(provider="acme-cloud", sample_rate=16000, streaming=True)
+    acme = PluginOrigin("emet.stt", "acme-cloud", "acme:Stt", "acme-cloud", "2.0")
+    hal = PluginOrigin("emet.stt", "acme-cloud", "acme:Stt", "emet-hal", "0.5.7")
+    assert cli.place_line(outside, acme) == ", where it sends is not stated"
+    assert cli.place_line(outside, None) == ", where it sends is not stated"
+    assert cli.place_line(outside, hal) == ", on this body"
+
+
+def test_a_failure_line_takes_its_detail_from_the_stage_that_failed():
+    from types import SimpleNamespace
+
+    from emet_sdk.types import ReplyDone
+
+    from emet_engine.failures import row
+    from emet_engine.turn import Utterance
+
+    session = SimpleNamespace(stt_name="deepgram", chat_name="openai", tts_name="piper", reply_cap=300,
+                              chat_unavailable="the model is gone.")
+    heard = SimpleNamespace(transcript=Transcript(text="", final=True, error="the words were lost."))
+    failed = ReplyDone(text="", stop_reason="error", model="m", error="the reply was lost.")
+    assert cli.failure_text(session, row("llm-failed"), "emet-talk", heard, failed) == (
+        "  (the language model failed: the reply was lost.)")
+    assert cli.failure_text(session, row("stt-words-lost"), "emet-listen", heard, None) == (
+        "    the words never arrived: the words were lost.")
+    assert cli.failure_text(session, row("llm-unavailable-on-reply"), "emet-talk", heard, None) == (
+        "  (the language model cannot answer: the model is gone.)")
+    assert cli.failure_text(session, row("llm-empty-at-cap"), "emet-listen", heard, failed).startswith(
+        "    no words: the reply stopped at its cap of 300 tokens")
+    assert Utterance  # the session's own type; a namespace stands in for it here
+
+
+def test_the_live_line_is_drawn_at_a_terminal_and_the_streams_are_put_back(tmp_path, monkeypatch):
+    """BVB3 stage 1: under --stats at a terminal the session draws the ears'
+    line through the program's one LiveLine, every other write clears it
+    first, and stdout and stderr are the program's own again at exit."""
+    wav = write_wav(tmp_path / "l.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    screen, errors = _Terminal(), _Terminal()
+    monkeypatch.setattr(sys, "stdout", screen)
+    monkeypatch.setattr(sys, "stderr", errors)
+    hooks: dict[str, object] = {}
+    real_start = ListenSession.start
+
+    async def start(self):
+        hooks["frame"] = self.on_frame
+        await real_start(self)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+
+    asyncio.run(cli._run(args()))
+
+    assert sys.stdout is screen and sys.stderr is errors
+    assert hooks["frame"] is not None
+    assert "\r    ears " in screen.text
+    # The first frame draws it; the wake's own line clears it first.
+    drawn = screen.text.index("\r    ears ")
+    assert screen.text.index("\r\x1b[K", drawn) < screen.text.index("  heard 'hey emet'", drawn)
+
+
+class _Journalled(_Terminal):
+    """A terminal whose writes, and those of its partner, go into one
+    journal in the order they were made, each with the stream's name."""
+
+    def __init__(self, name: str, journal: list[tuple[str, str]]) -> None:
+        super().__init__()
+        self.name = name
+        self.journal = journal
+
+    def write(self, text: str) -> int:
+        self.journal.append((self.name, text))
+        return super().write(text)
+
+
+def _cleared_before(journal: list[tuple[str, str]], stream: str, text: str) -> bool:
+    """Whether the last write to stdout before `text` reached `stream` was
+    the line's clear, so the drawn line had gone from the screen."""
+    at = next(i for i, (name, written) in enumerate(journal) if name == stream and written.startswith(text))
+    before = [written for name, written in journal[:at] if name == "out"]
+    return bool(before) and before[-1] == "\r\x1b[K"
+
+
+def test_a_write_to_stderr_while_the_live_line_is_drawn_clears_it_first(tmp_path, monkeypatch):
+    """C12: with stderr a terminal too, the program puts the line's guarded
+    stderr in `sys.stderr` for the run, so a warning written in the middle
+    of a drawn line clears it first and never lands on it."""
+    wav = write_wav(tmp_path / "w.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    journal: list[tuple[str, str]] = []
+    screen, errors = _Journalled("out", journal), _Journalled("err", journal)
+    monkeypatch.setattr(sys, "stdout", screen)
+    monkeypatch.setattr(sys, "stderr", errors)
+    real_start = ListenSession.start
+    warned: list[bool] = []
+
+    async def start(self):
+        drawn = self.on_frame
+
+        def frame(level, speech, quiet):
+            drawn(level, speech, quiet)
+            if not warned:
+                warned.append(True)
+                print("  ! a warning in the middle of the run", file=sys.stderr)
+
+        self.on_frame = frame
+        await real_start(self)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+
+    asyncio.run(cli._run(args()))
+
+    assert warned and "\r    ears " in screen.text
+    assert _cleared_before(journal, "err", "  ! a warning in the middle of the run")
+    assert sys.stderr is errors
+
+
+def test_a_caption_at_a_terminal_clears_the_drawn_line_first(tmp_path, monkeypatch):
+    """The caption reads `sys.stdout` at each write, so while the live line
+    wraps it the caption's redraw clears the drawn line before it."""
+    from emet_engine import live
+
+    monkeypatch.setattr(live, "INTERVAL_S", -1.0)  # draw at every frame a line has ended
+    # A quiet frame after the name, so the line is drawn inside the turn
+    # before the first words arrive.
+    wav = write_wav(tmp_path / "c.wav", spoken(b"", b"what", b"time"))
+    stub_loaders(monkeypatch, body(wav), soul(provider="mock"))
+    journal: list[tuple[str, str]] = []
+    monkeypatch.setattr(sys, "stdout", _Journalled("out", journal))
+    monkeypatch.setattr(sys, "stderr", _Journalled("err", journal))
+
+    asyncio.run(cli._run(args(transcribe=True)))
+
+    assert _cleared_before(journal, "out", "\r    hearing 'what")
+
+
+def test_off_a_terminal_there_is_no_live_line_and_no_level_is_asked_for(tmp_path, monkeypatch, capsys):
+    wav = write_wav(tmp_path / "n.wav", saying(1))
+    stub_loaders(monkeypatch, body(wav), soul())
+    hooks: dict[str, object] = {}
+    real_start = ListenSession.start
+
+    async def start(self):
+        hooks["frame"] = self.on_frame
+        await real_start(self)
+
+    monkeypatch.setattr(ListenSession, "start", start)
+
+    asyncio.run(cli._run(args()))
+
+    assert hooks["frame"] is None
+    assert "\x1b[K" not in capsys.readouterr().out

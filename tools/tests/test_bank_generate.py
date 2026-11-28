@@ -370,7 +370,7 @@ def test_the_alba_corpus_term_is_in_the_list_as_its_licence_file_words_it():
 
 
 def test_fetch_voices_keeps_only_a_file_with_the_pinned_hash(lists, tmp_path):
-    """The download side, against file URLs: a wrong file is not kept."""
+    """The download side, run against file URLs, keeps no wrong file."""
     inputs = lists.inputs()
     for voice in inputs["voices"]["voices"]:
         for key in ("model", "config", "card"):
@@ -698,7 +698,7 @@ def test_a_generated_bank_holds_no_recorded_voice(built, tmp_path):
 
 
 def first_manifest(bank: Path) -> tuple[Path, dict]:
-    """gen-g01-near-1: speaker g01, the room sim-box, pink noise at -55 dBFS."""
+    """The first manifest is gen-g01-near-1, with speaker g01, the room sim-box and pink noise at -55 dBFS."""
     path = sorted((bank / "manifests").glob("*.json"))[0]
     return path, json.loads(path.read_text(encoding="utf-8"))
 

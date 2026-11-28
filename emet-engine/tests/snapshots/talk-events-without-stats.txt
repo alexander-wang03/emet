@@ -1,0 +1,6 @@
+$ emet-talk body.yaml soul.yaml --events run.jsonl
+exit 2
+--- stdout
+(nothing)
+--- stderr
+emet-talk: --events writes what --stats prints; add --stats

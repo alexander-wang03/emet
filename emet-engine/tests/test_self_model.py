@@ -133,7 +133,7 @@ def gripper(cap_id: str = "grip") -> dict[str, Any]:
 
 
 def reported(manifest: dict[str, Any], *, broken: tuple[str, ...] = ()) -> list:
-    """What the plugins would report: every part healthy but the broken ones."""
+    """What the plugins would report, with every part healthy except the broken ones."""
     return [
         replace(d, healthy=d.capability_id not in broken) for d in descriptors_from_manifest(manifest)
     ]
@@ -295,6 +295,61 @@ def test_the_facts_come_in_a_fixed_order():
         "description", "scale", "power", "hearing", "direction", "voice",
         "locomotion", "head", "arms", "eyes", "lights", "camera",
     ]
+    assert keys(compile_self_model(example("pi-speakerphone.yaml"))) == [
+        "description", "scale", "power", "hearing", "direction", "voice", "hearing_while_speaking",
+        "locomotion", "cannot_move", "head", "cannot_turn", "arms", "eyes", "camera",
+    ]
+
+
+# ------------------------------------------------ hearing while it speaks
+
+#: Decision N22's sentence (AF8 stage 1), word for word.
+WAIT_FOR_ME = "You cannot hear anyone while you are speaking, so a person has to wait until you finish."
+
+
+def with_aec(manifest: dict[str, Any], aec: Any) -> dict[str, Any]:
+    """The same body with `audio.input.aec` set, or removed when `aec` is
+    the string "absent"."""
+    doc = copy.deepcopy(manifest)
+    doc["audio"]["input"].pop("aec", None)
+    if aec != "absent":
+        doc["audio"]["input"]["aec"] = aec
+    return doc
+
+
+@pytest.mark.parametrize("aec", ["none", "absent", None, ""])
+def test_a_body_without_echo_cancellation_is_told_a_person_must_wait_for_it_to_finish(aec):
+    model = compile_self_model(with_aec(example("bodiless.yaml"), aec))
+    said = fact(model, "hearing_while_speaking")
+    assert said == BodyFact("hearing_while_speaking", WAIT_FOR_ME, False)
+    assert keys(model).index("hearing_while_speaking") == keys(model).index("voice") + 1
+    assert WAIT_FOR_ME in model.text and said in model.absences
+
+
+@pytest.mark.parametrize("aec", ["hardware", "software"])
+def test_a_body_that_declares_echo_cancellation_gets_no_such_sentence(aec):
+    model = compile_self_model(with_aec(example("pi-speakerphone.yaml"), aec))
+    assert "hearing_while_speaking" not in keys(model)
+    assert WAIT_FOR_ME not in model.text
+
+
+def test_the_reference_body_says_it_and_the_example_bodies_with_aec_do_not():
+    """`pi-speakerphone.yaml` declares the honest `aec: none`; the other
+    three example bodies declare `hardware`."""
+    said = {p.name: "hearing_while_speaking" in keys(compile_self_model(load_yaml(p))) for p in manifests(EXAMPLES)}
+    assert said == {
+        "bodiless.yaml": False, "mock-scout.yaml": False, "pi-speakerphone.yaml": True, "scout-01.yaml": False,
+    }
+
+
+def test_the_sentence_goes_into_the_prompt_the_model_is_handed():
+    """The caller: the session's system prompt carries the self-model's
+    text, so a body with no echo cancellation tells its model to expect a
+    person to wait."""
+    from emet_engine.prompting import system_prompt
+
+    text = system_prompt({}, self_model=compile_self_model(example("pi-speakerphone.yaml")))
+    assert WAIT_FOR_ME in text
 
 
 @pytest.mark.parametrize("path", manifests(EXAMPLES), ids=lambda p: p.name)
@@ -420,6 +475,36 @@ def test_a_soul_that_silences_failed_gets_silence():
     assert model.explanations["offline"] is None
     assert model.explanations["error"] is None
     assert compile_self_model(example("bodiless.yaml"), lines={}).explanations["offline"] is None
+
+
+UNAVAILABLE = "The part of me that thinks has been switched off. My owner needs to choose another."
+
+
+def test_a_model_that_cannot_answer_is_explained_in_the_engines_words():
+    """`signal.unavailable`'s voice rung explains `unavailable` with the
+    engine's own line (0.5.7-D5), which a soul cannot change."""
+    assert DEFAULT_LINES["unavailable"] == UNAVAILABLE
+    assert compile_self_model(example("bodiless.yaml")).explanations["unavailable"] == UNAVAILABLE
+    soul = {"persona": {"lines": {"failed": "Say it again?", "unavailable": "Gone."}}}
+    model = compile_self_model(example("bodiless.yaml"), lines=persona_lines(soul))
+    assert model.explanations["unavailable"] == UNAVAILABLE
+    assert model.explanations["offline"] == "Say it again?"
+
+
+def test_lines_without_the_engines_key_still_explain_unavailable_and_an_explicit_none_is_silence():
+    assert compile_self_model(example("bodiless.yaml"), lines={}).explanations["unavailable"] == UNAVAILABLE
+    assert compile_self_model(example("bodiless.yaml"), lines={"failed": None}).explanations["unavailable"] == (
+        UNAVAILABLE
+    )
+    assert compile_self_model(example("bodiless.yaml"), lines={"unavailable": None}).explanations["unavailable"] is None
+
+
+def test_unavailable_is_the_robots_state_and_has_no_fact():
+    assert "unavailable" in EXPLAIN_TOPICS and "unavailable" not in BODY_TOPICS
+    for path in manifests(EXAMPLES):
+        model = compile_self_model(load_yaml(path))
+        assert "unavailable" not in keys(model)
+        assert model.explanations["unavailable"] == UNAVAILABLE
 
 
 def test_a_broken_part_is_named_in_error_whatever_the_soul_says():

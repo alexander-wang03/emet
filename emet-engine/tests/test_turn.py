@@ -551,7 +551,7 @@ def test_soft_speech_after_the_window_ends_where_it_would_have_without_it():
 
 
 class Words:
-    """What the session hands the endpointer: the transcript so far."""
+    """The transcript so far, as the session hands it to the endpointer."""
 
     def __init__(self) -> None:
         self.text = ""
@@ -629,9 +629,115 @@ def test_a_recording_that_ends_on_words_hands_over_the_wait():
 
 
 def test_the_words_rule_is_off_without_a_transcriber():
-    """No hook, the 0.5.0 behaviour: the lead-in alone ends the wait."""
+    """With no hook, as in 0.5.0, the lead-in alone ends the wait."""
     ep = Endpointer(FMT, patience_ms=240, lead_in_ms=800)
     ep.deafen(3 * FMT.frame_ms)
     utterance, n = frames_until_end(ep, [loud()] + [quiet()] * 20)
     assert utterance is not None and utterance.reason is EndReason.NO_SPEECH
     assert n == 10
+
+
+# ------------------------------------------------------------------ the tail
+
+
+def test_the_tail_is_the_quiet_from_the_last_loud_frame_to_the_endpoint():
+    """The first part of the wait a person feels: the patience, counted from
+    the last loud frame and never from when the debounced flag fell."""
+    ep = Endpointer(FMT, patience_ms=800)  # exactly ten 80 ms frames
+    utterance = feed_all(ep, [loud()] * 4 + [quiet()] * 20)
+    assert utterance is not None and utterance.reason is EndReason.SILENCE
+    assert utterance.tail_ms == 800.0
+
+
+def test_a_patience_between_frames_is_rounded_up_to_the_frame_that_ends_the_turn():
+    """900 ms at 80 ms frames ends on the twelfth quiet frame, 960 ms."""
+    ep = Endpointer(FMT, patience_ms=900)
+    utterance = feed_all(ep, [loud()] * 4 + [quiet()] * 20)
+    assert utterance is not None
+    assert utterance.tail_ms == 960.0
+
+
+def test_an_extended_turn_waited_twice_the_patience():
+    ep = Endpointer(FMT, patience_ms=800, extend_if=lambda: True)
+    utterance = feed_all(ep, [loud()] * 4 + [quiet()] * 40)
+    assert utterance is not None and utterance.extended
+    assert utterance.tail_ms == 1600.0
+
+
+def test_speech_that_resumes_starts_the_count_again():
+    ep = Endpointer(FMT, patience_ms=800)
+    utterance = feed_all(ep, [loud()] * 4 + [quiet()] * 6 + [loud()] * 2 + [quiet()] * 20)
+    assert utterance is not None
+    assert utterance.tail_ms == 800.0
+
+
+def test_a_wake_with_nothing_after_it_has_no_tail():
+    ep = Endpointer(FMT, lead_in_ms=400)
+    utterance = feed_all(ep, [quiet()] * 20)
+    assert utterance is not None and utterance.reason is EndReason.NO_SPEECH
+    assert utterance.tail_ms is None
+
+
+def test_a_recording_that_ends_mid_turn_keeps_the_quiet_it_had_counted():
+    ep = Endpointer(FMT)
+    for frame in [loud()] * 5 + [quiet()] * 2:
+        assert ep.feed(frame) is None
+    assert ep.close().tail_ms == 160.0
+    assert ep.close().tail_ms is None, "nothing caught, nothing counted"
+
+
+def test_a_turn_the_words_ended_counts_the_quiet_the_room_had():
+    """No loud frame was seen, so the quiet runs from the wake: four frames,
+    the one the words first arrived on and three of them standing still."""
+    words = Words()
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=2500, words=words)
+    words.text = "yes"
+    utterance, n = frames_until_end(ep, [quiet()] * 10)
+    assert utterance is not None and utterance.reason is EndReason.SILENCE
+    assert n == 4
+    assert utterance.tail_ms == 320.0
+
+
+@pytest.mark.parametrize(
+    "frames, heard, ends_on, tail_ms",
+    [
+        # Words that arrive on the fourth frame of a quiet room: the
+        # transcriber's latency is quiet the room had, and is counted.
+        ([quiet()] * 10, ["", "", "", "yes"], 7, 560.0),
+        # A speaker under the threshold, the words growing over five frames:
+        # the count cannot tell the speech from the room, so it is in it.
+        ([loud(150)] * 5 + [quiet()] * 10, ["a", "a b", "a b c", "a b c d", "a b c d e"], 8, 640.0),
+    ],
+)
+def test_a_turn_the_words_ended_counts_from_the_wake_whatever_was_said(frames, heard, ends_on, tail_ms):
+    """Review findings engine-core/code#4 and claims-scope#1 of 0.5.7: with no
+    loud frame there is nothing else to count from, and `Utterance.tail_ms`
+    says so. The words stand still after the last of `heard`."""
+    words = Words()
+    ep = Endpointer(FMT, patience_ms=240, lead_in_ms=2500, words=words)
+    utterance = None
+    for n, frame in enumerate(frames, 1):
+        if n <= len(heard):
+            words.text = heard[n - 1]
+        utterance = ep.feed(frame)
+        if utterance is not None:
+            break
+    assert utterance is not None and utterance.reason is EndReason.SILENCE
+    assert (n, utterance.tail_ms) == (ends_on, tail_ms)
+
+
+def test_a_turn_cut_at_the_cap_has_counted_no_quiet():
+    ep = Endpointer(FMT, max_utterance_ms=400)
+    utterance = feed_all(ep, [loud()] * 30)
+    assert utterance is not None and utterance.reason is EndReason.TOO_LONG
+    assert utterance.tail_ms == 0.0
+
+
+def test_the_endpointer_reads_out_the_speech_and_the_quiet_so_far():
+    """What the live line shows inside a turn."""
+    ep = Endpointer(FMT, patience_ms=800)
+    assert (ep.speech_ms, ep.quiet_ms) == (0.0, 0.0)
+    for frame in [loud()] * 4 + [quiet()] * 3:
+        ep.feed(frame)
+    assert ep.speech_ms == 7 * FMT.frame_ms
+    assert ep.quiet_ms == 3 * FMT.frame_ms
