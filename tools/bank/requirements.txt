@@ -9,7 +9,8 @@
 #   <scratch>/tools-venv/bin/python -m pip install -r tools/bank/requirements.txt           (Linux)
 #
 # Every pin is the full set pip resolved on the laptop (Windows x86-64,
-# Python 3.13.2, 2026-10-27).
+# Python 3.13.2, 2026-10-27), with the 11 that Dependabot's #20 moved on
+# 2026-11-27.
 #
 # The licences below are the licence gate's table (tools/check_licences.py),
 # read from each distribution's installed metadata in a venv made from this
@@ -37,24 +38,24 @@
 # | Package | Version | Licence | Brought by | Verdict |
 # |---|---|---|---|---|
 # | faster-whisper | 1.2.1 | MIT | the list | allowed |
-# | ctranslate2 | 4.8.3 | MIT | faster-whisper | allowed |
+# | ctranslate2 | 4.9.0 | MIT | faster-whisper | allowed |
 # | pocketsphinx | 5.1.1 | BSD-2-Clause AND BSD-3-Clause AND MIT (read by hand; its metadata: BSD (classifier, no variant)) | the list | allowed: BSD-2-Clause AND BSD-3-Clause AND MIT as read in pocketsphinx 5.1.1's wheel, dist-info/licenses/LICENSE, read 2026-11-26: two-clause and three-clause BSD texts and two MIT texts, none with an advertising clause |
-# | huggingface_hub | 2.3.0 | Apache-2.0 | faster-whisper | allowed |
-# | numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | faster-whisper (through ctranslate2) | allowed (0BSD, Zlib and CC0-1.0 counted permissive on 2026-11-27; this row by hand, not regenerated) |
-# | anyio | 4.15.1 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
+# | huggingface_hub | 2.4.0 | Apache-2.0 | faster-whisper | allowed |
+# | numpy | 2.5.5 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | faster-whisper (through ctranslate2) | allowed (0BSD, Zlib and CC0-1.0 counted permissive on 2026-11-27; this row by hand, not regenerated) |
+# | anyio | 4.16.0 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
 # | av | 19.0.2 | BSD-3-Clause | faster-whisper | allowed |
 # | cffi | 2.1.1 | MIT-0 | pocketsphinx (through sounddevice) | allowed |
-# | click | 8.5.0 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
+# | click | 8.5.1 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
 # | colorama | 0.4.6 | BSD-3-Clause (read by hand; its metadata: BSD (classifier, no variant)) | faster-whisper (through tqdm); pytest | allowed: BSD-3-Clause as read in colorama 0.4.6's wheel, dist-info/licenses/LICENSE.txt, read 2026-11-26: the three-clause BSD text |
-# | filelock | 4.2.4 | MIT | faster-whisper (through huggingface_hub) | allowed |
+# | filelock | 4.2.12 | MIT | faster-whisper (through huggingface_hub) | allowed |
 # | flatbuffers | 25.12.19 | Apache-2.0 | faster-whisper (through onnxruntime) | allowed |
 # | fsspec | 2026.9.0 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
 # | h11 | 0.16.0 | MIT | faster-whisper (through huggingface_hub, httpx2, httpcore2) | allowed |
-# | hf-xet | 1.7.0 | Apache-2.0 | faster-whisper (through huggingface_hub) | allowed |
-# | httpcore2 | 2.16.0 | BSD-3-Clause | faster-whisper (through huggingface_hub, httpx2) | allowed |
-# | httpx2 | 2.16.0 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
+# | hf-xet | 1.8.0 | Apache-2.0 | faster-whisper (through huggingface_hub) | allowed |
+# | httpcore2 | 2.16.2 | BSD-3-Clause | faster-whisper (through huggingface_hub, httpx2) | allowed |
+# | httpx2 | 2.16.2 | BSD-3-Clause | faster-whisper (through huggingface_hub) | allowed |
 # | idna | 3.20 | BSD-3-Clause | faster-whisper (through huggingface_hub, httpx2) | allowed |
-# | onnxruntime | 1.31.1 | MIT | faster-whisper | allowed |
+# | onnxruntime | 1.32.0 | MIT | faster-whisper | allowed |
 # | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause | faster-whisper (through huggingface_hub); pytest | allowed |
 # | protobuf | 7.36.2 | BSD-3-Clause | faster-whisper (through onnxruntime) | allowed |
 # | pycparser | 3.12 | BSD-3-Clause | pocketsphinx (through sounddevice, cffi) | allowed |
@@ -64,11 +65,17 @@
 # | tqdm | 4.70.1 | MPL-2.0 AND MIT | faster-whisper | allowed |
 # | truststore | 0.10.5 | MIT | faster-whisper (through huggingface_hub, httpx2) | allowed |
 # | typing_extensions | 4.16.0 | PSF-2.0 | faster-whisper (through huggingface_hub) | allowed |
-# | pytest | 9.1.1 | MIT | the list | allowed |
+# | pytest | 9.2.0 | MIT | the list | allowed |
 # | iniconfig | 2.3.1 | MIT | pytest | allowed |
 # | pluggy | 1.7.0 | MIT | pytest | allowed |
 # | Pygments | 2.21.0 | BSD-2-Clause | pytest | allowed |
 # | pip | 24.3.1 | MIT | not in the list, and no pin requires it | allowed |
+#
+# The eleven rows Dependabot's #20 moved (ctranslate2, huggingface_hub,
+# numpy, anyio, click, filelock, hf-xet, httpcore2, httpx2, onnxruntime and
+# pytest) were changed by hand on 2026-11-27, each new version's licence read
+# at PyPI's JSON API that day and found the same as the old one's; the table
+# is not regenerated until a tools venv is made from this list again.
 #
 # Outside what metadata can say: av's wheels carry FFmpeg's libraries, whose
 # licence in that build is unverified. The maintainer allowed them, with
@@ -76,7 +83,7 @@
 
 # What label.py imports
 faster-whisper==1.2.1
-ctranslate2==4.9.0           # 4.8.4 (2026-10-25) was two days old, so the one before it
+ctranslate2==4.9.0           # Dependabot's #20, 2026-11-27, past its seven-day wait
 pocketsphinx==5.1.1          # the same version as the repo venv's wake extra
 huggingface_hub==2.4.0       # fetches the model at its pinned revision
 numpy==2.5.5
